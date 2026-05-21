@@ -10,6 +10,7 @@ autom4te.cache/
 compile
 config.guess
 config.h.in~
+configure~
 config.sub
 configure
 depcomp
@@ -37,10 +38,11 @@ examples/test_radial
 examples/test_tiger
 examples/test_vgu
 examples/test_tiger_shader
+examples/test_pbuffer
+examples/test_egl_gl_vg
 *.libs
 *.la
 *.lo
 *.o
 *.deps
 *.dirstamp
-
