@@ -49,8 +49,14 @@ void updateBlendingStateGL(VGContext *c, int alphaIsOne)
   switch (c->blendMode)
   {
   case VG_BLEND_SRC:
-    glBlendFunc(GL_ONE, GL_ZERO);
-    glDisable(GL_BLEND); break;
+    if (c->masking == VG_TRUE) {
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glEnable(GL_BLEND);
+    } else {
+      glBlendFunc(GL_ONE, GL_ZERO);
+      glDisable(GL_BLEND);
+    }
+    break;
 
   case VG_BLEND_SRC_IN:
     glBlendFunc(GL_DST_ALPHA, GL_ZERO);
@@ -82,9 +88,28 @@ void updateBlendingStateGL(VGContext *c, int alphaIsOne)
 
   case VG_BLEND_SRC_OVER: default:
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    if (alphaIsOne) glDisable(GL_BLEND);
+    if (alphaIsOne && c->masking == VG_FALSE) glDisable(GL_BLEND);
     else glEnable(GL_BLEND); break;
   };
+}
+
+static void shApplyMaskState(VGContext *context)
+{
+  if (context->masking == VG_TRUE &&
+      context->maskData &&
+      context->maskWidth > 0 &&
+      context->maskHeight > 0) {
+    shEnsureMaskTexture(context);
+    glUniform1i(context->locationDraw.maskEnabled, 1);
+    glUniform1i(context->locationDraw.maskSampler, SH_TEXTURE_MASK_INDEX);
+    glUniform2f(context->locationDraw.maskSurfaceSize,
+                (GLfloat)context->maskWidth,
+                (GLfloat)context->maskHeight);
+    glActiveTexture(SH_TEXTURE_MASK);
+    glBindTexture(GL_TEXTURE_2D, context->maskTexture);
+  } else {
+    glUniform1i(context->locationDraw.maskEnabled, 0);
+  }
 }
 
 /*-----------------------------------------------------------
@@ -182,6 +207,7 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
                   pmax.x, pmax.y };
   glEnableVertexAttribArray(c->locationDraw.pos);
   glVertexAttribPointer(c->locationDraw.pos, 2, GL_FLOAT, GL_FALSE, 0, v);
+  shApplyMaskState(c);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glDisableVertexAttribArray(c->locationDraw.pos);
   GL_CEHCK_ERROR;
@@ -489,6 +515,7 @@ void shDrawImage(VGContext *context, SHImage *i)
                   i->width, i->height };
   glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE, 0, v);
   glEnableVertexAttribArray(context->locationDraw.pos);
+  shApplyMaskState(context);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glDisableVertexAttribArray(context->locationDraw.pos);
     

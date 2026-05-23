@@ -133,7 +133,7 @@ vgRotate                | FULLY implemented
 #### Masking and Clearing                                       
 API                     | status                                
 ----------------------- | ---------------------                 
-vgMask                  | NOT implemented                       
+vgMask                  | FULLY implemented
 vgClear                 | FULLY implemented                     
                                                                 
 #### Paths                                                      

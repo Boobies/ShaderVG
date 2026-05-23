@@ -77,6 +77,9 @@ static const char* vgShaderFragmentPipeline =
 "uniform sampler2D rampSampler;\n"
 "uniform sampler2D patternSampler;\n"
 "uniform vec4 scaleFactorBias[2];\n"
+"uniform int maskEnabled;\n"
+"uniform sampler2D maskSampler;\n"
+"uniform vec2 maskSurfaceSize;\n"
 "\n"
 "out vec4 fragColor;\n"
 "vec4 sh_Color;\n"
@@ -150,6 +153,10 @@ static const char* vgShaderFragmentPipeline =
 "    }\n"
 "    sh_Color = col * scaleFactorBias[0] + scaleFactorBias[1];\n"
 "    shMain();\n"
+"    if(maskEnabled != 0) {\n"
+"        float maskValue = texture(maskSampler, gl_FragCoord.xy / maskSurfaceSize).r;\n"
+"        fragColor.a *= maskValue;\n"
+"    }\n"
 "}\n";
 
 static const char* vgShaderFragmentUserDefault =
@@ -239,12 +246,17 @@ void shInitPiplelineShaders(void) {
   context->locationDraw.paintParams    = glGetUniformLocation(context->progDraw, "paintParams");
   context->locationDraw.paintColor     = glGetUniformLocation(context->progDraw, "paintColor");
   context->locationDraw.scaleFactorBias= glGetUniformLocation(context->progDraw, "scaleFactorBias");
+  context->locationDraw.maskEnabled    = glGetUniformLocation(context->progDraw, "maskEnabled");
+  context->locationDraw.maskSampler    = glGetUniformLocation(context->progDraw, "maskSampler");
+  context->locationDraw.maskSurfaceSize= glGetUniformLocation(context->progDraw, "maskSurfaceSize");
   GL_CEHCK_ERROR;
 
   // TODO: Support color transform to remove this from here
   glUseProgram(context->progDraw);
   GLfloat factor_bias[8] = {1.0,1.0,1.0,1.0,0.0,0.0,0.0,0.0};
   glUniform4fv(context->locationDraw.scaleFactorBias, 2, factor_bias);
+  glUniform1i(context->locationDraw.maskEnabled, 0);
+  glUniform1i(context->locationDraw.maskSampler, SH_TEXTURE_MASK_INDEX);
   GL_CEHCK_ERROR;
 
   /* Initialize uniform variables */
@@ -252,6 +264,9 @@ void shInitPiplelineShaders(void) {
   float volume = fmax(context->surfaceWidth, context->surfaceHeight) / 2;
   shCalcOrtho2D(mat, 0, context->surfaceWidth , 0, context->surfaceHeight, -volume, volume);
   glUniformMatrix4fv(context->locationDraw.projection, 1, GL_FALSE, mat);
+  glUniform2f(context->locationDraw.maskSurfaceSize,
+              (GLfloat)context->surfaceWidth,
+              (GLfloat)context->surfaceHeight);
   GL_CEHCK_ERROR;
 }
 
@@ -428,4 +443,3 @@ VG_API_CALL void vgUniform4ivSH (VGint location, VGint count, const VGint *value
     glUniform4iv (location, count, value);
     GL_CEHCK_ERROR;
 }
-

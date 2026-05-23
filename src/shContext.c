@@ -40,6 +40,80 @@ void shLoadExtensions(void *c);
 
 static SH_TLS VGContext *g_current_context = NULL;
 
+static VGboolean shResizeMaskSurface(VGContext *context, VGint width, VGint height)
+{
+  SHuint8 *maskData;
+  size_t size;
+
+  if (!context)
+    return VG_FALSE;
+
+  if (width <= 0 || height <= 0) {
+    if (context->maskData) {
+      free(context->maskData);
+      context->maskData = NULL;
+    }
+    context->maskWidth = 0;
+    context->maskHeight = 0;
+    context->maskTextureDirty = VG_TRUE;
+    return VG_TRUE;
+  }
+
+  if (context->maskData &&
+      context->maskWidth == width &&
+      context->maskHeight == height)
+    return VG_TRUE;
+
+  size = (size_t)width * (size_t)height;
+  maskData = (SHuint8*)malloc(size);
+  if (!maskData)
+    return VG_FALSE;
+
+  memset(maskData, 255, size);
+
+  if (context->maskData)
+    free(context->maskData);
+
+  context->maskData = maskData;
+  context->maskWidth = width;
+  context->maskHeight = height;
+  context->maskTextureDirty = VG_TRUE;
+
+  if (context->glInitialized && context->maskTexture != 0) {
+    glDeleteTextures(1, &context->maskTexture);
+    context->maskTexture = 0;
+  }
+
+  return VG_TRUE;
+}
+
+void shEnsureMaskTexture(VGContext *context)
+{
+  if (!context || !context->maskData ||
+      context->maskWidth <= 0 || context->maskHeight <= 0)
+    return;
+
+  if (context->maskTexture == 0)
+    glGenTextures(1, &context->maskTexture);
+
+  glActiveTexture(SH_TEXTURE_MASK);
+  glBindTexture(GL_TEXTURE_2D, context->maskTexture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+  if (context->maskTextureDirty) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8,
+                 context->maskWidth, context->maskHeight, 0,
+                 GL_RED, GL_UNSIGNED_BYTE, context->maskData);
+    context->maskTextureDirty = VG_FALSE;
+  }
+
+  GL_CEHCK_ERROR;
+}
+
 static void shResizeSurface(VGContext *context, VGint width, VGint height)
 {
   float mat[16];
@@ -50,6 +124,8 @@ static void shResizeSurface(VGContext *context, VGint width, VGint height)
 
   context->surfaceWidth = width;
   context->surfaceHeight = height;
+  if (!shResizeMaskSurface(context, width, height))
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
 
   glViewport(0, 0, width, height);
 
@@ -58,6 +134,8 @@ static void shResizeSurface(VGContext *context, VGint width, VGint height)
     shCalcOrtho2D(mat, 0, width, 0, height, -volume, volume);
     glUseProgram(context->progDraw);
     glUniformMatrix4fv(context->locationDraw.projection, 1, GL_FALSE, mat);
+    glUniform2f(context->locationDraw.maskSurfaceSize,
+                (GLfloat)width, (GLfloat)height);
     GL_CEHCK_ERROR;
   }
 }
@@ -163,6 +241,11 @@ void VGContext_ctor(VGContext *c)
   SH_INITOBJ(SHRectArray, c->scissor);
   c->scissoring = VG_FALSE;
   c->masking = VG_FALSE;
+  c->maskData = NULL;
+  c->maskWidth = 0;
+  c->maskHeight = 0;
+  c->maskTexture = 0;
+  c->maskTextureDirty = VG_TRUE;
   
   /* Stroke parameters */
   c->strokeLineWidth = 1.0f;
@@ -229,6 +312,14 @@ void VGContext_dtor(VGContext *c)
   
   SH_DEINITOBJ(SHRectArray, c->scissor);
   SH_DEINITOBJ(SHFloatArray, c->strokeDashPattern);
+
+  if (c->maskData) {
+    free(c->maskData);
+    c->maskData = NULL;
+  }
+
+  if (c->maskTexture != 0 && glIsTexture(c->maskTexture))
+    glDeleteTextures(1, &c->maskTexture);
   
   /* Destroy resources */
   for (i=0; i<c->fonts.size; ++i)
@@ -343,6 +434,107 @@ VG_API_CALL void vgFinish(void)
 VG_API_CALL void vgMask(VGImage mask, VGMaskOperation operation,
                         VGint x, VGint y, VGint width, VGint height)
 {
+  SHImage *image = NULL;
+  long long rectX0, rectY0, rectX1, rectY1;
+  long long surfX0, surfY0, surfX1, surfY1;
+  long long sx, sy;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(operation != VG_CLEAR_MASK &&
+                   operation != VG_FILL_MASK &&
+                   operation != VG_SET_MASK &&
+                   operation != VG_UNION_MASK &&
+                   operation != VG_INTERSECT_MASK &&
+                   operation != VG_SUBTRACT_MASK,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(width <= 0 || height <= 0,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  if (operation != VG_CLEAR_MASK && operation != VG_FILL_MASK) {
+    VG_RETURN_ERR_IF(!shIsValidImage(context, mask),
+                     VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+    image = (SHImage*)mask;
+  }
+
+  if (!shResizeMaskSurface(context, context->surfaceWidth, context->surfaceHeight))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  if (!context->maskData ||
+      context->maskWidth <= 0 ||
+      context->maskHeight <= 0)
+    VG_RETURN(VG_NO_RETVAL);
+
+  rectX0 = x;
+  rectY0 = y;
+  rectX1 = (long long)x + (long long)width;
+  rectY1 = (long long)y + (long long)height;
+
+  if (image) {
+    long long imageX1 = (long long)x + (long long)image->width;
+    long long imageY1 = (long long)y + (long long)image->height;
+    if (rectX1 > imageX1) rectX1 = imageX1;
+    if (rectY1 > imageY1) rectY1 = imageY1;
+  }
+
+  surfX0 = rectX0 < 0 ? 0 : rectX0;
+  surfY0 = rectY0 < 0 ? 0 : rectY0;
+  surfX1 = rectX1 > context->maskWidth ? context->maskWidth : rectX1;
+  surfY1 = rectY1 > context->maskHeight ? context->maskHeight : rectY1;
+
+  if (surfX1 <= surfX0 || surfY1 <= surfY0)
+    VG_RETURN(VG_NO_RETVAL);
+
+  for (sy=surfY0; sy<surfY1; ++sy) {
+    SHuint8 *dst = context->maskData + sy * context->maskWidth + surfX0;
+    const SHuint8 *src = NULL;
+
+    if (image) {
+      long long imageY = sy - y;
+      long long imageX = surfX0 - x;
+      src = image->data + imageY * image->texwidth * image->fd.bytes +
+            imageX * image->fd.bytes;
+    }
+
+    for (sx=surfX0; sx<surfX1; ++sx, ++dst) {
+      SHuint8 oldMask = *dst;
+      SHuint8 newMask = 255;
+
+      if (image) {
+        SHColor color;
+        shLoadColor(&color, src, &image->fd);
+        SH_CLAMP(color.a, 0.0f, 1.0f);
+        newMask = (SHuint8)(color.a * 255.0f + 0.5f);
+        src += image->fd.bytes;
+      }
+
+      switch (operation) {
+      case VG_CLEAR_MASK:
+        *dst = 0;
+        break;
+      case VG_FILL_MASK:
+        *dst = 255;
+        break;
+      case VG_SET_MASK:
+        *dst = newMask;
+        break;
+      case VG_UNION_MASK:
+        *dst = (SHuint8)(255 - (((255 - oldMask) * (255 - newMask) + 127) / 255));
+        break;
+      case VG_INTERSECT_MASK:
+        *dst = (SHuint8)((oldMask * newMask + 127) / 255);
+        break;
+      case VG_SUBTRACT_MASK:
+        *dst = (SHuint8)((oldMask * (255 - newMask) + 127) / 255);
+        break;
+      default:
+        break;
+      }
+    }
+  }
+
+  context->maskTextureDirty = VG_TRUE;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgClear(VGint x, VGint y, VGint width, VGint height)

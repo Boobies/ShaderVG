@@ -66,6 +66,11 @@ typedef struct
 	SHRectArray        scissor;
   VGboolean          scissoring;
   VGboolean          masking;
+  SHuint8*           maskData;
+  SHint              maskWidth;
+  SHint              maskHeight;
+  GLuint             maskTexture;
+  VGboolean          maskTextureDirty;
   
 	/* Stroke parameters */
   SHfloat           strokeLineWidth;
@@ -130,6 +135,9 @@ typedef struct
       GLint paintParams    ;
       GLint paintColor     ;
       GLint scaleFactorBias;
+      GLint maskEnabled    ;
+      GLint maskSampler    ;
+      GLint maskSurfaceSize;
   } locationDraw;
 
   struct {
@@ -164,6 +172,7 @@ void shDestroyContext(VGContext *c);
 VGboolean shSetCurrentContext(VGContext *c, VGint width, VGint height);
 void shClearCurrentContext(void);
 void shResizeCurrentSurface(VGint width, VGint height);
+void shEnsureMaskTexture(VGContext *c);
 
 /*----------------------------------------------------
  * TODO: Add mutex locking/unlocking to these macros

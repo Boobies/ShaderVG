@@ -20,6 +20,17 @@ static int fail_vg(const char *message)
   return 1;
 }
 
+static int expect_vg_error(const char *message, VGErrorCode expected)
+{
+  VGErrorCode error = vgGetError();
+  if (error == expected)
+    return 0;
+
+  fprintf(stderr, "%s (expected VG error 0x%04x, got 0x%04x)\n",
+          message, expected, error);
+  return 1;
+}
+
 static VGPath create_glyph_square(void)
 {
   VGPath path;
@@ -71,6 +82,176 @@ static void draw_retained_path_glyph(void)
 
   vgDestroyFont(font);
   vgDestroyPaint(paint);
+}
+
+static VGPath create_rect_path(VGfloat width, VGfloat height)
+{
+  VGPath path;
+  VGubyte segments[] = {
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_CLOSE_PATH
+  };
+  VGfloat coords[] = {
+    0.0f, 0.0f,
+    width, 0.0f,
+    width, height,
+    0.0f, height
+  };
+
+  path = vgCreatePath(VG_PATH_FORMAT_STANDARD, VG_PATH_DATATYPE_F,
+                      1.0f, 0.0f, 5, 8, VG_PATH_CAPABILITY_ALL);
+  if (path != VG_INVALID_HANDLE)
+    vgAppendPathData(path, 5, segments, coords);
+
+  return path;
+}
+
+static void draw_masked_rect(VGPath rect, VGPaint paint,
+                             const VGfloat *clearColor,
+                             unsigned char *pixels,
+                             EGLint width, EGLint height)
+{
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgDrawPath(rect, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+}
+
+static int run_mask_test(unsigned char *pixels, EGLint width, EGLint height)
+{
+  VGImage mask;
+  VGPaint paint;
+  VGPath rect;
+  unsigned char *maskData;
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat paintColor[] = {0.0f, 1.0f, 0.0f, 1.0f};
+  size_t left = ((size_t)(height / 2) * (size_t)width + (size_t)(width / 4)) * 4u;
+  size_t right = ((size_t)(height / 2) * (size_t)width + (size_t)(3 * width / 4)) * 4u;
+  EGLint x, y;
+  int result = 0;
+
+  maskData = (unsigned char*)calloc((size_t)width * (size_t)height, 1);
+  if (!maskData)
+    return 1;
+
+  for (y=0; y<height; ++y) {
+    for (x=0; x<width / 2; ++x)
+      maskData[(size_t)y * (size_t)width + (size_t)x] = 255;
+  }
+
+  mask = vgCreateImage(VG_A_8, width, height, VG_IMAGE_QUALITY_FASTER);
+  paint = vgCreatePaint();
+  rect = create_rect_path((VGfloat)width, (VGfloat)height);
+
+  vgImageSubData(mask, maskData, width, VG_A_8, 0, 0, width, height);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, paintColor);
+
+  vgSeti(VG_MASKING, VG_TRUE);
+  vgMask(mask, VG_SET_MASK, 0, 0, width, height);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] < 128 || pixels[right + 1] > 32) {
+    fprintf(stderr, "OpenVG VG_SET_MASK did not clip drawing as expected\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  for (y=0; y<height; ++y) {
+    for (x=0; x<width; ++x)
+      maskData[(size_t)y * (size_t)width + (size_t)x] =
+        (x >= width / 2) ? 255 : 0;
+  }
+
+  vgImageSubData(mask, maskData, width, VG_A_8, 0, 0, width, height);
+  vgMask(mask, VG_UNION_MASK, 0, 0, width, height);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] < 128 || pixels[right + 1] < 128) {
+    fprintf(stderr, "OpenVG VG_UNION_MASK did not combine mask coverage\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgMask(mask, VG_INTERSECT_MASK, 0, 0, width, height);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] > 32 || pixels[right + 1] < 128) {
+    fprintf(stderr, "OpenVG VG_INTERSECT_MASK did not intersect mask coverage\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgMask(mask, VG_SUBTRACT_MASK, 0, 0, width, height);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] > 32 || pixels[right + 1] > 32) {
+    fprintf(stderr, "OpenVG VG_SUBTRACT_MASK did not remove mask coverage\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgMask(VG_INVALID_HANDLE, VG_FILL_MASK, 0, 0, width, height);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] < 128 || pixels[right + 1] < 128) {
+    fprintf(stderr, "OpenVG VG_FILL_MASK did not expose masked drawing\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgMask(VG_INVALID_HANDLE, VG_CLEAR_MASK, 0, 0, width, height);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] > 32 || pixels[right + 1] > 32) {
+    fprintf(stderr, "OpenVG VG_CLEAR_MASK did not suppress masked drawing\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] < 128 || pixels[right + 1] < 128) {
+    fprintf(stderr, "OpenVG disabled masking still affected drawing\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgMask(mask, (VGMaskOperation)0, 0, 0, width, height);
+  if (expect_vg_error("OpenVG accepted an invalid mask operation",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgMask(mask, VG_SET_MASK, 0, 0, 0, height);
+  if (expect_vg_error("OpenVG accepted an invalid mask extent",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgMask(VG_INVALID_HANDLE, VG_SET_MASK, 0, 0, width, height);
+  if (expect_vg_error("OpenVG accepted an invalid mask image",
+                      VG_BAD_HANDLE_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgDestroyPath(rect);
+  vgDestroyPaint(paint);
+  vgDestroyImage(mask);
+  free(maskData);
+  return result;
 }
 
 int main(void)
@@ -151,7 +332,9 @@ int main(void)
       fprintf(stderr, "OpenVG retained glyph drawing did not affect the expected pixel\n");
       result = 1;
     } else {
-      printf("EGL/OpenVG pbuffer smoke test passed on EGL %d.%d\n", major, minor);
+      result = run_mask_test(pixels, width, height);
+      if (result == 0)
+        printf("EGL/OpenVG pbuffer smoke test passed on EGL %d.%d\n", major, minor);
     }
   }
 
