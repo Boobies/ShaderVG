@@ -9,7 +9,9 @@ libOpenVG_la_SOURCES =\
 	shPath.h\
 	shImage.h\
 	shPaint.h\
+	shFont.h\
 	shGeometry.h\
+	shPipeline.h\
 	shContext.h\
 	shaders.h\
 	shExtensions.c\
@@ -18,6 +20,7 @@ libOpenVG_la_SOURCES =\
 	shPath.c\
 	shImage.c\
 	shPaint.c\
+	shFont.c\
 	shGeometry.c\
 	shPipeline.c\
 	shParams.c\

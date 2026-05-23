@@ -56,6 +56,10 @@ if BUILD_TIGER_SHADER
 noinst_PROGRAMS += test_tiger_shader
 endif
 
+if BUILD_FONT
+noinst_PROGRAMS += test_font
+endif
+
 test_vgu_SOURCES =\
 	${EXAMPLE_SRCS} test_vgu.c
 
@@ -91,6 +95,9 @@ test_pbuffer_SOURCES =\
 
 test_egl_gl_vg_SOURCES =\
 	${EXAMPLE_SRCS} test_egl_gl_vg.c
+
+test_font_SOURCES =\
+	${EXAMPLE_SRCS} test_font.c
 
 test_vgu_CFLAGS = ${EXAMPLE_CF}
 test_vgu_LDADD = ${EXAMPLE_LA}
@@ -139,3 +146,7 @@ test_pbuffer_LDFLAGS = ${EXAMPLE_LF}
 test_egl_gl_vg_CFLAGS = ${EXAMPLE_CF}
 test_egl_gl_vg_LDADD = ${EXAMPLE_LA}
 test_egl_gl_vg_LDFLAGS = ${EXAMPLE_LF}
+
+test_font_CFLAGS = ${EXAMPLE_CF}
+test_font_LDADD = ${EXAMPLE_LA}
+test_font_LDFLAGS = ${EXAMPLE_LF}

@@ -35,6 +35,7 @@ int shIsParamVector(SHint type)
     (type == VG_SCISSOR_RECTS ||
      type == VG_STROKE_DASH_PATTERN ||
      type == VG_TILE_FILL_COLOR ||
+     type == VG_GLYPH_ORIGIN ||
      type == VG_CLEAR_COLOR ||
      type == VG_PAINT_COLOR ||
      type == VG_PAINT_COLOR_RAMP_STOPS ||
@@ -56,7 +57,8 @@ int shIsEnumValid(SHint type, VGint val)
     return (val == VG_MATRIX_PATH_USER_TO_SURFACE ||
             val == VG_MATRIX_IMAGE_USER_TO_SURFACE ||
             val == VG_MATRIX_FILL_PAINT_TO_USER ||
-            val == VG_MATRIX_STROKE_PAINT_TO_USER);
+            val == VG_MATRIX_STROKE_PAINT_TO_USER ||
+            val == VG_MATRIX_GLYPH_USER_TO_SURFACE);
     
   case VG_FILL_RULE:
     return (val == VG_EVEN_ODD ||
@@ -385,6 +387,14 @@ static void shSet(VGContext *context, VGParamType type, SHint count,
          shParamToFloat(values, floats, 3));
     
     break;
+  case VG_GLYPH_ORIGIN:
+
+    SH_RETURN_ERR_IF(count!=2, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    SET2(context->glyphOrigin,
+         shParamToFloat(values, floats, 0),
+         shParamToFloat(values, floats, 1));
+
+    break;
   case VG_SCISSOR_RECTS:
     
     SH_RETURN_ERR_IF(count % 4, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
@@ -621,6 +631,13 @@ static void shGet(VGContext *context, VGParamType type, SHint count, void *value
     shFloatToParam(context->clearColor.a, count, values, floats, 3);
     
     break;
+  case VG_GLYPH_ORIGIN:
+
+    SH_RETURN_ERR_IF(count > 2, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    shFloatToParam(context->glyphOrigin.x, count, values, floats, 0);
+    shFloatToParam(context->glyphOrigin.y, count, values, floats, 1);
+
+    break;
   case VG_SCISSOR_RECTS:
     
     SH_RETURN_ERR_IF(count > context->scissor.size * 4,
@@ -814,6 +831,10 @@ VG_API_CALL VGint vgGetVectorSize(VGParamType type)
   case VG_CLEAR_COLOR:
     retval = 4;
     break;
+
+  case VG_GLYPH_ORIGIN:
+    retval = 2;
+    break;
     
   case VG_STROKE_DASH_PATTERN:
     retval = context->strokeDashPattern.size;
@@ -957,6 +978,16 @@ static void shSetParameter(VGContext *context, VGHandle object,
       /* Invalid VGParamType */
       SH_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
       
+    } break;
+  case SH_RESOURCE_FONT: switch (ptype) {/* Font parameters */
+
+    case VG_FONT_NUM_GLYPHS:
+      /* Read-only */ break;
+
+    default:
+      /* Invalid VGParamType */
+      SH_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+
     } break;
     
   default:
@@ -1196,6 +1227,18 @@ static void shGetParameter(VGContext *context, VGHandle object,
       SH_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
       
     } break;
+  case SH_RESOURCE_FONT: switch (ptype) { /* Font parameters */
+
+    case VG_FONT_NUM_GLYPHS:
+      SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+      shIntToParam(((SHFont*)object)->glyphs.size, count, values, floats, 0);
+      break;
+
+    default:
+      /* Invalid VGParamType */
+      SH_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+
+    } break;
     
   default:
     /* Invalid resource handle */
@@ -1373,6 +1416,16 @@ VG_API_CALL VGint vgGetParameterVectorSize(VGHandle object, VGint ptype)
       /* Invalid VGParamType */
       VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, retval);
       
+    } break;
+  case SH_RESOURCE_FONT: switch (ptype) { /* Font parameters */
+
+    case VG_FONT_NUM_GLYPHS:
+      retval = 1; break;
+
+    default:
+      /* Invalid VGParamType */
+      VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, retval);
+
     } break;
     
   default:

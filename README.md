@@ -83,6 +83,10 @@ $ ./test_tiger_shader
 #### test_egl_gl_vg
   Interleaves raw OpenGL and OpenVG drawing on the same EGL surface.
 
+#### test_font
+  Draws vector glyphs through the OpenVG font API, including glyphs whose
+  source paths have already been destroyed by the application.
+
 ## Implementation status
 
 #### General                                                        
@@ -179,6 +183,17 @@ vgWritePixels           | NOT implemented yet
 vgGetPixels             | FULLY implemented        
 vgReadPixels            | FULLY implemented        
 vgCopyPixels            | NOT implemented yet      
+
+#### Text
+API                     | status
+----------------------- | ---------------------
+vgCreateFont            | FULLY implemented
+vgDestroyFont           | FULLY implemented
+vgSetGlyphToPath        | FULLY implemented
+vgSetGlyphToImage       | FULLY implemented
+vgClearGlyph            | FULLY implemented
+vgDrawGlyph             | FULLY implemented
+vgDrawGlyphs            | FULLY implemented
                                                    
 #### Image Filters                                 
 API                     | status                   

@@ -27,6 +27,7 @@
 #include "shPath.h"
 #include "shPaint.h"
 #include "shImage.h"
+#include "shFont.h"
 
 /*------------------------------------------------
  * VGContext object
@@ -37,7 +38,8 @@ typedef enum
   SH_RESOURCE_INVALID   = 0,
   SH_RESOURCE_PATH      = 1,
   SH_RESOURCE_PAINT     = 2,
-  SH_RESOURCE_IMAGE     = 3
+  SH_RESOURCE_IMAGE     = 3,
+  SH_RESOURCE_FONT      = 4
 } SHResourceType;
 
 typedef struct
@@ -93,6 +95,8 @@ typedef struct
   SHMatrix3x3       imageTransform;
   SHMatrix3x3       fillTransform;
   SHMatrix3x3       strokeTransform;
+  SHMatrix3x3       glyphTransform;
+  SHVector2         glyphOrigin;
   
   /* Paints */
   SHPaint*          fillPaint;
@@ -105,6 +109,7 @@ typedef struct
   SHPathArray       paths;
   SHPaintArray      paints;
   SHImageArray      images;
+  SHFontArray       fonts;
 
   /* Pointers to extensions */
   
@@ -151,6 +156,7 @@ void shSetError(VGContext *c, VGErrorCode e);
 SHint shIsValidPath(VGContext *c, VGHandle h);
 SHint shIsValidPaint(VGContext *c, VGHandle h);
 SHint shIsValidImage(VGContext *c, VGHandle h);
+SHint shIsValidFont(VGContext *c, VGHandle h);
 SHResourceType shGetResourceType(VGContext *c, VGHandle h);
 VGContext* shGetContext();
 VGContext* shCreateContext(void);

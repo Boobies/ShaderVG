@@ -82,11 +82,14 @@ typedef struct
   SHfloat texwidthK;
   SHfloat texheightK;
   GLuint texture;
+  SHint refCount;
   
 } SHImage;
 
 void SHImage_ctor(SHImage *i);
 void SHImage_dtor(SHImage *i);
+void shImageAddRef(SHImage *i);
+void shImageRelease(SHImage *i);
 
 #define _ITEM_T SHImage*
 #define _ARRAY_T SHImageArray

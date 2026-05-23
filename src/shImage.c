@@ -467,6 +467,7 @@ void SHImage_ctor(SHImage *i)
   i->width = 0;
   i->height = 0;
   i->texture = 0;
+  i->refCount = 1;
 }
 
 void SHImage_dtor(SHImage *i)
@@ -476,6 +477,22 @@ void SHImage_dtor(SHImage *i)
   
   if (i->texture != 0 && glIsTexture(i->texture))
     glDeleteTextures(1, &i->texture);
+}
+
+void shImageAddRef(SHImage *i)
+{
+  if (i)
+    ++i->refCount;
+}
+
+void shImageRelease(SHImage *i)
+{
+  if (!i)
+    return;
+
+  --i->refCount;
+  if (i->refCount <= 0)
+    SH_DELETEOBJ(SHImage, i);
 }
 
 /*--------------------------------------------------------
@@ -596,9 +613,9 @@ VG_API_CALL void vgDestroyImage(VGImage image)
   index = shImageArrayFind(&context->images, (SHImage*)image);
   VG_RETURN_ERR_IF(index == -1, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
-  /* Delete object and remove resource */
-  SH_DELETEOBJ(SHImage, (SHImage*)image);
+  /* Remove the public handle; retained font glyphs may keep the object alive. */
   shImageArrayRemoveAt(&context->images, index);
+  shImageRelease((SHImage*)image);
   
   VG_RETURN(VG_NO_RETVAL);
 }

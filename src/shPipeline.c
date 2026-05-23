@@ -25,6 +25,7 @@
 #include "shContext.h"
 #include "shPath.h"
 #include "shImage.h"
+#include "shPipeline.h"
 #include "shGeometry.h"
 #include "shPaint.h"
 
@@ -265,21 +266,12 @@ VGboolean shIsStrokeCacheValid (VGContext *c, SHPath *p)
  * VGContext state.
  *-----------------------------------------------------------*/
 
-VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
+void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
 {
-  SHPath *p;
   SHMatrix3x3 mi;
   SHfloat mgl[16];
   SHPaint *fill, *stroke;
   SHRectangle *rect;
-  
-  VG_GETCONTEXT(VG_NO_RETVAL);
-  
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  
-  VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   /* Check whether scissoring is enabled and scissor
      rectangle is valid */
@@ -290,8 +282,6 @@ VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
     glScissor( (GLint)rect->x, (GLint)rect->y, (GLint)rect->w, (GLint)rect->h );
     glEnable( GL_SCISSOR_TEST );
   }
-  
-  p = (SHPath*)path;
   
   /* If user-to-surface matrix invertible tessellate in
      surface space for better path resolution */
@@ -397,18 +387,27 @@ VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
   VG_RETURN(VG_NO_RETVAL);
 }
 
-VG_API_CALL void vgDrawImage(VGImage image)
+VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
 {
-  SHImage *i;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  shDrawPath(context, (SHPath*)path, paintModes);
+
+  VG_RETURN(VG_NO_RETVAL);
+}
+
+void shDrawImage(VGContext *context, SHImage *i)
+{
   SHfloat mgl[16];
   SHPaint *fill;
   SHVector2 min, max;
   SHRectangle *rect;
-  
-  VG_GETCONTEXT(VG_NO_RETVAL);
-  
-  VG_RETURN_ERR_IF(!shIsValidImage(context, image),
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
   /* TODO: check if image is current render target */
   
@@ -423,7 +422,6 @@ VG_API_CALL void vgDrawImage(VGImage image)
   }
   
   /* Apply image-user-to-surface transformation */
-  i = (SHImage*)image;
   shMatrixToGL(&context->imageTransform, mgl);
   glUseProgram(context->progDraw);
   glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, mgl);
@@ -502,5 +500,17 @@ VG_API_CALL void vgDrawImage(VGImage image)
   if (context->scissoring == VG_TRUE)
     glDisable( GL_SCISSOR_TEST );
   
+  VG_RETURN(VG_NO_RETVAL);
+}
+
+VG_API_CALL void vgDrawImage(VGImage image)
+{
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidImage(context, image),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+
+  shDrawImage(context, (SHImage*)image);
+
   VG_RETURN(VG_NO_RETVAL);
 }

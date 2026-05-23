@@ -79,6 +79,7 @@ typedef struct SHPath
   SHint dataHint;
   VGbitfield caps;
   VGPathDatatype datatype;
+  SHint refCount;
   
   /* Raw data */
   SHuint8 *segs;
@@ -113,6 +114,8 @@ typedef struct SHPath
 
 void SHPath_ctor(SHPath *p);
 void SHPath_dtor(SHPath *p);
+void shPathAddRef(SHPath *p);
+void shPathRelease(SHPath *p);
 
 
 /* Processing normalization flags */

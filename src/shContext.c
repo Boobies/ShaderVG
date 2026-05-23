@@ -192,6 +192,8 @@ void VGContext_ctor(VGContext *c)
   SH_INITOBJ(SHMatrix3x3, c->imageTransform);
   SH_INITOBJ(SHMatrix3x3, c->fillTransform);
   SH_INITOBJ(SHMatrix3x3, c->strokeTransform);
+  SH_INITOBJ(SHMatrix3x3, c->glyphTransform);
+  SET2(c->glyphOrigin, 0.0f, 0.0f);
   
   /* Paints */
   c->fillPaint = NULL;
@@ -205,6 +207,7 @@ void VGContext_ctor(VGContext *c)
   SH_INITOBJ(SHPathArray, c->paths);
   SH_INITOBJ(SHPaintArray, c->paints);
   SH_INITOBJ(SHImageArray, c->images);
+  SH_INITOBJ(SHFontArray, c->fonts);
   
   /* GL state is initialized lazily after EGL makes the context current */
   c->progDraw = 0;
@@ -228,16 +231,20 @@ void VGContext_dtor(VGContext *c)
   SH_DEINITOBJ(SHFloatArray, c->strokeDashPattern);
   
   /* Destroy resources */
+  for (i=0; i<c->fonts.size; ++i)
+    SH_DELETEOBJ(SHFont, c->fonts.items[i]);
+
   for (i=0; i<c->paths.size; ++i)
-    SH_DELETEOBJ(SHPath, c->paths.items[i]);
+    shPathRelease(c->paths.items[i]);
   
   for (i=0; i<c->paints.size; ++i)
     SH_DELETEOBJ(SHPaint, c->paints.items[i]);
   
   for (i=0; i<c->images.size; ++i)
-    SH_DELETEOBJ(SHImage, c->images.items[i]);
+    shImageRelease(c->images.items[i]);
 
   SH_DEINITOBJ(SHPaint, c->defaultPaint);
+  SH_DEINITOBJ(SHFontArray, c->fonts);
   SH_DEINITOBJ(SHPathArray, c->paths);
   SH_DEINITOBJ(SHPaintArray, c->paints);
   SH_DEINITOBJ(SHImageArray, c->images);
@@ -265,6 +272,12 @@ SHint shIsValidImage(VGContext *c, VGHandle h)
   return (index == -1) ? 0 : 1;
 }
 
+SHint shIsValidFont(VGContext *c, VGHandle h)
+{
+  int index = shFontArrayFind(&c->fonts, (SHFont*)h);
+  return (index == -1) ? 0 : 1;
+}
+
 /*--------------------------------------------------
  * Tries to find a resources in this context and
  * return its type or invalid flag.
@@ -280,6 +293,9 @@ SHResourceType shGetResourceType(VGContext *c, VGHandle h)
   
   else if (shIsValidImage(c, h))
     return SH_RESOURCE_IMAGE;
+
+  else if (shIsValidFont(c, h))
+    return SH_RESOURCE_FONT;
   
   else
     return SH_RESOURCE_INVALID;
@@ -380,8 +396,10 @@ SHMatrix3x3* shCurrentMatrix(VGContext *c)
     return &c->imageTransform;
   case VG_MATRIX_FILL_PAINT_TO_USER:
     return &c->fillTransform;
-  default:
+  case VG_MATRIX_STROKE_PAINT_TO_USER:
     return &c->strokeTransform;
+  default:
+    return &c->glyphTransform;
   }
 }
 

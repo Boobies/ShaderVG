@@ -20,6 +20,59 @@ static int fail_vg(const char *message)
   return 1;
 }
 
+static VGPath create_glyph_square(void)
+{
+  VGPath path;
+  VGubyte segments[] = {
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_CLOSE_PATH
+  };
+  VGfloat coords[] = {
+    0.0f, 0.0f,
+    32.0f, 0.0f,
+    32.0f, 32.0f,
+    0.0f, 32.0f
+  };
+
+  path = vgCreatePath(VG_PATH_FORMAT_STANDARD, VG_PATH_DATATYPE_F,
+                      1.0f, 0.0f, 5, 8, VG_PATH_CAPABILITY_ALL);
+  if (path != VG_INVALID_HANDLE)
+    vgAppendPathData(path, 5, segments, coords);
+
+  return path;
+}
+
+static void draw_retained_path_glyph(void)
+{
+  VGFont font;
+  VGPath path;
+  VGPaint paint;
+  VGfloat glyphOrigin[] = {0.0f, 0.0f};
+  VGfloat escapement[] = {34.0f, 0.0f};
+  VGfloat paintColor[] = {1.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat drawOrigin[] = {16.0f, 16.0f};
+
+  font = vgCreateFont(1);
+  path = create_glyph_square();
+  paint = vgCreatePaint();
+
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, paintColor);
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgSetGlyphToPath(font, 1, path, VG_FALSE, glyphOrigin, escapement);
+  vgDestroyPath(path);
+
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_GLYPH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSetfv(VG_GLYPH_ORIGIN, 2, drawOrigin);
+  vgDrawGlyph(font, 1, VG_FILL_PATH, VG_FALSE);
+
+  vgDestroyFont(font);
+  vgDestroyPaint(paint);
+}
+
 int main(void)
 {
   const EGLint width = 64;
@@ -83,6 +136,7 @@ int main(void)
 
   vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
   vgClear(0, 0, width, height);
+  draw_retained_path_glyph();
   vgFinish();
   vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
 
@@ -92,7 +146,13 @@ int main(void)
     fprintf(stderr, "OpenVG pbuffer readback produced a transparent pixel\n");
     result = 1;
   } else {
-    printf("EGL/OpenVG pbuffer smoke test passed on EGL %d.%d\n", major, minor);
+    size_t offset = ((size_t)32 * (size_t)width + 32u) * 4u;
+    if (pixels[offset] < 128 || pixels[offset + 3] == 0) {
+      fprintf(stderr, "OpenVG retained glyph drawing did not affect the expected pixel\n");
+      result = 1;
+    } else {
+      printf("EGL/OpenVG pbuffer smoke test passed on EGL %d.%d\n", major, minor);
+    }
   }
 
   free(pixels);

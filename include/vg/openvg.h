@@ -90,6 +90,9 @@ typedef enum {
   /* Color for vgClear */
   VG_CLEAR_COLOR                              = 0x1121,
 
+  /* Glyph origin for text rendering */
+  VG_GLYPH_ORIGIN                             = 0x1122,
+
   /* Enable/disable alpha masking and scissoring */
   VG_MASKING                                  = 0x1130,
   VG_SCISSORING                               = 0x1131,
@@ -137,7 +140,8 @@ typedef enum {
   VG_MATRIX_PATH_USER_TO_SURFACE              = 0x1400,
   VG_MATRIX_IMAGE_USER_TO_SURFACE             = 0x1401,
   VG_MATRIX_FILL_PAINT_TO_USER                = 0x1402,
-  VG_MATRIX_STROKE_PAINT_TO_USER              = 0x1403
+  VG_MATRIX_STROKE_PAINT_TO_USER              = 0x1403,
+  VG_MATRIX_GLYPH_USER_TO_SURFACE             = 0x1404
 } VGMatrixMode;
 
 typedef enum {
@@ -404,6 +408,10 @@ typedef enum {
   VG_EXTENSIONS                               = 0x2303
 } VGStringID;
 
+typedef enum {
+  VG_FONT_NUM_GLYPHS                          = 0x2F00
+} VGFontParamType;
+
 /* Function Prototypes */
 
 #if defined(_WIN32) || defined(__VC32__)
@@ -570,6 +578,35 @@ VG_API_CALL void vgReadPixels(void * data, VGint dataStride,
 VG_API_CALL void vgCopyPixels(VGint dx, VGint dy,
                               VGint sx, VGint sy,
                               VGint width, VGint height);
+
+/* Text */
+typedef VGHandle VGFont;
+
+VG_API_CALL VGFont vgCreateFont(VGint glyphCapacityHint);
+VG_API_CALL void vgDestroyFont(VGFont font);
+VG_API_CALL void vgSetGlyphToPath(VGFont font,
+                                  VGuint glyphIndex,
+                                  VGPath path,
+                                  VGboolean isHinted,
+                                  const VGfloat glyphOrigin[2],
+                                  const VGfloat escapement[2]);
+VG_API_CALL void vgSetGlyphToImage(VGFont font,
+                                   VGuint glyphIndex,
+                                   VGImage image,
+                                   const VGfloat glyphOrigin[2],
+                                   const VGfloat escapement[2]);
+VG_API_CALL void vgClearGlyph(VGFont font, VGuint glyphIndex);
+VG_API_CALL void vgDrawGlyph(VGFont font,
+                             VGuint glyphIndex,
+                             VGbitfield paintModes,
+                             VGboolean allowAutoHinting);
+VG_API_CALL void vgDrawGlyphs(VGFont font,
+                              VGint glyphCount,
+                              const VGuint *glyphIndices,
+                              const VGfloat *adjustments_x,
+                              const VGfloat *adjustments_y,
+                              VGbitfield paintModes,
+                              VGboolean allowAutoHinting);
 
 /* Image Filters */
 VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,

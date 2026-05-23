@@ -79,6 +79,7 @@ void SHPath_ctor(SHPath *p)
   p->bias = 0.0f;
   p->caps = 0;
   p->datatype = VG_PATH_DATATYPE_F;
+  p->refCount = 1;
   
   p->segs = NULL;
   p->data = NULL;
@@ -100,6 +101,22 @@ void SHPath_dtor(SHPath *p)
   
   SH_DEINITOBJ(SHVertexArray, p->vertices);
   SH_DEINITOBJ(SHVector2Array, p->stroke);
+}
+
+void shPathAddRef(SHPath *p)
+{
+  if (p)
+    ++p->refCount;
+}
+
+void shPathRelease(SHPath *p)
+{
+  if (!p)
+    return;
+
+  --p->refCount;
+  if (p->refCount <= 0)
+    SH_DELETEOBJ(SHPath, p);
 }
 
 /*-----------------------------------------------------
@@ -220,9 +237,9 @@ VG_API_CALL void vgDestroyPath(VGPath path)
   index = shPathArrayFind(&context->paths, (SHPath*)path);
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  /* Delete object and remove resource */
-  SH_DELETEOBJ(SHPath, (SHPath*)path);
+  /* Remove the public handle; retained font glyphs may keep the object alive. */
   shPathArrayRemoveAt(&context->paths, index);
+  shPathRelease((SHPath*)path);
   
   VG_RETURN_ERR(VG_NO_ERROR, VG_NO_RETVAL);
 }

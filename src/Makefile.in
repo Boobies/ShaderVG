@@ -134,10 +134,10 @@ libOpenVG_la_DEPENDENCIES =
 am_libOpenVG_la_OBJECTS = libOpenVG_la-shExtensions.lo \
 	libOpenVG_la-shArrays.lo libOpenVG_la-shVectors.lo \
 	libOpenVG_la-shPath.lo libOpenVG_la-shImage.lo \
-	libOpenVG_la-shPaint.lo libOpenVG_la-shGeometry.lo \
-	libOpenVG_la-shPipeline.lo libOpenVG_la-shParams.lo \
-	libOpenVG_la-shContext.lo libOpenVG_la-shaders.lo \
-	libOpenVG_la-shVgu.lo
+	libOpenVG_la-shPaint.lo libOpenVG_la-shFont.lo \
+	libOpenVG_la-shGeometry.lo libOpenVG_la-shPipeline.lo \
+	libOpenVG_la-shParams.lo libOpenVG_la-shContext.lo \
+	libOpenVG_la-shaders.lo libOpenVG_la-shVgu.lo
 libOpenVG_la_OBJECTS = $(am_libOpenVG_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -171,6 +171,7 @@ am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/libOpenVG_la-shArrays.Plo \
 	./$(DEPDIR)/libOpenVG_la-shContext.Plo \
 	./$(DEPDIR)/libOpenVG_la-shExtensions.Plo \
+	./$(DEPDIR)/libOpenVG_la-shFont.Plo \
 	./$(DEPDIR)/libOpenVG_la-shGeometry.Plo \
 	./$(DEPDIR)/libOpenVG_la-shImage.Plo \
 	./$(DEPDIR)/libOpenVG_la-shPaint.Plo \
@@ -368,7 +369,9 @@ libOpenVG_la_SOURCES = \
 	shPath.h\
 	shImage.h\
 	shPaint.h\
+	shFont.h\
 	shGeometry.h\
+	shPipeline.h\
 	shContext.h\
 	shaders.h\
 	shExtensions.c\
@@ -377,6 +380,7 @@ libOpenVG_la_SOURCES = \
 	shPath.c\
 	shImage.c\
 	shPaint.c\
+	shFont.c\
 	shGeometry.c\
 	shPipeline.c\
 	shParams.c\
@@ -475,6 +479,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libOpenVG_la-shArrays.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libOpenVG_la-shContext.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libOpenVG_la-shExtensions.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libOpenVG_la-shFont.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libOpenVG_la-shGeometry.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libOpenVG_la-shImage.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libOpenVG_la-shPaint.Plo@am__quote@ # am--include-marker
@@ -554,6 +559,13 @@ libOpenVG_la-shPaint.lo: shPaint.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='shPaint.c' object='libOpenVG_la-shPaint.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libOpenVG_la_CFLAGS) $(CFLAGS) -c -o libOpenVG_la-shPaint.lo `test -f 'shPaint.c' || echo '$(srcdir)/'`shPaint.c
+
+libOpenVG_la-shFont.lo: shFont.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libOpenVG_la_CFLAGS) $(CFLAGS) -MT libOpenVG_la-shFont.lo -MD -MP -MF $(DEPDIR)/libOpenVG_la-shFont.Tpo -c -o libOpenVG_la-shFont.lo `test -f 'shFont.c' || echo '$(srcdir)/'`shFont.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libOpenVG_la-shFont.Tpo $(DEPDIR)/libOpenVG_la-shFont.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='shFont.c' object='libOpenVG_la-shFont.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libOpenVG_la_CFLAGS) $(CFLAGS) -c -o libOpenVG_la-shFont.lo `test -f 'shFont.c' || echo '$(srcdir)/'`shFont.c
 
 libOpenVG_la-shGeometry.lo: shGeometry.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libOpenVG_la_CFLAGS) $(CFLAGS) -MT libOpenVG_la-shGeometry.lo -MD -MP -MF $(DEPDIR)/libOpenVG_la-shGeometry.Tpo -c -o libOpenVG_la-shGeometry.lo `test -f 'shGeometry.c' || echo '$(srcdir)/'`shGeometry.c
@@ -762,6 +774,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shArrays.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shContext.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shExtensions.Plo
+	-rm -f ./$(DEPDIR)/libOpenVG_la-shFont.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shGeometry.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shImage.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shPaint.Plo
@@ -820,6 +833,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shArrays.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shContext.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shExtensions.Plo
+	-rm -f ./$(DEPDIR)/libOpenVG_la-shFont.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shGeometry.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shImage.Plo
 	-rm -f ./$(DEPDIR)/libOpenVG_la-shPaint.Plo
