@@ -2,7 +2,7 @@
 
 <img src="/examples/test_tiger_shader.gif?raw=true" width="400px">
 
-_**Note:** This project is based on https://github.com/ileben/ShivaVG
+_**Note:** This project is based on https://github.com/ileben/ShivaVG_
 
 ## Main Features
 
