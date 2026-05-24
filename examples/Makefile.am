@@ -135,7 +135,7 @@ test_pattern_LDADD = ${EXAMPLE_LA} -ljpeg
 test_pattern_LDFLAGS = ${EXAMPLE_LF}
 
 test_blend_CFLAGS = ${EXAMPLE_CF}
-test_blend_LDADD = ${EXAMPLE_LA}
+test_blend_LDADD = ${EXAMPLE_LA} @PNG_LIBS@
 test_blend_LDFLAGS = ${EXAMPLE_LF}
 
 test_tiger_shader_CFLAGS = ${EXAMPLE_CF}

@@ -119,6 +119,7 @@ EGL_CFLAGS=""
 DLOPEN_LIBS=""
 NATIVE_WINDOW_CFLAGS=""
 NATIVE_WINDOW_LIBS=""
+PNG_LIBS=""
 
 AC_SUBST([CONFIG_CFLAGS])
 AC_SUBST([CONFIG_LDFLAGS])
@@ -128,6 +129,7 @@ AC_SUBST([EGL_CFLAGS])
 AC_SUBST([DLOPEN_LIBS])
 AC_SUBST([NATIVE_WINDOW_CFLAGS])
 AC_SUBST([NATIVE_WINDOW_LIBS])
+AC_SUBST([PNG_LIBS])
 
 # ==============================================
 # Check for OpenGL and EGL headers
@@ -225,6 +227,38 @@ CFLAGS=""
 LDFLAGS=""
 
 # ==============================================
+# PNG library required for blending example
+
+CFLAGS="-I$prefix/include"
+LDFLAGS="-L/usr/local/lib -L$prefix/lib"
+
+AC_CHECK_HEADERS(
+	[png.h],
+	[has_png_h="yes"], [has_png_h="no"])
+
+AC_CHECK_LIB(
+	[png16], png_create_read_struct,
+	[has_png="yes"; PNG_LIBS="-lpng16"],
+	[AC_CHECK_LIB(
+		[png], png_create_read_struct,
+		[has_png="yes"; PNG_LIBS="-lpng"],
+		[has_png="no"])])
+
+if test "x$build_test_blend" = "xyes"; then
+
+	if test "x$has_png_h" = "xno"; then
+		build_test_blend="no (png library headers missing)"
+	else
+		if test "x$has_png" = "xno"; then
+			build_test_blend="no (failed linking with png library)"
+		fi
+	fi
+fi
+
+CFLAGS=""
+LDFLAGS=""
+
+# ==============================================
 # report failure on missing libraries
 
 NO_GL_H_MSG="
@@ -294,10 +328,12 @@ examples/Makefile
 #echo "EGL headers present     $has_egl_h"
 #echo "X11 headers present     $has_x11_h"
 #echo "JPEG headers present    $has_jpeg_h"
+#echo "PNG headers present     $has_png_h"
 #echo ""
 #echo "GL library present      $has_gl"
 #echo "X11 library present     $has_x11"
 #echo "JPEG library present    $has_jpeg"
+#echo "PNG library present     $has_png"
 
 EXAMPLES_LIST="
 ShaderVG will be compiled with the following example programs

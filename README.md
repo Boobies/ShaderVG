@@ -15,7 +15,8 @@ _**Note:** This project is based on https://github.com/ileben/ShivaVG_
 
 - OpenGL and EGL development libraries and headers should be installed.
 - X11 development libraries and headers are needed for the example window harness on Unix-like systems.
-- jpeglib needs to be installed for example programs that use images.
+- jpeglib is needed for the JPEG-backed image and pattern examples.
+- libpng is needed for the PNG-backed blending example.
 
 ### Compiling
 
@@ -75,6 +76,10 @@ $ ./test_tiger_shader
 #### test_pattern
   An image is drawn in multiply mode with an image pattern fill
   paint.
+
+#### test_blend
+  Loads PNG source and destination images and draws them with several
+  OpenVG blend modes.
 
 #### test_pbuffer
   Minimal EGL/OpenVG pbuffer smoke test that clears an offscreen surface
