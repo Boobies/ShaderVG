@@ -289,6 +289,61 @@ static int run_image_draw_test(unsigned char *pixels,
   return 0;
 }
 
+static int run_src_over_alpha_test(unsigned char *pixels,
+                                   EGLint width, EGLint height)
+{
+  VGPath rect = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+  VGfloat paintColor[] = {1.0f, 0.0f, 0.0f, 0.25f};
+  size_t sample = ((size_t)(height / 2) * (size_t)width +
+                   (size_t)(width / 2)) * 4u;
+  int i;
+  int result = 0;
+
+  rect = create_rect_path((VGfloat)width, (VGfloat)height);
+  paint = vgCreatePaint();
+  if (rect == VG_INVALID_HANDLE || paint == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG source-over alpha test setup failed");
+    goto cleanup;
+  }
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, paintColor);
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+
+  for (i=0; i<3; ++i)
+    vgDrawPath(rect, VG_FILL_PATH);
+
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+
+  if (expect_no_vg_error("OpenVG source-over alpha test failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (pixels[sample + 3] < 100) {
+    fprintf(stderr,
+            "OpenVG source-over alpha stayed too low: %u\n",
+            pixels[sample + 3]);
+    result = 1;
+  }
+
+cleanup:
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+  return result;
+}
+
 static int expect_pixel(const unsigned char *pixels,
                         EGLint width,
                         EGLint x,
@@ -1308,6 +1363,8 @@ int main(void)
       result = 1;
     } else {
       result = run_image_draw_test(pixels, width, height);
+      if (result == 0)
+        result = run_src_over_alpha_test(pixels, width, height);
       if (result == 0)
         result = run_client_buffer_pbuffer_test(display, config, surface,
                                                 context, pixels, width, height);

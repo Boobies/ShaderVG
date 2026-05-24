@@ -219,7 +219,8 @@ void shUpdateColorRampTexture(SHPaint *p)
 
 void shValidateInputStops(SHPaint *p)
 {
-  SHStop *instop, stop;
+  SHStop *instop = NULL;
+  SHStop stop = {0};
   SHfloat lastOffset=0.0f;
   int i;
   
@@ -427,6 +428,8 @@ int shLoadLinearGradientMesh(SHPaint *p, VGPaintMode mode, VGMatrixMode matrixMo
 
   /* Pick paint transform matrix */
   SH_GETCONTEXT(0);
+  (void)matrixMode;
+  m = &context->fillTransform;
   if (mode == VG_FILL_PATH)
     m = &context->fillTransform;
   else if (mode == VG_STROKE_PATH)
@@ -457,6 +460,8 @@ int shLoadRadialGradientMesh(SHPaint *p, VGPaintMode mode, VGMatrixMode matrixMo
 
   /* Pick paint transform matrix */
   SH_GETCONTEXT(0);
+  (void)matrixMode;
+  m = &context->fillTransform;
   if (mode == VG_FILL_PATH)
     m = &context->fillTransform;
   else if (mode == VG_STROKE_PATH)
@@ -488,6 +493,8 @@ int shLoadPatternMesh(SHPaint *p, VGPaintMode mode, VGMatrixMode matrixMode)
 
   /* Pick paint transform matrix */
   SH_GETCONTEXT(0);
+  (void)matrixMode;
+  m = &context->fillTransform;
   if (mode == VG_FILL_PATH)
     m = &context->fillTransform;
   else if (mode == VG_STROKE_PATH)

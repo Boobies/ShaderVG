@@ -87,7 +87,8 @@ void updateBlendingStateGL(VGContext *c, int alphaIsOne)
     glEnable(GL_BLEND); break;
 
   case VG_BLEND_SRC_OVER: default:
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                        GL_ONE_MINUS_DST_ALPHA, GL_ONE);
     if (alphaIsOne && c->masking == VG_FALSE) glDisable(GL_BLEND);
     else glEnable(GL_BLEND); break;
   };
@@ -119,10 +120,19 @@ static void shApplyMaskState(VGContext *context)
 static void shDrawStroke(SHPath *p)
 {
   VG_GETCONTEXT(VG_NO_RETVAL);
+  SHVertexState vertexState;
+
+  shBindContextVertexState(context, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER,
+               sizeof(SHVector2) * p->stroke.size,
+               p->stroke.items,
+               GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(context->locationDraw.pos);
-  glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE, 0, p->stroke.items);
+  glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE,
+                        0, (const GLvoid*)0);
   glDrawArrays(GL_TRIANGLES, 0, p->stroke.size);
   glDisableVertexAttribArray(context->locationDraw.pos);
+  shRestoreVertexState(&vertexState);
   GL_CEHCK_ERROR;
 }
 
@@ -139,8 +149,16 @@ static void shDrawVertices(SHPath *p, GLenum mode)
   /* We separate vertex arrays by contours to properly
      handle the fill modes */
   VG_GETCONTEXT(VG_NO_RETVAL);
+  SHVertexState vertexState;
+
+  shBindContextVertexState(context, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER,
+               sizeof(SHVertex) * p->vertices.size,
+               p->vertices.items,
+               GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(context->locationDraw.pos);
-  glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE, sizeof(SHVertex), p->vertices.items);
+  glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE,
+                        sizeof(SHVertex), (const GLvoid*)0);
   
   while (start < p->vertices.size) {
     size = p->vertices.items[start].flags;
@@ -149,6 +167,7 @@ static void shDrawVertices(SHPath *p, GLenum mode)
   }
   
   glDisableVertexAttribArray(context->locationDraw.pos);
+  shRestoreVertexState(&vertexState);
   GL_CEHCK_ERROR;
 }
 
@@ -161,11 +180,13 @@ static void shDrawVertices(SHPath *p, GLenum mode)
 static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
                             VGPaintMode mode, GLenum texUnit)
 {
-  SHPaint *p;
+  SHPaint *p = NULL;
   SHVector2 pmin, pmax;
   SHfloat K = 1.0f;
+  SHVertexState vertexState;
   
   /* Pick the right paint */
+  (void)texUnit;
   if (mode == VG_FILL_PATH) {
     p = (c->fillPaint ? c->fillPaint : &c->defaultPaint);
   }else if (mode == VG_STROKE_PATH) {
@@ -209,11 +230,15 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
                   pmax.x, pmin.y,
                   pmin.x, pmax.y,
                   pmax.x, pmax.y };
+  shBindContextVertexState(c, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(v), v, GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(c->locationDraw.pos);
-  glVertexAttribPointer(c->locationDraw.pos, 2, GL_FLOAT, GL_FALSE, 0, v);
+  glVertexAttribPointer(c->locationDraw.pos, 2, GL_FLOAT, GL_FALSE,
+                        0, (const GLvoid*)0);
   shApplyMaskState(c);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glDisableVertexAttribArray(c->locationDraw.pos);
+  shRestoreVertexState(&vertexState);
   GL_CEHCK_ERROR;
 }
 
@@ -224,6 +249,7 @@ static void shDrawCoverageMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
   SHVector2 pmin, pmax;
   SHfloat K = 1.0f;
   GLfloat v[8];
+  SHVertexState vertexState;
 
   if (mode == VG_STROKE_PATH)
     K = SH_CEIL(c->strokeMiterLimit * c->strokeLineWidth) + 1.0f;
@@ -241,10 +267,14 @@ static void shDrawCoverageMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
   v[4] = pmin.x; v[5] = pmax.y;
   v[6] = pmax.x; v[7] = pmax.y;
 
+  shBindContextVertexState(c, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(v), v, GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(c->locationDraw.pos);
-  glVertexAttribPointer(c->locationDraw.pos, 2, GL_FLOAT, GL_FALSE, 0, v);
+  glVertexAttribPointer(c->locationDraw.pos, 2, GL_FLOAT, GL_FALSE,
+                        0, (const GLvoid*)0);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glDisableVertexAttribArray(c->locationDraw.pos);
+  shRestoreVertexState(&vertexState);
   SHPaint_dtor(&coveragePaint);
   GL_CEHCK_ERROR;
 }
@@ -295,6 +325,8 @@ typedef struct
   GLint renderbuffer;
   GLint viewport[4];
   GLint program;
+  GLint vertexArray;
+  GLint arrayBuffer;
   GLint activeTexture;
   GLint maskTextureBinding;
   GLint drawBuffer;
@@ -328,6 +360,8 @@ static void shSaveRenderToMaskGLState(SHRenderToMaskGLState *state)
   glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
   glGetIntegerv(GL_VIEWPORT, state->viewport);
   glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
+  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
   glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
   glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
   glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
@@ -391,6 +425,8 @@ static void shRestoreRenderToMaskGLState(const SHRenderToMaskGLState *state)
   glDrawBuffer(state->drawBuffer);
   glReadBuffer(state->readBuffer);
   glUseProgram(state->program);
+  glBindVertexArray((GLuint)state->vertexArray);
+  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
   glViewport(state->viewport[0], state->viewport[1],
              state->viewport[2], state->viewport[3]);
   glActiveTexture(SH_TEXTURE_MASK);
@@ -841,10 +877,18 @@ VG_API_CALL void vgRenderToMask(VGPath path,
 
 void shDrawImage(VGContext *context, SHImage *i)
 {
+  typedef struct
+  {
+    GLfloat x;
+    GLfloat y;
+    GLfloat u;
+    GLfloat v;
+  } SHImageVertex;
   SHfloat mgl[16];
   SHPaint *fill;
-  SHVector2 min, max;
   SHRectangle *rect;
+  SHImageVertex vertices[4];
+  SHVertexState vertexState;
 
   if (shImageIsRenderTarget(i)) {
     shSetError(context, VG_IMAGE_IN_USE_ERROR);
@@ -882,13 +926,30 @@ void shDrawImage(VGContext *context, SHImage *i)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   }
-  
+
+  vertices[0].x = 0.0f;
+  vertices[0].y = 0.0f;
+  vertices[0].u = 0.0f;
+  vertices[0].v = 0.0f;
+  vertices[1].x = i->width;
+  vertices[1].y = 0.0f;
+  vertices[1].u = 1.0f;
+  vertices[1].v = 0.0f;
+  vertices[2].x = 0.0f;
+  vertices[2].y = i->height;
+  vertices[2].u = 0.0f;
+  vertices[2].v = 1.0f;
+  vertices[3].x = i->width;
+  vertices[3].y = i->height;
+  vertices[3].u = 1.0f;
+  vertices[3].v = 1.0f;
+
+  shBindContextVertexState(context, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(context->locationDraw.textureUV);
-  GLfloat uv[] = { 0.0f, 0.0f,
-                   1.0f, 0.0f,
-                   0.0f, 1.0f,
-                   1.0f, 1.0f };
-  glVertexAttribPointer(context->locationDraw.textureUV, 2, GL_FLOAT, GL_FALSE, 0, uv);
+  glVertexAttribPointer(context->locationDraw.textureUV, 2, GL_FLOAT, GL_FALSE,
+                        sizeof(SHImageVertex),
+                        (const GLvoid*)(2 * sizeof(GLfloat)));
   glUniform1i(context->locationDraw.imageSampler, 0);
   GL_CEHCK_ERROR;
   
@@ -923,20 +984,17 @@ void shDrawImage(VGContext *context, SHImage *i)
       glUniform1i(context->locationDraw.imageMode, VG_DRAW_IMAGE_NORMAL );
   }
 
-  GLfloat v[] = { 0.0f, 0.0f,
-                  i->width, 0.0f,
-                  0.0f, i->height,
-                  i->width, i->height };
-  glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE, 0, v);
+  glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE,
+                        sizeof(SHImageVertex), (const GLvoid*)0);
   glEnableVertexAttribArray(context->locationDraw.pos);
   shApplyMaskState(context);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glDisableVertexAttribArray(context->locationDraw.pos);
+  glDisableVertexAttribArray(context->locationDraw.textureUV);
+  shRestoreVertexState(&vertexState);
     
   glDisable(GL_TEXTURE_2D);
   GL_CEHCK_ERROR;
- 
-  glDisableVertexAttribArray(context->locationDraw.textureUV);
 
   if (context->scissoring == VG_TRUE)
     glDisable( GL_SCISSOR_TEST );

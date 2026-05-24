@@ -189,7 +189,6 @@ static const char* vgShaderFragmentColorRamp =
 void shInitPiplelineShaders(void) {
 
   VG_GETCONTEXT(VG_NO_RETVAL);
-  GLint  compileStatus;
   const char* extendedStage;
   const char* buf[2];
   GLint size[2];
@@ -206,8 +205,7 @@ void shInitPiplelineShaders(void) {
   size[1] = strlen(extendedStage);
   glShaderSource(context->vs, 2, buf, size);
   glCompileShader(context->vs);
-  glGetShaderiv(context->vs, GL_COMPILE_STATUS, &compileStatus);
-  printf("Shader compile status :%d line:%d\n", compileStatus, __LINE__);
+  SH_CHECK_SHADER_COMPILE(context->vs, "pipeline vertex");
   GL_CEHCK_ERROR;
 
   context->fs = glCreateShader(GL_FRAGMENT_SHADER);
@@ -222,8 +220,7 @@ void shInitPiplelineShaders(void) {
   size[1] = strlen(extendedStage);
   glShaderSource(context->fs, 2, buf, size);
   glCompileShader(context->fs);
-  glGetShaderiv(context->fs, GL_COMPILE_STATUS, &compileStatus);
-  printf("Shader compile status :%d line:%d\n", compileStatus, __LINE__);
+  SH_CHECK_SHADER_COMPILE(context->fs, "pipeline fragment");
   GL_CEHCK_ERROR;
 
   context->progDraw = glCreateProgram();
@@ -282,20 +279,17 @@ void shDeinitPiplelineShaders(void){
 void shInitRampShaders(void) {
 
   VG_GETCONTEXT(VG_NO_RETVAL);
-  GLint  compileStatus;
 
   GLuint vs = glCreateShader(GL_VERTEX_SHADER);
   glShaderSource(vs, 1, &vgShaderVertexColorRamp, NULL);
   glCompileShader(vs);
-  glGetShaderiv(vs, GL_COMPILE_STATUS, &compileStatus);
-  printf("Shader compile status :%d line:%d\n", compileStatus, __LINE__);
+  SH_CHECK_SHADER_COMPILE(vs, "ramp vertex");
   GL_CEHCK_ERROR;
 
   GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
   glShaderSource(fs, 1, &vgShaderFragmentColorRamp, NULL);
   glCompileShader(fs);
-  glGetShaderiv(fs, GL_COMPILE_STATUS, &compileStatus);
-  printf("Shader compile status :%d line:%d\n", compileStatus, __LINE__);
+  SH_CHECK_SHADER_COMPILE(fs, "ramp fragment");
   GL_CEHCK_ERROR;
 
   context->progColorRamp = glCreateProgram();

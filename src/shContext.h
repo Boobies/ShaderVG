@@ -182,6 +182,8 @@ typedef struct
   GLuint progDraw;
   GLuint progColorRamp;
   GLuint progMask;
+  GLuint arrayObject;
+  GLuint arrayBuffer;
 
   /* GL shaders */
   const void* userShaderVertex;
@@ -193,6 +195,12 @@ typedef struct
   VGboolean glInitialized;
 
 } VGContext;
+
+typedef struct
+{
+  GLint vertexArray;
+  GLint arrayBuffer;
+} SHVertexState;
 
 void VGContext_ctor(VGContext *c);
 void VGContext_dtor(VGContext *c);
@@ -214,6 +222,8 @@ VGboolean shSetCurrentContextForImage(VGContext *c,
 void shClearCurrentContext(void);
 void shResizeCurrentSurface(VGint width, VGint height);
 void shMarkRenderTargetDirty(VGContext *c);
+void shBindContextVertexState(VGContext *c, SHVertexState *state);
+void shRestoreVertexState(const SHVertexState *state);
 void shEnsureMaskTexture(VGContext *c);
 VGboolean shApplyMaskTextureToSurface(VGContext *c,
                                       GLuint texture,

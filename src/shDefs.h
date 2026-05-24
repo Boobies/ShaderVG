@@ -23,7 +23,7 @@
 
 /* Standard headers */
 
-#if defined(WIN32)
+#if defined(_WIN32) || defined(WIN32)
 #  include <windows.h>
 #endif
 
@@ -31,6 +31,7 @@
 #include <assert.h>
 #include <math.h>
 #include <float.h>
+#include <stdio.h>
 
 #ifndef __APPLE__
 #  include <malloc.h>
@@ -139,10 +140,10 @@ SHfloat getMaxFloat();
 /* OpenGL headers */
 
 #if defined(__APPLE__)
-#  include <OpenGL/gl.h>
+#  include <OpenGL/gl3.h>
 #elif defined(_WIN32)
-#  define GL_GLEXT_PROTOTYPES
-#  include <GL/glcorearb.h>
+#  include <GL/gl.h>
+#  include <GL/glext.h>
 #else
 #  define GL_GLEXT_PROTOTYPES
 #  include <GL/glcorearb.h>

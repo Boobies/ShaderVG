@@ -25,8 +25,6 @@
 #include <string.h>
 #include <stdio.h>
 
-void shLoadExtensions(void *c);
-
 #define _ITEM_T SHMaskLayer*
 #define _ARRAY_T SHMaskLayerArray
 #define _FUNC_T shMaskLayerArray
@@ -45,6 +43,26 @@ void shLoadExtensions(void *c);
 #endif
 
 static SH_TLS VGContext *g_current_context = NULL;
+
+void shBindContextVertexState(VGContext *context, SHVertexState *state)
+{
+  if (!context || !state)
+    return;
+
+  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
+  glBindVertexArray(context->arrayObject);
+  glBindBuffer(GL_ARRAY_BUFFER, context->arrayBuffer);
+}
+
+void shRestoreVertexState(const SHVertexState *state)
+{
+  if (!state)
+    return;
+
+  glBindVertexArray((GLuint)state->vertexArray);
+  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
+}
 
 #define SH_MASK_SOURCE_CONSTANT 0
 #define SH_MASK_SOURCE_RED      1
@@ -257,20 +275,16 @@ void shEnsureMaskTexture(VGContext *context)
 
 static VGboolean shInitMaskProgram(VGContext *context)
 {
-  GLint compileStatus;
-
   context->maskVs = glCreateShader(GL_VERTEX_SHADER);
   glShaderSource(context->maskVs, 1, &shMaskVertexShaderSource, NULL);
   glCompileShader(context->maskVs);
-  glGetShaderiv(context->maskVs, GL_COMPILE_STATUS, &compileStatus);
-  printf("Shader compile status :%d line:%d\n", compileStatus, __LINE__);
+  SH_CHECK_SHADER_COMPILE(context->maskVs, "mask vertex");
   GL_CEHCK_ERROR;
 
   context->maskFs = glCreateShader(GL_FRAGMENT_SHADER);
   glShaderSource(context->maskFs, 1, &shMaskFragmentShaderSource, NULL);
   glCompileShader(context->maskFs);
-  glGetShaderiv(context->maskFs, GL_COMPILE_STATUS, &compileStatus);
-  printf("Shader compile status :%d line:%d\n", compileStatus, __LINE__);
+  SH_CHECK_SHADER_COMPILE(context->maskFs, "mask fragment");
   GL_CEHCK_ERROR;
 
   context->progMask = glCreateProgram();
@@ -348,6 +362,29 @@ static void shResizeSurface(VGContext *context, VGint width, VGint height)
   }
 }
 
+static VGboolean shInitContextVertexState(VGContext *context)
+{
+  if (context->arrayObject == 0)
+    glGenVertexArrays(1, &context->arrayObject);
+  if (context->arrayBuffer == 0)
+    glGenBuffers(1, &context->arrayBuffer);
+
+  return context->arrayObject != 0 && context->arrayBuffer != 0;
+}
+
+static void shDeinitContextVertexState(VGContext *context)
+{
+  if (context->arrayBuffer != 0) {
+    glDeleteBuffers(1, &context->arrayBuffer);
+    context->arrayBuffer = 0;
+  }
+
+  if (context->arrayObject != 0) {
+    glDeleteVertexArrays(1, &context->arrayObject);
+    context->arrayObject = 0;
+  }
+}
+
 static VGboolean shInitContextGL(VGContext *context, VGint width, VGint height)
 {
   if (!context)
@@ -359,6 +396,8 @@ static VGboolean shInitContextGL(VGContext *context, VGint width, VGint height)
     return VG_TRUE;
 
   shLoadExtensions(context);
+  if (!shInitContextVertexState(context))
+    return VG_FALSE;
   shInitPiplelineShaders();
   shInitRampShaders();
   context->glInitialized = VG_TRUE;
@@ -391,6 +430,7 @@ void shDestroyContext(VGContext *context)
     shDeinitMaskProgram(context);
     shDeinitPiplelineShaders();
     shDeinitRampShaders();
+    shDeinitContextVertexState(context);
     context->glInitialized = VG_FALSE;
   }
 
@@ -528,6 +568,8 @@ void VGContext_ctor(VGContext *c)
   c->progDraw = 0;
   c->progColorRamp = 0;
   c->progMask = 0;
+  c->arrayObject = 0;
+  c->arrayBuffer = 0;
   c->userShaderVertex = NULL;
   c->userShaderFragment = NULL;
   c->vs = 0;
@@ -558,6 +600,10 @@ void VGContext_dtor(VGContext *c)
     glDeleteFramebuffers(1, &c->renderToMaskFramebuffer);
   if (c->renderToMaskStencil != 0)
     glDeleteRenderbuffers(1, &c->renderToMaskStencil);
+  if (c->arrayBuffer != 0)
+    glDeleteBuffers(1, &c->arrayBuffer);
+  if (c->arrayObject != 0)
+    glDeleteVertexArrays(1, &c->arrayObject);
   
   /* Destroy resources */
   for (i=0; i<c->fonts.size; ++i)
@@ -688,6 +734,8 @@ typedef struct
   GLint renderbuffer;
   GLint viewport[4];
   GLint program;
+  GLint vertexArray;
+  GLint arrayBuffer;
   GLint activeTexture;
   GLint maskTextureBinding;
   GLint drawBuffer;
@@ -721,6 +769,8 @@ static void shSaveMaskGLState(SHMaskGLState *state)
   glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
   glGetIntegerv(GL_VIEWPORT, state->viewport);
   glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
+  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
   glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
   glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
   glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
@@ -784,6 +834,8 @@ static void shRestoreMaskGLState(const SHMaskGLState *state)
   glDrawBuffer(state->drawBuffer);
   glReadBuffer(state->readBuffer);
   glUseProgram(state->program);
+  glBindVertexArray((GLuint)state->vertexArray);
+  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
   glViewport(state->viewport[0], state->viewport[1],
              state->viewport[2], state->viewport[3]);
   glActiveTexture(SH_TEXTURE_MASK);
@@ -826,25 +878,35 @@ static void shDrawMaskRect(VGContext *context,
                            VGfloat s1, VGfloat t1,
                            VGMaskOperation operation)
 {
-  GLfloat positions[8];
-  GLfloat texCoords[8];
+  typedef struct
+  {
+    GLfloat x;
+    GLfloat y;
+    GLfloat s;
+    GLfloat t;
+  } SHMaskVertex;
+  SHMaskVertex vertices[4];
+  SHVertexState vertexState;
 
   if (context->progMask == 0)
     shInitMaskProgram(context);
 
-  positions[0] = (GLfloat)x;
-  positions[1] = (GLfloat)y;
-  positions[2] = (GLfloat)(x + width);
-  positions[3] = (GLfloat)y;
-  positions[4] = (GLfloat)x;
-  positions[5] = (GLfloat)(y + height);
-  positions[6] = (GLfloat)(x + width);
-  positions[7] = (GLfloat)(y + height);
-
-  texCoords[0] = s0; texCoords[1] = t0;
-  texCoords[2] = s1; texCoords[3] = t0;
-  texCoords[4] = s0; texCoords[5] = t1;
-  texCoords[6] = s1; texCoords[7] = t1;
+  vertices[0].x = (GLfloat)x;
+  vertices[0].y = (GLfloat)y;
+  vertices[0].s = s0;
+  vertices[0].t = t0;
+  vertices[1].x = (GLfloat)(x + width);
+  vertices[1].y = (GLfloat)y;
+  vertices[1].s = s1;
+  vertices[1].t = t0;
+  vertices[2].x = (GLfloat)x;
+  vertices[2].y = (GLfloat)(y + height);
+  vertices[2].s = s0;
+  vertices[2].t = t1;
+  vertices[3].x = (GLfloat)(x + width);
+  vertices[3].y = (GLfloat)(y + height);
+  vertices[3].s = s1;
+  vertices[3].t = t1;
 
   glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
   glViewport(0, 0, targetWidth, targetHeight);
@@ -871,15 +933,19 @@ static void shDrawMaskRect(VGContext *context,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   }
 
+  shBindContextVertexState(context, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(context->locationMask.pos);
-  glVertexAttribPointer(context->locationMask.pos, 2,
-                        GL_FLOAT, GL_FALSE, 0, positions);
+  glVertexAttribPointer(context->locationMask.pos, 2, GL_FLOAT, GL_FALSE,
+                        sizeof(SHMaskVertex), (const GLvoid*)0);
   glEnableVertexAttribArray(context->locationMask.texCoord);
-  glVertexAttribPointer(context->locationMask.texCoord, 2,
-                        GL_FLOAT, GL_FALSE, 0, texCoords);
+  glVertexAttribPointer(context->locationMask.texCoord, 2, GL_FLOAT, GL_FALSE,
+                        sizeof(SHMaskVertex),
+                        (const GLvoid*)(2 * sizeof(GLfloat)));
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glDisableVertexAttribArray(context->locationMask.texCoord);
   glDisableVertexAttribArray(context->locationMask.pos);
+  shRestoreVertexState(&vertexState);
   GL_CEHCK_ERROR;
 }
 

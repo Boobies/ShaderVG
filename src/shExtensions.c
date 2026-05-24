@@ -19,118 +19,197 @@
  */
 
 #define VG_API_EXPORT
-#include "shExtensions.h"
-#include <stdio.h>
-#include <string.h>
-#include <GL/glcorearb.h>
+#include "shDefs.h"
 
 /*-----------------------------------------------------
  * OpenGL core profile
  *-----------------------------------------------------*/
 #if defined(_WIN32)
-   PFNGLUNIFORM1IPROC                glUniform1i;
-   PFNGLUNIFORM2FVPROC               glUniform2fv;
-   PFNGLUNIFORMMATRIX3FVPROC         glUniformMatrix3fv;
-   PFNGLUNIFORM2FPROC                glUniform2f;
-   PFNGLUNIFORM4FVPROC               glUniform4fv;
-   PFNGLENABLEVERTEXATTRIBARRAYPROC  glEnableVertexAttribArray;
-   PFNGLVERTEXATTRIBPOINTERPROC      glVertexAttribPointer;
-   PFNGLDISABLEVERTEXATTRIBARRAYPROC glDisableVertexAttribArray;
-   PFNGLUSEPROGRAMPROC               glUseProgram;
-   PFNGLUNIFORMMATRIX4FVPROC         glUniformMatrix4fv;
-   PFNGLCREATESHADERPROC             glCreateShader;
-   PFNGLSHADERSOURCEPROC             glShaderSource;
-   PFNGLCOMPILESHADERPROC            glCompileShader;
-   PFNGLGETSHADERIVPROC              glGetShaderiv;
-   PFNGLATTACHSHADERPROC             glAttachShader;
-   PFNGLLINKPROGRAMPROC              glLinkProgram;
-   PFNGLGETATTRIBLOCATIONPROC        glGetAttribLocation;
-   PFNGLGETUNIFORMLOCATIONPROC       glGetUniformLocation;
-   PFNGLDELETESHADERPROC             glDeleteShader;
-   PFNGLDELETEPROGRAMPROC            glDeleteProgram;
-   PFNGLUNIFORM1FPROC                glUniform1f;
-   PFNGLUNIFORM3FPROC                glUniform3f;
-   PFNGLUNIFORM4FPROC                glUniform4f;
-   PFNGLUNIFORM1FVPROC               glUniform1fv;
-   PFNGLUNIFORM3FVPROC               glUniform3fv;
-   PFNGLUNIFORMMATRIX2FVPROC         glUniformMatrix2fv;
-   PFNGLGETUNIFORMFVPROC             glGetUniformfv;
-   PFNGLCREATEPROGRAMPROC            glCreateProgram;
-   PFNGLACTIVETEXTUREPROC            glActiveTexture;
+PFNGLACTIVETEXTUREPROC              glActiveTexture;
+PFNGLATTACHSHADERPROC               glAttachShader;
+PFNGLBINDBUFFERPROC                 glBindBuffer;
+PFNGLBINDFRAMEBUFFERPROC            glBindFramebuffer;
+PFNGLBINDRENDERBUFFERPROC           glBindRenderbuffer;
+PFNGLBINDVERTEXARRAYPROC            glBindVertexArray;
+PFNGLBLENDEQUATIONPROC              glBlendEquation;
+PFNGLBLENDEQUATIONSEPARATEPROC      glBlendEquationSeparate;
+PFNGLBLENDFUNCSEPARATEPROC          glBlendFuncSeparate;
+PFNGLBUFFERDATAPROC                 glBufferData;
+PFNGLCHECKFRAMEBUFFERSTATUSPROC     glCheckFramebufferStatus;
+PFNGLCOMPILESHADERPROC              glCompileShader;
+PFNGLCREATEPROGRAMPROC              glCreateProgram;
+PFNGLCREATESHADERPROC               glCreateShader;
+PFNGLDELETEBUFFERSPROC              glDeleteBuffers;
+PFNGLDELETEFRAMEBUFFERSPROC         glDeleteFramebuffers;
+PFNGLDELETEPROGRAMPROC              glDeleteProgram;
+PFNGLDELETERENDERBUFFERSPROC        glDeleteRenderbuffers;
+PFNGLDELETESHADERPROC               glDeleteShader;
+PFNGLDELETEVERTEXARRAYSPROC         glDeleteVertexArrays;
+PFNGLDISABLEVERTEXATTRIBARRAYPROC   glDisableVertexAttribArray;
+PFNGLENABLEVERTEXATTRIBARRAYPROC    glEnableVertexAttribArray;
+PFNGLFRAMEBUFFERRENDERBUFFERPROC    glFramebufferRenderbuffer;
+PFNGLFRAMEBUFFERTEXTURE2DPROC       glFramebufferTexture2D;
+PFNGLGENBUFFERSPROC                 glGenBuffers;
+PFNGLGENFRAMEBUFFERSPROC            glGenFramebuffers;
+PFNGLGENRENDERBUFFERSPROC           glGenRenderbuffers;
+PFNGLGENVERTEXARRAYSPROC            glGenVertexArrays;
+PFNGLGETATTRIBLOCATIONPROC          glGetAttribLocation;
+PFNGLGETSHADERINFOLOGPROC           glGetShaderInfoLog;
+PFNGLGETSHADERIVPROC                glGetShaderiv;
+PFNGLGETUNIFORMFVPROC               glGetUniformfv;
+PFNGLGETUNIFORMLOCATIONPROC         glGetUniformLocation;
+PFNGLLINKPROGRAMPROC                glLinkProgram;
+PFNGLRENDERBUFFERSTORAGEPROC        glRenderbufferStorage;
+PFNGLSHADERSOURCEPROC               glShaderSource;
+PFNGLUNIFORM1FPROC                  glUniform1f;
+PFNGLUNIFORM1FVPROC                 glUniform1fv;
+PFNGLUNIFORM1IPROC                  glUniform1i;
+PFNGLUNIFORM1IVPROC                 glUniform1iv;
+PFNGLUNIFORM2FPROC                  glUniform2f;
+PFNGLUNIFORM2FVPROC                 glUniform2fv;
+PFNGLUNIFORM2IPROC                  glUniform2i;
+PFNGLUNIFORM2IVPROC                 glUniform2iv;
+PFNGLUNIFORM3FPROC                  glUniform3f;
+PFNGLUNIFORM3FVPROC                 glUniform3fv;
+PFNGLUNIFORM3IPROC                  glUniform3i;
+PFNGLUNIFORM3IVPROC                 glUniform3iv;
+PFNGLUNIFORM4FPROC                  glUniform4f;
+PFNGLUNIFORM4FVPROC                 glUniform4fv;
+PFNGLUNIFORM4IPROC                  glUniform4i;
+PFNGLUNIFORM4IVPROC                 glUniform4iv;
+PFNGLUNIFORMMATRIX2FVPROC           glUniformMatrix2fv;
+PFNGLUNIFORMMATRIX3FVPROC           glUniformMatrix3fv;
+PFNGLUNIFORMMATRIX4FVPROC           glUniformMatrix4fv;
+PFNGLUSEPROGRAMPROC                 glUseProgram;
+PFNGLVERTEXATTRIBPOINTERPROC        glVertexAttribPointer;
+
+static void *shGetProcAddress(const char *name)
+{
+  void *proc = (void*)wglGetProcAddress(name);
+
+  if (proc == NULL ||
+      proc == (void*)0x1 ||
+      proc == (void*)0x2 ||
+      proc == (void*)0x3 ||
+      proc == (void*)-1) {
+    static HMODULE opengl32 = NULL;
+    if (opengl32 == NULL)
+      opengl32 = LoadLibraryA("opengl32.dll");
+    proc = opengl32 ? (void*)GetProcAddress(opengl32, name) : NULL;
+  }
+
+  return proc;
+}
+
+#define SH_LOAD_GL(type, name) name = (type)shGetProcAddress(#name)
 #endif
-
-/*-----------------------------------------------------
- * Extensions check
- *-----------------------------------------------------*/
-static int checkExtension(const char *extensions, const char *name)
-{
-	int nlen = (int)strlen(name);
-	int elen = (int)strlen(extensions);
-	const char *e = extensions;
-	if(nlen <= 0) return 0;
-
-	while (1) {
-
-		/* Try to find sub-string */
-		e = strstr(e, name);
-    if (e == NULL) return 0;
-		/* Check if last */
-		if (e == extensions + elen - nlen)
-			return 1;
-		/* Check if space follows (avoid same names with a suffix) */
-    if (*(e + nlen) == ' ')
-      return 1;
-    
-    e += nlen;
-	}
-
-  return 0;
-}
-
-typedef void (*PFVOID)();
-
-PFVOID shGetProcAddress(const char *name)
-{
-  #if defined(_WIN32)
-  return (PFVOID)wglGetProcAddress(name);
-  #else
-  return (PFVOID)NULL;
-  #endif
-}
 
 void shLoadExtensions(void *c)
 {
-    if(shGetProcAddress == NULL) return;
+  (void)c;
 
-  #if defined(_WIN32)
-    glUniform1i                = shGetProcAddress("glUniform1i");
-    glUniform2fv               = shGetProcAddress("glUniform2fv");
-    glUniformMatrix3fv         = shGetProcAddress("glUniformMatrix3fv");
-    glUniform2f                = shGetProcAddress("glUniform2f");
-    glUniform4fv               = shGetProcAddress("glUniform4fv");
-    glEnableVertexAttribArray  = shGetProcAddress("glEnableVertexAttribArray");
-    glVertexAttribPointer      = shGetProcAddress("glVertexAttribPointer");
-    glDisableVertexAttribArray = shGetProcAddress("glDisableVertexAttribArray");
-    glUseProgram               = shGetProcAddress("glUseProgram");
-    glUniformMatrix4fv         = shGetProcAddress("glUniformMatrix4fv");
-    glCreateShader             = shGetProcAddress("glCreateShader");
-    glShaderSource             = shGetProcAddress("glShaderSource");
-    glCompileShader            = shGetProcAddress("glCompileShader");
-    glGetShaderiv              = shGetProcAddress("glGetShaderiv");
-    glAttachShader             = shGetProcAddress("glAttachShader");
-    glLinkProgram              = shGetProcAddress("glLinkProgram");
-    glGetAttribLocation        = shGetProcAddress("glGetAttribLocation");
-    glGetUniformLocation       = shGetProcAddress("glGetUniformLocation");
-    glDeleteShader             = shGetProcAddress("glDeleteShader");
-    glDeleteProgram            = shGetProcAddress("glDeleteProgram");
-    glUniform1f                = shGetProcAddress("glUniform1f");
-    glUniform3f                = shGetProcAddress("glUniform3f");
-    glUniform4f                = shGetProcAddress("glUniform4f");
-    glUniform1fv               = shGetProcAddress("glUniform1fv");
-    glUniform3fv               = shGetProcAddress("glUniform3fv");
-    glUniformMatrix2fv         = shGetProcAddress("glUniformMatrix2fv");
-    glGetUniformfv             = shGetProcAddress("glGetUniformfv");
-    glCreateProgram            = shGetProcAddress("glCreateProgram");
-    glActiveTexture            = shGetProcAddress("glActiveTexture");
-  #endif
+#if defined(_WIN32)
+  SH_LOAD_GL(PFNGLACTIVETEXTUREPROC, glActiveTexture);
+  SH_LOAD_GL(PFNGLATTACHSHADERPROC, glAttachShader);
+  SH_LOAD_GL(PFNGLBINDBUFFERPROC, glBindBuffer);
+  SH_LOAD_GL(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer);
+  SH_LOAD_GL(PFNGLBINDRENDERBUFFERPROC, glBindRenderbuffer);
+  SH_LOAD_GL(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray);
+  SH_LOAD_GL(PFNGLBLENDEQUATIONPROC, glBlendEquation);
+  SH_LOAD_GL(PFNGLBLENDEQUATIONSEPARATEPROC, glBlendEquationSeparate);
+  SH_LOAD_GL(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate);
+  SH_LOAD_GL(PFNGLBUFFERDATAPROC, glBufferData);
+  SH_LOAD_GL(PFNGLCHECKFRAMEBUFFERSTATUSPROC, glCheckFramebufferStatus);
+  SH_LOAD_GL(PFNGLCOMPILESHADERPROC, glCompileShader);
+  SH_LOAD_GL(PFNGLCREATEPROGRAMPROC, glCreateProgram);
+  SH_LOAD_GL(PFNGLCREATESHADERPROC, glCreateShader);
+  SH_LOAD_GL(PFNGLDELETEBUFFERSPROC, glDeleteBuffers);
+  SH_LOAD_GL(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers);
+  SH_LOAD_GL(PFNGLDELETEPROGRAMPROC, glDeleteProgram);
+  SH_LOAD_GL(PFNGLDELETERENDERBUFFERSPROC, glDeleteRenderbuffers);
+  SH_LOAD_GL(PFNGLDELETESHADERPROC, glDeleteShader);
+  SH_LOAD_GL(PFNGLDELETEVERTEXARRAYSPROC, glDeleteVertexArrays);
+  SH_LOAD_GL(PFNGLDISABLEVERTEXATTRIBARRAYPROC, glDisableVertexAttribArray);
+  SH_LOAD_GL(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray);
+  SH_LOAD_GL(PFNGLFRAMEBUFFERRENDERBUFFERPROC, glFramebufferRenderbuffer);
+  SH_LOAD_GL(PFNGLFRAMEBUFFERTEXTURE2DPROC, glFramebufferTexture2D);
+  SH_LOAD_GL(PFNGLGENBUFFERSPROC, glGenBuffers);
+  SH_LOAD_GL(PFNGLGENFRAMEBUFFERSPROC, glGenFramebuffers);
+  SH_LOAD_GL(PFNGLGENRENDERBUFFERSPROC, glGenRenderbuffers);
+  SH_LOAD_GL(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays);
+  SH_LOAD_GL(PFNGLGETATTRIBLOCATIONPROC, glGetAttribLocation);
+  SH_LOAD_GL(PFNGLGETSHADERINFOLOGPROC, glGetShaderInfoLog);
+  SH_LOAD_GL(PFNGLGETSHADERIVPROC, glGetShaderiv);
+  SH_LOAD_GL(PFNGLGETUNIFORMFVPROC, glGetUniformfv);
+  SH_LOAD_GL(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation);
+  SH_LOAD_GL(PFNGLLINKPROGRAMPROC, glLinkProgram);
+  SH_LOAD_GL(PFNGLRENDERBUFFERSTORAGEPROC, glRenderbufferStorage);
+  SH_LOAD_GL(PFNGLSHADERSOURCEPROC, glShaderSource);
+  SH_LOAD_GL(PFNGLUNIFORM1FPROC, glUniform1f);
+  SH_LOAD_GL(PFNGLUNIFORM1FVPROC, glUniform1fv);
+  SH_LOAD_GL(PFNGLUNIFORM1IPROC, glUniform1i);
+  SH_LOAD_GL(PFNGLUNIFORM1IVPROC, glUniform1iv);
+  SH_LOAD_GL(PFNGLUNIFORM2FPROC, glUniform2f);
+  SH_LOAD_GL(PFNGLUNIFORM2FVPROC, glUniform2fv);
+  SH_LOAD_GL(PFNGLUNIFORM2IPROC, glUniform2i);
+  SH_LOAD_GL(PFNGLUNIFORM2IVPROC, glUniform2iv);
+  SH_LOAD_GL(PFNGLUNIFORM3FPROC, glUniform3f);
+  SH_LOAD_GL(PFNGLUNIFORM3FVPROC, glUniform3fv);
+  SH_LOAD_GL(PFNGLUNIFORM3IPROC, glUniform3i);
+  SH_LOAD_GL(PFNGLUNIFORM3IVPROC, glUniform3iv);
+  SH_LOAD_GL(PFNGLUNIFORM4FPROC, glUniform4f);
+  SH_LOAD_GL(PFNGLUNIFORM4FVPROC, glUniform4fv);
+  SH_LOAD_GL(PFNGLUNIFORM4IPROC, glUniform4i);
+  SH_LOAD_GL(PFNGLUNIFORM4IVPROC, glUniform4iv);
+  SH_LOAD_GL(PFNGLUNIFORMMATRIX2FVPROC, glUniformMatrix2fv);
+  SH_LOAD_GL(PFNGLUNIFORMMATRIX3FVPROC, glUniformMatrix3fv);
+  SH_LOAD_GL(PFNGLUNIFORMMATRIX4FVPROC, glUniformMatrix4fv);
+  SH_LOAD_GL(PFNGLUSEPROGRAMPROC, glUseProgram);
+  SH_LOAD_GL(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer);
+#endif
+}
+
+void shCheckShaderCompile(GLuint shader,
+                          const char *label,
+                          const char *file,
+                          int line)
+{
+  GLint status = GL_FALSE;
+  GLint logLength = 0;
+  char log[2048];
+  GLsizei written = 0;
+
+#if defined(_WIN32)
+  if (!glGetShaderiv)
+    return;
+#endif
+
+  glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+  if (status == GL_TRUE)
+    return;
+
+  fprintf(stderr,
+          "Shader compile failed for %s at %s:%d\n",
+          label ? label : "shader",
+          file ? file : "<unknown>",
+          line);
+
+#if defined(_WIN32)
+  if (!glGetShaderInfoLog)
+    return;
+#endif
+
+  glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLength);
+  if (logLength <= 1)
+    return;
+
+  glGetShaderInfoLog(shader, (GLsizei)sizeof(log) - 1, &written, log);
+  if (written < 0)
+    written = 0;
+  if (written >= (GLsizei)sizeof(log))
+    written = (GLsizei)sizeof(log) - 1;
+  log[written] = '\0';
+
+  if (written > 0)
+    fprintf(stderr, "%s\n", log);
 }
