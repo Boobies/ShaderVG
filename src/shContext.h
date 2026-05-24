@@ -31,7 +31,8 @@
 
 typedef struct
 {
-  SHuint8 *data;
+  GLuint texture;
+  GLuint framebuffer;
   SHint width;
   SHint height;
 } SHMaskLayer;
@@ -83,11 +84,10 @@ typedef struct
 	SHRectArray        scissor;
   VGboolean          scissoring;
   VGboolean          masking;
-  SHuint8*           maskData;
   SHint              maskWidth;
   SHint              maskHeight;
   GLuint             maskTexture;
-  VGboolean          maskTextureDirty;
+  GLuint             maskFramebuffer;
   
 	/* Stroke parameters */
   SHfloat           strokeLineWidth;
@@ -159,6 +159,15 @@ typedef struct
   } locationDraw;
 
   struct {
+      GLint pos;
+      GLint texCoord;
+      GLint targetSize;
+      GLint sourceSampler;
+      GLint sourceMode;
+      GLint maskValue;
+  } locationMask;
+
+  struct {
       GLuint step;
       GLuint stepColor;
   } locationColorRamp;
@@ -166,12 +175,15 @@ typedef struct
   /* GL programs */
   GLuint progDraw;
   GLuint progColorRamp;
+  GLuint progMask;
 
   /* GL shaders */
   const void* userShaderVertex;
   const void* userShaderFragment;
   GLint vs;
   GLint fs;
+  GLint maskVs;
+  GLint maskFs;
   VGboolean glInitialized;
 
 } VGContext;

@@ -416,6 +416,24 @@ VGImage createImageFromJpeg(const char *filename)
   return img;
 }
 
+static VGImage createImageAsset(const char *name)
+{
+  char filename[1024];
+  FILE *file;
+
+  snprintf(filename, sizeof(filename), "%s%s", IMAGE_DIR, name);
+  file = fopen(filename, "rb");
+  if (!file) {
+    snprintf(filename, sizeof(filename), "examples/%s", name);
+    file = fopen(filename, "rb");
+  }
+
+  if (file)
+    fclose(file);
+
+  return createImageFromJpeg(filename);
+}
+
 void createButton(VGPath b)
 {
   testMoveTo(b, 0,0, VG_ABSOLUTE);
@@ -483,11 +501,11 @@ int main(int argc, char **argv)
   testCallback(TEST_CALLBACK_MOVE, (CallbackFunc)move);
   testOverlayColor(1,1,1,1);
   
-  covers[0] = createImageFromJpeg(IMAGE_DIR"test_img_guitar.jpg");
-  covers[1] = createImageFromJpeg(IMAGE_DIR"test_img_piano.jpg");
-  covers[2] = createImageFromJpeg(IMAGE_DIR"test_img_violin.jpg");
-  covers[3] = createImageFromJpeg(IMAGE_DIR"test_img_flute.jpg");
-  covers[4] = createImageFromJpeg(IMAGE_DIR"test_img_sax.jpg");
+  covers[0] = createImageAsset("test_img_guitar.jpg");
+  covers[1] = createImageAsset("test_img_piano.jpg");
+  covers[2] = createImageAsset("test_img_violin.jpg");
+  covers[3] = createImageAsset("test_img_flute.jpg");
+  covers[4] = createImageAsset("test_img_sax.jpg");
   
   frame = testCreatePath();
   vguRect(frame,0.0,0.0,400,400);

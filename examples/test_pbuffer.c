@@ -127,6 +127,129 @@ static void draw_masked_rect(VGPath rect, VGPaint paint,
   vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
 }
 
+static int run_image_draw_test(unsigned char *pixels,
+                               EGLint width, EGLint height)
+{
+  VGImage image;
+  VGImage patternImage;
+  VGPaint paint;
+  VGubyte imageData[4 * 4 * 4];
+  VGubyte patternData[2 * 2 * 4];
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat paintColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
+  VGfloat linearGradient[] = {0.0f, 0.0f, 4.0f, 0.0f};
+  VGfloat rampStops[] = {
+    0.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f, 1.0f, 1.0f
+  };
+  size_t sample = ((size_t)2 * (size_t)width + 2u) * 4u;
+  int i;
+
+  for (i=0; i<16; ++i) {
+    imageData[i * 4 + 0] = 255;
+    imageData[i * 4 + 1] = 0;
+    imageData[i * 4 + 2] = 0;
+    imageData[i * 4 + 3] = 255;
+  }
+  for (i=0; i<4; ++i) {
+    patternData[i * 4 + 0] = 255;
+    patternData[i * 4 + 1] = 255;
+    patternData[i * 4 + 2] = 255;
+    patternData[i * 4 + 3] = 255;
+  }
+
+  image = vgCreateImage(VG_lABGR_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  patternImage = vgCreateImage(VG_lABGR_8888, 2, 2, VG_IMAGE_QUALITY_BETTER);
+  paint = vgCreatePaint();
+  if (image == VG_INVALID_HANDLE ||
+      patternImage == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE)
+    return fail_vg("OpenVG image draw test setup failed");
+
+  vgImageSubData(image, imageData, 4 * 4, VG_lABGR_8888, 0, 0, 4, 4);
+  vgImageSubData(patternImage, patternData, 2 * 4,
+                 VG_lABGR_8888, 0, 0, 2, 2);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, paintColor);
+  vgSetPaint(paint, VG_FILL_PATH);
+
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_IMAGE_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSeti(VG_IMAGE_MODE, VG_DRAW_IMAGE_NORMAL);
+  vgDrawImage(image);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+
+  if (pixels[sample] < 128 || pixels[sample + 1] > 32 ||
+      pixels[sample + 2] > 32 || pixels[sample + 3] == 0) {
+    fprintf(stderr, "OpenVG image drawing did not sample uploaded pixels\n");
+    vgDestroyPaint(paint);
+    vgDestroyImage(patternImage);
+    vgDestroyImage(image);
+    return 1;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_IMAGE_MODE, VG_DRAW_IMAGE_MULTIPLY);
+  vgDrawImage(image);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+
+  if (pixels[sample] < 128 || pixels[sample + 1] > 32 ||
+      pixels[sample + 2] > 32 || pixels[sample + 3] == 0) {
+    fprintf(stderr, "OpenVG multiplied image drawing suppressed uploaded pixels\n");
+    vgDestroyPaint(paint);
+    vgDestroyImage(patternImage);
+    vgDestroyImage(image);
+    return 1;
+  }
+
+  vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_LINEAR_GRADIENT);
+  vgSetParameterfv(paint, VG_PAINT_LINEAR_GRADIENT, 4, linearGradient);
+  vgSetParameterfv(paint, VG_PAINT_COLOR_RAMP_STOPS, 10, rampStops);
+
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgDrawImage(image);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+
+  if (pixels[sample] < 128 || pixels[sample + 1] > 32 ||
+      pixels[sample + 2] > 32 || pixels[sample + 3] == 0) {
+    fprintf(stderr, "OpenVG gradient-multiplied image drawing suppressed uploaded pixels\n");
+    vgDestroyPaint(paint);
+    vgDestroyImage(patternImage);
+    vgDestroyImage(image);
+    return 1;
+  }
+
+  vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_PATTERN);
+  vgSetParameteri(paint, VG_PAINT_PATTERN_TILING_MODE, VG_TILE_REPEAT);
+  vgPaintPattern(paint, patternImage);
+
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgDrawImage(image);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+
+  if (pixels[sample] < 128 || pixels[sample + 1] > 32 ||
+      pixels[sample + 2] > 32 || pixels[sample + 3] == 0) {
+    fprintf(stderr, "OpenVG pattern-multiplied image drawing suppressed uploaded pixels\n");
+    vgDestroyPaint(paint);
+    vgDestroyImage(patternImage);
+    vgDestroyImage(image);
+    return 1;
+  }
+
+  vgDestroyPaint(paint);
+  vgDestroyImage(patternImage);
+  vgDestroyImage(image);
+  return 0;
+}
+
 static int run_mask_test(unsigned char *pixels, EGLint width, EGLint height)
 {
   VGImage mask = VG_INVALID_HANDLE;
@@ -709,7 +832,9 @@ int main(void)
       fprintf(stderr, "OpenVG retained glyph drawing did not affect the expected pixel\n");
       result = 1;
     } else {
-      result = run_mask_test(pixels, width, height);
+      result = run_image_draw_test(pixels, width, height);
+      if (result == 0)
+        result = run_mask_test(pixels, width, height);
       if (result == 0)
         result = run_hardware_query_test();
       if (result == 0)

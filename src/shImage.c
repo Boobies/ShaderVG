@@ -319,8 +319,8 @@ void shSetupImageFormat(VGImageFormat vg, SHImageFormatDesc *f)
     break;
   case VG_A_8:
 
-    f->glintformat = GL_ALPHA;
-    f->glformat = GL_ALPHA;
+    f->glintformat = GL_R8;
+    f->glformat = GL_RED;
     f->gltype = GL_UNSIGNED_BYTE;
 
     break;
@@ -538,6 +538,11 @@ void shUpdateImageTexture(SHImage *i, VGContext *c)
   glTexImage2D(GL_TEXTURE_2D, 0, i->fd.glintformat,
                i->texwidth, i->texheight, 0,
                i->fd.glformat, i->fd.gltype, i->data);
+
+  if ((i->fd.vgformat & 0x1F) == VG_A_8) {
+    GLint swizzle[4] = {GL_ONE, GL_ONE, GL_ONE, GL_RED};
+    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+  }
 }
 
 /*----------------------------------------------------------

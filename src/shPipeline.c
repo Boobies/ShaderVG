@@ -96,7 +96,7 @@ void updateBlendingStateGL(VGContext *c, int alphaIsOne)
 static void shApplyMaskState(VGContext *context)
 {
   if (context->masking == VG_TRUE &&
-      context->maskData &&
+      context->maskTexture != 0 &&
       context->maskWidth > 0 &&
       context->maskHeight > 0) {
     shEnsureMaskTexture(context);

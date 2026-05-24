@@ -307,6 +307,24 @@ VGImage createImageFromJpeg(const char *filename)
   return img;
 }
 
+static VGImage createImageAsset(const char *name)
+{
+  char filename[1024];
+  FILE *file;
+
+  snprintf(filename, sizeof(filename), "%s%s", IMAGE_DIR, name);
+  file = fopen(filename, "rb");
+  if (!file) {
+    snprintf(filename, sizeof(filename), "examples/%s", name);
+    file = fopen(filename, "rb");
+  }
+
+  if (file)
+    fclose(file);
+
+  return createImageFromJpeg(filename);
+}
+
 void createSquare(VGPath p)
 {
   testMoveTo(p, (testWidth()-sqx)/2, (testHeight()-sqy)/2, VG_ABSOLUTE);
@@ -342,8 +360,8 @@ int main(int argc, char **argv)
   blackFill = vgCreatePaint();
   vgSetParameterfv(blackFill, VG_PAINT_COLOR, 4, black);
   
-  backImage = createImageFromJpeg(IMAGE_DIR"test_img_violin.jpg");
-  patternImage = createImageFromJpeg(IMAGE_DIR"test_img_shivavg.jpg");
+  backImage = createImageAsset("test_img_violin.jpg");
+  patternImage = createImageAsset("test_img_shivavg.jpg");
   patternFill = vgCreatePaint();
   
   createSquare(p);
