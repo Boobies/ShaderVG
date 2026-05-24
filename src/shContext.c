@@ -27,6 +27,12 @@
 
 void shLoadExtensions(void *c);
 
+#define _ITEM_T SHMaskLayer*
+#define _ARRAY_T SHMaskLayerArray
+#define _FUNC_T shMaskLayerArray
+#define _ARRAY_DEFINE
+#include "shArrayBase.h"
+
 /*-----------------------------------------------------
  * The current VG context is selected by the EGL frontend
  * when a ShaderVG-backed EGLContext is made current.
@@ -39,6 +45,24 @@ void shLoadExtensions(void *c);
 #endif
 
 static SH_TLS VGContext *g_current_context = NULL;
+
+void SHMaskLayer_ctor(SHMaskLayer *m)
+{
+  m->data = NULL;
+  m->width = 0;
+  m->height = 0;
+}
+
+void SHMaskLayer_dtor(SHMaskLayer *m)
+{
+  if (m->data) {
+    free(m->data);
+    m->data = NULL;
+  }
+
+  m->width = 0;
+  m->height = 0;
+}
 
 static VGboolean shResizeMaskSurface(VGContext *context, VGint width, VGint height)
 {
@@ -291,6 +315,7 @@ void VGContext_ctor(VGContext *c)
   SH_INITOBJ(SHPaintArray, c->paints);
   SH_INITOBJ(SHImageArray, c->images);
   SH_INITOBJ(SHFontArray, c->fonts);
+  SH_INITOBJ(SHMaskLayerArray, c->maskLayers);
   
   /* GL state is initialized lazily after EGL makes the context current */
   c->progDraw = 0;
@@ -325,6 +350,9 @@ void VGContext_dtor(VGContext *c)
   for (i=0; i<c->fonts.size; ++i)
     SH_DELETEOBJ(SHFont, c->fonts.items[i]);
 
+  for (i=0; i<c->maskLayers.size; ++i)
+    SH_DELETEOBJ(SHMaskLayer, c->maskLayers.items[i]);
+
   for (i=0; i<c->paths.size; ++i)
     shPathRelease(c->paths.items[i]);
   
@@ -335,6 +363,7 @@ void VGContext_dtor(VGContext *c)
     shImageRelease(c->images.items[i]);
 
   SH_DEINITOBJ(SHPaint, c->defaultPaint);
+  SH_DEINITOBJ(SHMaskLayerArray, c->maskLayers);
   SH_DEINITOBJ(SHFontArray, c->fonts);
   SH_DEINITOBJ(SHPathArray, c->paths);
   SH_DEINITOBJ(SHPaintArray, c->paints);
@@ -369,6 +398,12 @@ SHint shIsValidFont(VGContext *c, VGHandle h)
   return (index == -1) ? 0 : 1;
 }
 
+SHint shIsValidMaskLayer(VGContext *c, VGHandle h)
+{
+  int index = shMaskLayerArrayFind(&c->maskLayers, (SHMaskLayer*)h);
+  return (index == -1) ? 0 : 1;
+}
+
 /*--------------------------------------------------
  * Tries to find a resources in this context and
  * return its type or invalid flag.
@@ -387,6 +422,9 @@ SHResourceType shGetResourceType(VGContext *c, VGHandle h)
 
   else if (shIsValidFont(c, h))
     return SH_RESOURCE_FONT;
+
+  else if (shIsValidMaskLayer(c, h))
+    return SH_RESOURCE_MASK_LAYER;
   
   else
     return SH_RESOURCE_INVALID;
@@ -431,10 +469,53 @@ VG_API_CALL void vgFinish(void)
   VG_RETURN(VG_NO_RETVAL);
 }
 
-VG_API_CALL void vgMask(VGImage mask, VGMaskOperation operation,
+static SHuint8 shFloatToMaskByte(SHfloat value)
+{
+  SH_CLAMP(value, 0.0f, 1.0f);
+  return (SHuint8)(value * 255.0f + 0.5f);
+}
+
+static SHuint8 shImageMaskByte(SHImage *image, const SHuint8 *src)
+{
+  SHColor color;
+  SHfloat value;
+
+  shLoadColor(&color, src, &image->fd);
+  value = image->fd.amask ? color.a : color.r;
+
+  return shFloatToMaskByte(value);
+}
+
+static SHuint8 shApplyMaskOperation(VGMaskOperation operation,
+                                    SHuint8 oldMask,
+                                    SHuint8 newMask)
+{
+  switch (operation) {
+  case VG_CLEAR_MASK:
+    return 0;
+  case VG_FILL_MASK:
+    return 255;
+  case VG_SET_MASK:
+    return newMask;
+  case VG_UNION_MASK:
+    return (SHuint8)(255 - (((255 - oldMask) * (255 - newMask) + 127) / 255));
+  case VG_INTERSECT_MASK:
+    return (SHuint8)((oldMask * newMask + 127) / 255);
+  case VG_SUBTRACT_MASK:
+    return (SHuint8)((oldMask * (255 - newMask) + 127) / 255);
+  default:
+    return oldMask;
+  }
+}
+
+VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
                         VGint x, VGint y, VGint width, VGint height)
 {
   SHImage *image = NULL;
+  SHMaskLayer *layer = NULL;
+  SHResourceType maskType = SH_RESOURCE_INVALID;
+  SHint sourceWidth = 0;
+  SHint sourceHeight = 0;
   long long rectX0, rectY0, rectX1, rectY1;
   long long surfX0, surfY0, surfX1, surfY1;
   long long sx, sy;
@@ -452,9 +533,20 @@ VG_API_CALL void vgMask(VGImage mask, VGMaskOperation operation,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   if (operation != VG_CLEAR_MASK && operation != VG_FILL_MASK) {
-    VG_RETURN_ERR_IF(!shIsValidImage(context, mask),
+    maskType = shGetResourceType(context, mask);
+    VG_RETURN_ERR_IF(maskType != SH_RESOURCE_IMAGE &&
+                     maskType != SH_RESOURCE_MASK_LAYER,
                      VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-    image = (SHImage*)mask;
+
+    if (maskType == SH_RESOURCE_IMAGE) {
+      image = (SHImage*)mask;
+      sourceWidth = image->width;
+      sourceHeight = image->height;
+    } else {
+      layer = (SHMaskLayer*)mask;
+      sourceWidth = layer->width;
+      sourceHeight = layer->height;
+    }
   }
 
   if (!shResizeMaskSurface(context, context->surfaceWidth, context->surfaceHeight))
@@ -470,11 +562,11 @@ VG_API_CALL void vgMask(VGImage mask, VGMaskOperation operation,
   rectX1 = (long long)x + (long long)width;
   rectY1 = (long long)y + (long long)height;
 
-  if (image) {
-    long long imageX1 = (long long)x + (long long)image->width;
-    long long imageY1 = (long long)y + (long long)image->height;
-    if (rectX1 > imageX1) rectX1 = imageX1;
-    if (rectY1 > imageY1) rectY1 = imageY1;
+  if (image || layer) {
+    long long sourceX1 = (long long)x + (long long)sourceWidth;
+    long long sourceY1 = (long long)y + (long long)sourceHeight;
+    if (rectX1 > sourceX1) rectX1 = sourceX1;
+    if (rectY1 > sourceY1) rectY1 = sourceY1;
   }
 
   surfX0 = rectX0 < 0 ? 0 : rectX0;
@@ -494,6 +586,10 @@ VG_API_CALL void vgMask(VGImage mask, VGMaskOperation operation,
       long long imageX = surfX0 - x;
       src = image->data + imageY * image->texwidth * image->fd.bytes +
             imageX * image->fd.bytes;
+    } else if (layer) {
+      long long layerY = sy - y;
+      long long layerX = surfX0 - x;
+      src = layer->data + layerY * layer->width + layerX;
     }
 
     for (sx=surfX0; sx<surfX1; ++sx, ++dst) {
@@ -501,39 +597,171 @@ VG_API_CALL void vgMask(VGImage mask, VGMaskOperation operation,
       SHuint8 newMask = 255;
 
       if (image) {
-        SHColor color;
-        shLoadColor(&color, src, &image->fd);
-        SH_CLAMP(color.a, 0.0f, 1.0f);
-        newMask = (SHuint8)(color.a * 255.0f + 0.5f);
+        newMask = shImageMaskByte(image, src);
         src += image->fd.bytes;
+      } else if (layer) {
+        newMask = *src;
+        ++src;
       }
 
-      switch (operation) {
-      case VG_CLEAR_MASK:
-        *dst = 0;
-        break;
-      case VG_FILL_MASK:
-        *dst = 255;
-        break;
-      case VG_SET_MASK:
-        *dst = newMask;
-        break;
-      case VG_UNION_MASK:
-        *dst = (SHuint8)(255 - (((255 - oldMask) * (255 - newMask) + 127) / 255));
-        break;
-      case VG_INTERSECT_MASK:
-        *dst = (SHuint8)((oldMask * newMask + 127) / 255);
-        break;
-      case VG_SUBTRACT_MASK:
-        *dst = (SHuint8)((oldMask * (255 - newMask) + 127) / 255);
-        break;
-      default:
-        break;
-      }
+      *dst = shApplyMaskOperation(operation, oldMask, newMask);
     }
   }
 
   context->maskTextureDirty = VG_TRUE;
+  VG_RETURN(VG_NO_RETVAL);
+}
+
+VG_API_CALL VGMaskLayer vgCreateMaskLayer(VGint width, VGint height)
+{
+  SHMaskLayer *layer = NULL;
+  size_t size;
+  long long pixels;
+  VG_GETCONTEXT(VG_INVALID_HANDLE);
+
+  pixels = (long long)width * (long long)height;
+  VG_RETURN_ERR_IF(width <= 0 || height <= 0 ||
+                   width > SH_MAX_IMAGE_WIDTH ||
+                   height > SH_MAX_IMAGE_HEIGHT ||
+                   pixels > SH_MAX_IMAGE_PIXELS ||
+                   pixels > SH_MAX_IMAGE_BYTES,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
+
+  SH_NEWOBJ(SHMaskLayer, layer);
+  VG_RETURN_ERR_IF(!layer, VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+
+  size = (size_t)width * (size_t)height;
+  layer->data = (SHuint8*)malloc(size);
+  if (!layer->data) {
+    SH_DELETEOBJ(SHMaskLayer, layer);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
+
+  layer->width = width;
+  layer->height = height;
+  memset(layer->data, 255, size);
+
+  if (!shMaskLayerArrayPushBack(&context->maskLayers, layer)) {
+    SH_DELETEOBJ(SHMaskLayer, layer);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
+
+  VG_RETURN((VGMaskLayer)layer);
+}
+
+VG_API_CALL void vgDestroyMaskLayer(VGMaskLayer maskLayer)
+{
+  SHint index;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  index = shMaskLayerArrayFind(&context->maskLayers, (SHMaskLayer*)maskLayer);
+  VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+
+  shMaskLayerArrayRemoveAt(&context->maskLayers, index);
+  SH_DELETEOBJ(SHMaskLayer, (SHMaskLayer*)maskLayer);
+
+  VG_RETURN(VG_NO_RETVAL);
+}
+
+VG_API_CALL void vgFillMaskLayer(VGMaskLayer maskLayer,
+                                 VGint x, VGint y,
+                                 VGint width, VGint height,
+                                 VGfloat value)
+{
+  SHMaskLayer *layer;
+  SHuint8 maskValue;
+  SHint row;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidMaskLayer(context, maskLayer),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(x < 0 || y < 0 ||
+                   width <= 0 || height <= 0 ||
+                   SH_ISNAN(value) || value < 0.0f || value > 1.0f,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  layer = (SHMaskLayer*)maskLayer;
+  VG_RETURN_ERR_IF((long long)x + (long long)width > layer->width ||
+                   (long long)y + (long long)height > layer->height,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  maskValue = shFloatToMaskByte(value);
+  for (row=0; row<height; ++row)
+    memset(layer->data + (y + row) * layer->width + x, maskValue, width);
+
+  VG_RETURN(VG_NO_RETVAL);
+}
+
+VG_API_CALL void vgCopyMask(VGMaskLayer maskLayer,
+                            VGint dx, VGint dy,
+                            VGint sx, VGint sy,
+                            VGint width, VGint height)
+{
+  SHMaskLayer *layer;
+  long long dstX0, dstY0, dstX1, dstY1;
+  long long srcX0, srcY0, srcX1, srcY1;
+  long long copyWidth, copyHeight;
+  long long row;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidMaskLayer(context, maskLayer),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(width <= 0 || height <= 0,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  if (!shResizeMaskSurface(context, context->surfaceWidth, context->surfaceHeight))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  if (!context->maskData ||
+      context->maskWidth <= 0 ||
+      context->maskHeight <= 0)
+    VG_RETURN(VG_NO_RETVAL);
+
+  layer = (SHMaskLayer*)maskLayer;
+
+  dstX0 = dx;
+  dstY0 = dy;
+  dstX1 = (long long)dx + (long long)width;
+  dstY1 = (long long)dy + (long long)height;
+  srcX0 = sx;
+  srcY0 = sy;
+  srcX1 = (long long)sx + (long long)width;
+  srcY1 = (long long)sy + (long long)height;
+
+  if (dstX0 < 0) { srcX0 -= dstX0; dstX0 = 0; }
+  if (dstY0 < 0) { srcY0 -= dstY0; dstY0 = 0; }
+  if (srcX0 < 0) { dstX0 -= srcX0; srcX0 = 0; }
+  if (srcY0 < 0) { dstY0 -= srcY0; srcY0 = 0; }
+
+  if (dstX1 > layer->width) {
+    srcX1 -= dstX1 - layer->width;
+    dstX1 = layer->width;
+  }
+  if (dstY1 > layer->height) {
+    srcY1 -= dstY1 - layer->height;
+    dstY1 = layer->height;
+  }
+  if (srcX1 > context->maskWidth) {
+    dstX1 -= srcX1 - context->maskWidth;
+    srcX1 = context->maskWidth;
+  }
+  if (srcY1 > context->maskHeight) {
+    dstY1 -= srcY1 - context->maskHeight;
+    srcY1 = context->maskHeight;
+  }
+
+  copyWidth = dstX1 - dstX0;
+  copyHeight = dstY1 - dstY0;
+  if (copyWidth <= 0 || copyHeight <= 0)
+    VG_RETURN(VG_NO_RETVAL);
+
+  for (row=0; row<copyHeight; ++row) {
+    SHuint8 *dst = layer->data + (dstY0 + row) * layer->width + dstX0;
+    SHuint8 *src = context->maskData +
+                   (srcY0 + row) * context->maskWidth + srcX0;
+    memcpy(dst, src, (size_t)copyWidth);
+  }
+
   VG_RETURN(VG_NO_RETVAL);
 }
 

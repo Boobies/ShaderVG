@@ -83,6 +83,10 @@ $ ./test_tiger_shader
 #### test_egl_gl_vg
   Interleaves raw OpenGL and OpenVG drawing on the same EGL surface.
 
+#### test_masking
+  Demonstrates image masks, mask layers, and saving/restoring surface mask
+  state with `vgCopyMask`.
+
 #### test_font
   Draws vector glyphs through the OpenVG font API, including glyphs whose
   source paths have already been destroyed by the application.
@@ -134,6 +138,10 @@ vgRotate                | FULLY implemented
 API                     | status                                
 ----------------------- | ---------------------                 
 vgMask                  | FULLY implemented
+vgCreateMaskLayer       | FULLY implemented
+vgDestroyMaskLayer      | FULLY implemented
+vgFillMaskLayer         | FULLY implemented
+vgCopyMask              | FULLY implemented
 vgClear                 | FULLY implemented                     
                                                                 
 #### Paths                                                      

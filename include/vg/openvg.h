@@ -348,6 +348,7 @@ typedef enum {
 } VGImageFormat;
 
 typedef VGHandle VGImage;
+typedef VGHandle VGMaskLayer;
 
 typedef enum {
   VG_IMAGE_QUALITY_NONANTIALIASED             = (1 << 0),
@@ -484,8 +485,18 @@ VG_API_CALL void vgShear(VGfloat shx, VGfloat shy);
 VG_API_CALL void vgRotate(VGfloat angle);
 
 /* Masking and Clearing */
-VG_API_CALL void vgMask(VGImage mask, VGMaskOperation operation,
+VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
                         VGint x, VGint y, VGint width, VGint height);
+VG_API_CALL VGMaskLayer vgCreateMaskLayer(VGint width, VGint height);
+VG_API_CALL void vgDestroyMaskLayer(VGMaskLayer maskLayer);
+VG_API_CALL void vgFillMaskLayer(VGMaskLayer maskLayer,
+                                 VGint x, VGint y,
+                                 VGint width, VGint height,
+                                 VGfloat value);
+VG_API_CALL void vgCopyMask(VGMaskLayer maskLayer,
+                            VGint dx, VGint dy,
+                            VGint sx, VGint sy,
+                            VGint width, VGint height);
 VG_API_CALL void vgClear(VGint x, VGint y, VGint width, VGint height);
 
 /* Paths */

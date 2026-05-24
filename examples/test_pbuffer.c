@@ -126,10 +126,15 @@ static void draw_masked_rect(VGPath rect, VGPaint paint,
 
 static int run_mask_test(unsigned char *pixels, EGLint width, EGLint height)
 {
-  VGImage mask;
-  VGPaint paint;
-  VGPath rect;
+  VGImage mask = VG_INVALID_HANDLE;
+  VGImage rgbMask = VG_INVALID_HANDLE;
+  VGMaskLayer maskLayer = VG_INVALID_HANDLE;
+  VGMaskLayer copiedLayer = VG_INVALID_HANDLE;
+  VGMaskLayer invalidLayer = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGPath rect = VG_INVALID_HANDLE;
   unsigned char *maskData;
+  unsigned short *rgbMaskData = NULL;
   VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGfloat paintColor[] = {0.0f, 1.0f, 0.0f, 1.0f};
   size_t left = ((size_t)(height / 2) * (size_t)width + (size_t)(width / 4)) * 4u;
@@ -147,8 +152,22 @@ static int run_mask_test(unsigned char *pixels, EGLint width, EGLint height)
   }
 
   mask = vgCreateImage(VG_A_8, width, height, VG_IMAGE_QUALITY_FASTER);
+  rgbMask = vgCreateImage(VG_sRGB_565, width, height,
+                          VG_IMAGE_QUALITY_FASTER);
+  maskLayer = vgCreateMaskLayer(width, height);
+  copiedLayer = vgCreateMaskLayer(width, height);
   paint = vgCreatePaint();
   rect = create_rect_path((VGfloat)width, (VGfloat)height);
+
+  if (mask == VG_INVALID_HANDLE ||
+      rgbMask == VG_INVALID_HANDLE ||
+      maskLayer == VG_INVALID_HANDLE ||
+      copiedLayer == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE ||
+      rect == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG mask test setup failed");
+    goto cleanup;
+  }
 
   vgImageSubData(mask, maskData, width, VG_A_8, 0, 0, width, height);
   vgSetParameterfv(paint, VG_PAINT_COLOR, 4, paintColor);
@@ -215,6 +234,53 @@ static int run_mask_test(unsigned char *pixels, EGLint width, EGLint height)
     goto cleanup;
   }
 
+  vgFillMaskLayer(maskLayer, 0, 0, width, height, 0.0f);
+  vgFillMaskLayer(maskLayer, 0, 0, width / 2, height, 1.0f);
+  vgMask(maskLayer, VG_SET_MASK, 0, 0, width, height);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] < 128 || pixels[right + 1] > 32) {
+    fprintf(stderr, "OpenVG mask layer did not clip drawing as expected\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgCopyMask(copiedLayer, 0, 0, 0, 0, width, height);
+  vgMask(VG_INVALID_HANDLE, VG_CLEAR_MASK, 0, 0, width, height);
+  vgMask(copiedLayer, VG_SET_MASK, 0, 0, width, height);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] < 128 || pixels[right + 1] > 32) {
+    fprintf(stderr, "OpenVG vgCopyMask did not preserve current mask coverage\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  rgbMaskData = (unsigned short*)calloc((size_t)width * (size_t)height,
+                                        sizeof(unsigned short));
+  if (!rgbMaskData) {
+    result = 1;
+    goto cleanup;
+  }
+
+  for (y=0; y<height; ++y) {
+    for (x=0; x<width; ++x)
+      rgbMaskData[(size_t)y * (size_t)width + (size_t)x] =
+        (x < width / 2) ? 0xF800u : 0x0000u;
+  }
+
+  vgImageSubData(rgbMask, rgbMaskData,
+                 width * (VGint)sizeof(unsigned short),
+                 VG_sRGB_565, 0, 0, width, height);
+  vgMask(rgbMask, VG_SET_MASK, 0, 0, width, height);
+  draw_masked_rect(rect, paint, clearColor, pixels, width, height);
+
+  if (pixels[left + 1] < 128 || pixels[right + 1] > 32) {
+    fprintf(stderr, "OpenVG no-alpha image mask did not use source red coverage\n");
+    result = 1;
+    goto cleanup;
+  }
+
   vgSeti(VG_MASKING, VG_FALSE);
   draw_masked_rect(rect, paint, clearColor, pixels, width, height);
 
@@ -245,11 +311,73 @@ static int run_mask_test(unsigned char *pixels, EGLint width, EGLint height)
     goto cleanup;
   }
 
+  invalidLayer = vgCreateMaskLayer(0, height);
+  if (invalidLayer != VG_INVALID_HANDLE ||
+      expect_vg_error("OpenVG accepted an invalid mask layer size",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    if (invalidLayer != VG_INVALID_HANDLE)
+      vgDestroyMaskLayer(invalidLayer);
+    result = 1;
+    goto cleanup;
+  }
+
+  vgFillMaskLayer(maskLayer, 0, 0, 0, height, 1.0f);
+  if (expect_vg_error("OpenVG accepted an invalid mask layer fill extent",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgFillMaskLayer(maskLayer, -1, 0, 1, 1, 1.0f);
+  if (expect_vg_error("OpenVG accepted a negative mask layer fill origin",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgFillMaskLayer(maskLayer, 0, 0, width + 1, height, 1.0f);
+  if (expect_vg_error("OpenVG accepted an out-of-bounds mask layer fill",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgFillMaskLayer(maskLayer, 0, 0, 1, 1, -1.0f);
+  if (expect_vg_error("OpenVG accepted an invalid mask layer fill value",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgCopyMask(VG_INVALID_HANDLE, 0, 0, 0, 0, width, height);
+  if (expect_vg_error("OpenVG accepted an invalid mask layer copy target",
+                      VG_BAD_HANDLE_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgCopyMask(maskLayer, 0, 0, 0, 0, 0, height);
+  if (expect_vg_error("OpenVG accepted an invalid mask copy extent",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
 cleanup:
   vgSeti(VG_MASKING, VG_FALSE);
-  vgDestroyPath(rect);
-  vgDestroyPaint(paint);
-  vgDestroyImage(mask);
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (copiedLayer != VG_INVALID_HANDLE)
+    vgDestroyMaskLayer(copiedLayer);
+  if (maskLayer != VG_INVALID_HANDLE)
+    vgDestroyMaskLayer(maskLayer);
+  if (rgbMask != VG_INVALID_HANDLE)
+    vgDestroyImage(rgbMask);
+  if (mask != VG_INVALID_HANDLE)
+    vgDestroyImage(mask);
+  free(rgbMaskData);
   free(maskData);
   return result;
 }

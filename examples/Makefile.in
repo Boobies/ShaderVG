@@ -91,10 +91,10 @@ POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
 noinst_PROGRAMS = test_pbuffer$(EXEEXT) test_egl_gl_vg$(EXEEXT) \
-	$(am__EXEEXT_1) $(am__EXEEXT_2) $(am__EXEEXT_3) \
-	$(am__EXEEXT_4) $(am__EXEEXT_5) $(am__EXEEXT_6) \
-	$(am__EXEEXT_7) $(am__EXEEXT_8) $(am__EXEEXT_9) \
-	$(am__EXEEXT_10) $(am__EXEEXT_11)
+	test_masking$(EXEEXT) $(am__EXEEXT_1) $(am__EXEEXT_2) \
+	$(am__EXEEXT_3) $(am__EXEEXT_4) $(am__EXEEXT_5) \
+	$(am__EXEEXT_6) $(am__EXEEXT_7) $(am__EXEEXT_8) \
+	$(am__EXEEXT_9) $(am__EXEEXT_10) $(am__EXEEXT_11)
 @BUILD_VGU_TRUE@am__append_1 = test_vgu
 @BUILD_DASH_TRUE@am__append_2 = test_dash
 @BUILD_LINEAR_TRUE@am__append_3 = test_linear
@@ -189,8 +189,16 @@ test_linear_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_linear_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_linear_CFLAGS) \
 	$(CFLAGS) $(test_linear_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_8 = test_pattern-test.$(OBJEXT)
-am_test_pattern_OBJECTS = $(am__objects_8) \
+am__objects_8 = test_masking-test.$(OBJEXT)
+am_test_masking_OBJECTS = $(am__objects_8) \
+	test_masking-test_masking.$(OBJEXT)
+test_masking_OBJECTS = $(am_test_masking_OBJECTS)
+test_masking_DEPENDENCIES = $(am__DEPENDENCIES_1)
+test_masking_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_masking_CFLAGS) \
+	$(CFLAGS) $(test_masking_LDFLAGS) $(LDFLAGS) -o $@
+am__objects_9 = test_pattern-test.$(OBJEXT)
+am_test_pattern_OBJECTS = $(am__objects_9) \
 	test_pattern-test_pattern.$(OBJEXT)
 test_pattern_OBJECTS = $(am_test_pattern_OBJECTS)
 test_pattern_DEPENDENCIES = $(am__DEPENDENCIES_1)
@@ -203,16 +211,16 @@ test_pbuffer_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_pbuffer_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_pbuffer_CFLAGS) \
 	$(CFLAGS) $(test_pbuffer_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_9 = test_radial-test.$(OBJEXT)
-am_test_radial_OBJECTS = $(am__objects_9) \
+am__objects_10 = test_radial-test.$(OBJEXT)
+am_test_radial_OBJECTS = $(am__objects_10) \
 	test_radial-test_radial.$(OBJEXT)
 test_radial_OBJECTS = $(am_test_radial_OBJECTS)
 test_radial_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_radial_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_radial_CFLAGS) \
 	$(CFLAGS) $(test_radial_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_10 = test_tiger-test.$(OBJEXT)
-am_test_tiger_OBJECTS = $(am__objects_10) \
+am__objects_11 = test_tiger-test.$(OBJEXT)
+am_test_tiger_OBJECTS = $(am__objects_11) \
 	test_tiger-test_tiger.$(OBJEXT) \
 	test_tiger-test_tiger_paths.$(OBJEXT)
 test_tiger_OBJECTS = $(am_test_tiger_OBJECTS)
@@ -220,8 +228,8 @@ test_tiger_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_tiger_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_tiger_CFLAGS) \
 	$(CFLAGS) $(test_tiger_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_11 = test_tiger_shader-test.$(OBJEXT)
-am_test_tiger_shader_OBJECTS = $(am__objects_11) \
+am__objects_12 = test_tiger_shader-test.$(OBJEXT)
+am_test_tiger_shader_OBJECTS = $(am__objects_12) \
 	test_tiger_shader-test_tiger_shader.$(OBJEXT) \
 	test_tiger_shader-test_tiger_paths.$(OBJEXT)
 test_tiger_shader_OBJECTS = $(am_test_tiger_shader_OBJECTS)
@@ -230,8 +238,8 @@ test_tiger_shader_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(test_tiger_shader_CFLAGS) $(CFLAGS) \
 	$(test_tiger_shader_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_12 = test_vgu-test.$(OBJEXT)
-am_test_vgu_OBJECTS = $(am__objects_12) test_vgu-test_vgu.$(OBJEXT)
+am__objects_13 = test_vgu-test.$(OBJEXT)
+am_test_vgu_OBJECTS = $(am__objects_13) test_vgu-test_vgu.$(OBJEXT)
 test_vgu_OBJECTS = $(am_test_vgu_OBJECTS)
 test_vgu_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_vgu_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
@@ -266,6 +274,8 @@ am__depfiles_remade = ./$(DEPDIR)/test_blend-test.Po \
 	./$(DEPDIR)/test_interpolate-test_interpolate.Po \
 	./$(DEPDIR)/test_linear-test.Po \
 	./$(DEPDIR)/test_linear-test_linear.Po \
+	./$(DEPDIR)/test_masking-test.Po \
+	./$(DEPDIR)/test_masking-test_masking.Po \
 	./$(DEPDIR)/test_pattern-test.Po \
 	./$(DEPDIR)/test_pattern-test_pattern.Po \
 	./$(DEPDIR)/test_pbuffer-test_pbuffer.Po \
@@ -300,17 +310,17 @@ am__v_CCLD_1 =
 SOURCES = $(test_blend_SOURCES) $(test_dash_SOURCES) \
 	$(test_egl_gl_vg_SOURCES) $(test_font_SOURCES) \
 	$(test_image_SOURCES) $(test_interpolate_SOURCES) \
-	$(test_linear_SOURCES) $(test_pattern_SOURCES) \
-	$(test_pbuffer_SOURCES) $(test_radial_SOURCES) \
-	$(test_tiger_SOURCES) $(test_tiger_shader_SOURCES) \
-	$(test_vgu_SOURCES)
+	$(test_linear_SOURCES) $(test_masking_SOURCES) \
+	$(test_pattern_SOURCES) $(test_pbuffer_SOURCES) \
+	$(test_radial_SOURCES) $(test_tiger_SOURCES) \
+	$(test_tiger_shader_SOURCES) $(test_vgu_SOURCES)
 DIST_SOURCES = $(test_blend_SOURCES) $(test_dash_SOURCES) \
 	$(test_egl_gl_vg_SOURCES) $(test_font_SOURCES) \
 	$(test_image_SOURCES) $(test_interpolate_SOURCES) \
-	$(test_linear_SOURCES) $(test_pattern_SOURCES) \
-	$(test_pbuffer_SOURCES) $(test_radial_SOURCES) \
-	$(test_tiger_SOURCES) $(test_tiger_shader_SOURCES) \
-	$(test_vgu_SOURCES)
+	$(test_linear_SOURCES) $(test_masking_SOURCES) \
+	$(test_pattern_SOURCES) $(test_pbuffer_SOURCES) \
+	$(test_radial_SOURCES) $(test_tiger_SOURCES) \
+	$(test_tiger_shader_SOURCES) $(test_vgu_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -516,6 +526,9 @@ test_pbuffer_SOURCES = \
 test_egl_gl_vg_SOURCES = \
 	${EXAMPLE_SRCS} test_egl_gl_vg.c
 
+test_masking_SOURCES = \
+	${EXAMPLE_SRCS} test_masking.c
+
 test_font_SOURCES = \
 	${EXAMPLE_SRCS} test_font.c
 
@@ -555,6 +568,9 @@ test_pbuffer_LDFLAGS = ${EXAMPLE_LF}
 test_egl_gl_vg_CFLAGS = ${EXAMPLE_CF}
 test_egl_gl_vg_LDADD = ${EXAMPLE_LA}
 test_egl_gl_vg_LDFLAGS = ${EXAMPLE_LF}
+test_masking_CFLAGS = ${EXAMPLE_CF}
+test_masking_LDADD = ${EXAMPLE_LA}
+test_masking_LDFLAGS = ${EXAMPLE_LF}
 test_font_CFLAGS = ${EXAMPLE_CF}
 test_font_LDADD = ${EXAMPLE_LA}
 test_font_LDFLAGS = ${EXAMPLE_LF}
@@ -624,6 +640,10 @@ test_linear$(EXEEXT): $(test_linear_OBJECTS) $(test_linear_DEPENDENCIES) $(EXTRA
 	@rm -f test_linear$(EXEEXT)
 	$(AM_V_CCLD)$(test_linear_LINK) $(test_linear_OBJECTS) $(test_linear_LDADD) $(LIBS)
 
+test_masking$(EXEEXT): $(test_masking_OBJECTS) $(test_masking_DEPENDENCIES) $(EXTRA_test_masking_DEPENDENCIES)
+	@rm -f test_masking$(EXEEXT)
+	$(AM_V_CCLD)$(test_masking_LINK) $(test_masking_OBJECTS) $(test_masking_LDADD) $(LIBS)
+
 test_pattern$(EXEEXT): $(test_pattern_OBJECTS) $(test_pattern_DEPENDENCIES) $(EXTRA_test_pattern_DEPENDENCIES) 
 	@rm -f test_pattern$(EXEEXT)
 	$(AM_V_CCLD)$(test_pattern_LINK) $(test_pattern_OBJECTS) $(test_pattern_LDADD) $(LIBS)
@@ -668,6 +688,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_interpolate-test_interpolate.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_linear-test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_linear-test_linear.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_masking-test.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_masking-test_masking.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_pattern-test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_pattern-test_pattern.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_pbuffer-test_pbuffer.Po@am__quote@ # am--include-marker
@@ -904,6 +926,34 @@ test_linear-test_linear.obj: test_linear.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test_linear.c' object='test_linear-test_linear.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_linear_CFLAGS) $(CFLAGS) -c -o test_linear-test_linear.obj `if test -f 'test_linear.c'; then $(CYGPATH_W) 'test_linear.c'; else $(CYGPATH_W) '$(srcdir)/test_linear.c'; fi`
+
+test_masking-test.o: test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_masking_CFLAGS) $(CFLAGS) -MT test_masking-test.o -MD -MP -MF $(DEPDIR)/test_masking-test.Tpo -c -o test_masking-test.o `test -f 'test.c' || echo '$(srcdir)/'`test.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_masking-test.Tpo $(DEPDIR)/test_masking-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test.c' object='test_masking-test.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_masking_CFLAGS) $(CFLAGS) -c -o test_masking-test.o `test -f 'test.c' || echo '$(srcdir)/'`test.c
+
+test_masking-test.obj: test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_masking_CFLAGS) $(CFLAGS) -MT test_masking-test.obj -MD -MP -MF $(DEPDIR)/test_masking-test.Tpo -c -o test_masking-test.obj `if test -f 'test.c'; then $(CYGPATH_W) 'test.c'; else $(CYGPATH_W) '$(srcdir)/test.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_masking-test.Tpo $(DEPDIR)/test_masking-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test.c' object='test_masking-test.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_masking_CFLAGS) $(CFLAGS) -c -o test_masking-test.obj `if test -f 'test.c'; then $(CYGPATH_W) 'test.c'; else $(CYGPATH_W) '$(srcdir)/test.c'; fi`
+
+test_masking-test_masking.o: test_masking.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_masking_CFLAGS) $(CFLAGS) -MT test_masking-test_masking.o -MD -MP -MF $(DEPDIR)/test_masking-test_masking.Tpo -c -o test_masking-test_masking.o `test -f 'test_masking.c' || echo '$(srcdir)/'`test_masking.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_masking-test_masking.Tpo $(DEPDIR)/test_masking-test_masking.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test_masking.c' object='test_masking-test_masking.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_masking_CFLAGS) $(CFLAGS) -c -o test_masking-test_masking.o `test -f 'test_masking.c' || echo '$(srcdir)/'`test_masking.c
+
+test_masking-test_masking.obj: test_masking.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_masking_CFLAGS) $(CFLAGS) -MT test_masking-test_masking.obj -MD -MP -MF $(DEPDIR)/test_masking-test_masking.Tpo -c -o test_masking-test_masking.obj `if test -f 'test_masking.c'; then $(CYGPATH_W) 'test_masking.c'; else $(CYGPATH_W) '$(srcdir)/test_masking.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_masking-test_masking.Tpo $(DEPDIR)/test_masking-test_masking.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test_masking.c' object='test_masking-test_masking.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_masking_CFLAGS) $(CFLAGS) -c -o test_masking-test_masking.obj `if test -f 'test_masking.c'; then $(CYGPATH_W) 'test_masking.c'; else $(CYGPATH_W) '$(srcdir)/test_masking.c'; fi`
 
 test_pattern-test.o: test.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pattern_CFLAGS) $(CFLAGS) -MT test_pattern-test.o -MD -MP -MF $(DEPDIR)/test_pattern-test.Tpo -c -o test_pattern-test.o `test -f 'test.c' || echo '$(srcdir)/'`test.c
@@ -1232,6 +1282,8 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/test_interpolate-test_interpolate.Po
 	-rm -f ./$(DEPDIR)/test_linear-test.Po
 	-rm -f ./$(DEPDIR)/test_linear-test_linear.Po
+	-rm -f ./$(DEPDIR)/test_masking-test.Po
+	-rm -f ./$(DEPDIR)/test_masking-test_masking.Po
 	-rm -f ./$(DEPDIR)/test_pattern-test.Po
 	-rm -f ./$(DEPDIR)/test_pattern-test_pattern.Po
 	-rm -f ./$(DEPDIR)/test_pbuffer-test_pbuffer.Po
@@ -1304,6 +1356,8 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/test_interpolate-test_interpolate.Po
 	-rm -f ./$(DEPDIR)/test_linear-test.Po
 	-rm -f ./$(DEPDIR)/test_linear-test_linear.Po
+	-rm -f ./$(DEPDIR)/test_masking-test.Po
+	-rm -f ./$(DEPDIR)/test_masking-test_masking.Po
 	-rm -f ./$(DEPDIR)/test_pattern-test.Po
 	-rm -f ./$(DEPDIR)/test_pattern-test_pattern.Po
 	-rm -f ./$(DEPDIR)/test_pbuffer-test_pbuffer.Po

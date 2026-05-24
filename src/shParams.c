@@ -989,6 +989,9 @@ static void shSetParameter(VGContext *context, VGHandle object,
       SH_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
 
     } break;
+
+  case SH_RESOURCE_MASK_LAYER:
+    SH_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
     
   default:
     /* Invalid resource handle */
@@ -1239,6 +1242,9 @@ static void shGetParameter(VGContext *context, VGHandle object,
       SH_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
 
     } break;
+
+  case SH_RESOURCE_MASK_LAYER:
+    SH_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
     
   default:
     /* Invalid resource handle */
@@ -1427,6 +1433,9 @@ VG_API_CALL VGint vgGetParameterVectorSize(VGHandle object, VGint ptype)
       VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, retval);
 
     } break;
+
+  case SH_RESOURCE_MASK_LAYER:
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, retval);
     
   default:
     /* Invalid resource handle */

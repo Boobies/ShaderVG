@@ -29,6 +29,22 @@
 #include "shImage.h"
 #include "shFont.h"
 
+typedef struct
+{
+  SHuint8 *data;
+  SHint width;
+  SHint height;
+} SHMaskLayer;
+
+void SHMaskLayer_ctor(SHMaskLayer *m);
+void SHMaskLayer_dtor(SHMaskLayer *m);
+
+#define _ITEM_T SHMaskLayer*
+#define _ARRAY_T SHMaskLayerArray
+#define _FUNC_T shMaskLayerArray
+#define _ARRAY_DECLARE
+#include "shArrayBase.h"
+
 /*------------------------------------------------
  * VGContext object
  *------------------------------------------------*/
@@ -39,7 +55,8 @@ typedef enum
   SH_RESOURCE_PATH      = 1,
   SH_RESOURCE_PAINT     = 2,
   SH_RESOURCE_IMAGE     = 3,
-  SH_RESOURCE_FONT      = 4
+  SH_RESOURCE_FONT      = 4,
+  SH_RESOURCE_MASK_LAYER = 5
 } SHResourceType;
 
 typedef struct
@@ -115,6 +132,7 @@ typedef struct
   SHPaintArray      paints;
   SHImageArray      images;
   SHFontArray       fonts;
+  SHMaskLayerArray  maskLayers;
 
   /* Pointers to extensions */
   
@@ -165,6 +183,7 @@ SHint shIsValidPath(VGContext *c, VGHandle h);
 SHint shIsValidPaint(VGContext *c, VGHandle h);
 SHint shIsValidImage(VGContext *c, VGHandle h);
 SHint shIsValidFont(VGContext *c, VGHandle h);
+SHint shIsValidMaskLayer(VGContext *c, VGHandle h);
 SHResourceType shGetResourceType(VGContext *c, VGHandle h);
 VGContext* shGetContext();
 VGContext* shCreateContext(void);
