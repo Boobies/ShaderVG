@@ -20,6 +20,11 @@ AC_ARG_WITH(
 	[build_test_vgu=$withval], [build_test_vgu="$build_test_all"])
 
 AC_ARG_WITH(
+	[example-warp],
+	[  --with-example-warp           Build Image Warp example (default=yes)],
+	[build_test_warp=$withval], [build_test_warp="$build_test_all"])
+
+AC_ARG_WITH(
 	[example-dash],
 	[  --with-example-dash           Build Dashing example (default=yes)],
 	[build_test_dash=$withval], [build_test_dash="$build_test_all"])
@@ -305,6 +310,7 @@ fi
 AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$has_x11_h" = "xyes" -a "x$has_x11" = "xyes"])
 
 AM_CONDITIONAL([BUILD_VGU],         [test "x$build_test_vgu" = "xyes"])
+AM_CONDITIONAL([BUILD_WARP],        [test "x$build_test_warp" = "xyes"])
 AM_CONDITIONAL([BUILD_DASH],        [test "x$build_test_dash" = "xyes"])
 AM_CONDITIONAL([BUILD_LINEAR],      [test "x$build_test_linear" = "xyes"])
 AM_CONDITIONAL([BUILD_RADIAL],      [test "x$build_test_radial" = "xyes"])
@@ -340,6 +346,7 @@ ShaderVG will be compiled with the following example programs
 (run './configure --help' to see how to change selection) :
 
   VGU                       ${build_test_vgu}
+  Image Warp                ${build_test_warp}
   Dashing                   ${build_test_dash}
   Linear Gradient           ${build_test_linear}
   Radial Gradient           ${build_test_radial}

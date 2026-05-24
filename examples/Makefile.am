@@ -20,6 +20,10 @@ if BUILD_VGU
 noinst_PROGRAMS += test_vgu
 endif
 
+if BUILD_WARP
+noinst_PROGRAMS += test_warp
+endif
+
 if BUILD_DASH
 noinst_PROGRAMS += test_dash
 endif
@@ -63,6 +67,9 @@ endif
 test_vgu_SOURCES =\
 	${EXAMPLE_SRCS} test_vgu.c
 
+test_warp_SOURCES =\
+	${EXAMPLE_SRCS} test_warp.c test_tiger_paths.c
+
 test_dash_SOURCES =\
 	${EXAMPLE_SRCS} test_dash.c
 
@@ -105,6 +112,10 @@ test_font_SOURCES =\
 test_vgu_CFLAGS = ${EXAMPLE_CF}
 test_vgu_LDADD = ${EXAMPLE_LA}
 test_vgu_LDFLAGS = ${EXAMPLE_LF}
+
+test_warp_CFLAGS = ${EXAMPLE_CF}
+test_warp_LDADD = ${EXAMPLE_LA}
+test_warp_LDFLAGS = ${EXAMPLE_LF}
 
 test_dash_CFLAGS = ${EXAMPLE_CF}
 test_dash_LDADD = ${EXAMPLE_LA}

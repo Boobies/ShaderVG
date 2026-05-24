@@ -41,6 +41,7 @@ examples/test_tiger_shader
 examples/test_pbuffer
 examples/test_egl_gl_vg
 examples/test_font
+examples/test_warp
 *.libs
 *.la
 *.lo

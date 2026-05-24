@@ -7,6 +7,9 @@
 
 #include <EGL/egl.h>
 #include <vg/openvg.h>
+#include <vg/vgu.h>
+
+#define WARP_TEST_EPSILON 0.001f
 
 static int fail_egl(const char *message)
 {
@@ -429,6 +432,205 @@ static int run_hardware_query_test(void)
   return 0;
 }
 
+static int warp_close(VGfloat a, VGfloat b)
+{
+  VGfloat diff = a - b;
+  if (diff < 0.0f)
+    diff = -diff;
+
+  return diff <= WARP_TEST_EPSILON;
+}
+
+static void apply_warp(const VGfloat *matrix,
+                       VGfloat x, VGfloat y,
+                       VGfloat *outX, VGfloat *outY)
+{
+  VGfloat denominator = matrix[2] * x + matrix[5] * y + matrix[8];
+
+  *outX = (matrix[0] * x + matrix[3] * y + matrix[6]) / denominator;
+  *outY = (matrix[1] * x + matrix[4] * y + matrix[7]) / denominator;
+}
+
+static int expect_warp_point(const char *message,
+                             const VGfloat *matrix,
+                             VGfloat sourceX, VGfloat sourceY,
+                             VGfloat expectedX, VGfloat expectedY)
+{
+  VGfloat actualX, actualY;
+
+  apply_warp(matrix, sourceX, sourceY, &actualX, &actualY);
+  if (warp_close(actualX, expectedX) &&
+      warp_close(actualY, expectedY))
+    return 0;
+
+  fprintf(stderr, "%s (expected %.4f,%.4f, got %.4f,%.4f)\n",
+          message, expectedX, expectedY, actualX, actualY);
+  return 1;
+}
+
+static int expect_vgu_error(const char *message,
+                            VGUErrorCode actual,
+                            VGUErrorCode expected)
+{
+  if (actual == expected)
+    return 0;
+
+  fprintf(stderr, "%s (expected VGU error 0x%04x, got 0x%04x)\n",
+          message, expected, actual);
+  return 1;
+}
+
+static int matrix_unchanged(const VGfloat *before, const VGfloat *after)
+{
+  int i;
+
+  for (i=0; i<9; ++i) {
+    if (!warp_close(before[i], after[i]))
+      return 0;
+  }
+
+  return 1;
+}
+
+static int run_warp_test(void)
+{
+  VGfloat matrix[9];
+  VGfloat before[9];
+  VGfloat source[] = {
+    3.0f, 4.0f,
+    44.0f, 6.0f,
+    8.0f, 50.0f,
+    48.0f, 45.0f
+  };
+  VGfloat destination[] = {
+    6.0f, 7.0f,
+    52.0f, 11.0f,
+    10.0f, 55.0f,
+    58.0f, 48.0f
+  };
+  int i;
+
+  if (expect_vgu_error("VGU rejected identity square-to-quad warp",
+                       vguComputeWarpSquareToQuad(0.0f, 0.0f,
+                                                  1.0f, 0.0f,
+                                                  0.0f, 1.0f,
+                                                  1.0f, 1.0f,
+                                                  matrix),
+                       VGU_NO_ERROR))
+    return 1;
+
+  if (expect_warp_point("Identity warp moved lower-left corner",
+                        matrix, 0.0f, 0.0f, 0.0f, 0.0f) ||
+      expect_warp_point("Identity warp moved lower-right corner",
+                        matrix, 1.0f, 0.0f, 1.0f, 0.0f) ||
+      expect_warp_point("Identity warp moved upper-left corner",
+                        matrix, 0.0f, 1.0f, 0.0f, 1.0f) ||
+      expect_warp_point("Identity warp moved upper-right corner",
+                        matrix, 1.0f, 1.0f, 1.0f, 1.0f))
+    return 1;
+
+  if (expect_vgu_error("VGU rejected square-to-quad warp",
+                       vguComputeWarpSquareToQuad(destination[0], destination[1],
+                                                  destination[2], destination[3],
+                                                  destination[4], destination[5],
+                                                  destination[6], destination[7],
+                                                  matrix),
+                       VGU_NO_ERROR))
+    return 1;
+
+  if (expect_warp_point("Square-to-quad warp missed destination 0",
+                        matrix, 0.0f, 0.0f,
+                        destination[0], destination[1]) ||
+      expect_warp_point("Square-to-quad warp missed destination 1",
+                        matrix, 1.0f, 0.0f,
+                        destination[2], destination[3]) ||
+      expect_warp_point("Square-to-quad warp missed destination 2",
+                        matrix, 0.0f, 1.0f,
+                        destination[4], destination[5]) ||
+      expect_warp_point("Square-to-quad warp missed destination 3",
+                        matrix, 1.0f, 1.0f,
+                        destination[6], destination[7]))
+    return 1;
+
+  if (expect_vgu_error("VGU rejected quad-to-square warp",
+                       vguComputeWarpQuadToSquare(destination[0], destination[1],
+                                                  destination[2], destination[3],
+                                                  destination[4], destination[5],
+                                                  destination[6], destination[7],
+                                                  matrix),
+                       VGU_NO_ERROR))
+    return 1;
+
+  if (expect_warp_point("Quad-to-square warp missed source 0",
+                        matrix, destination[0], destination[1],
+                        0.0f, 0.0f) ||
+      expect_warp_point("Quad-to-square warp missed source 1",
+                        matrix, destination[2], destination[3],
+                        1.0f, 0.0f) ||
+      expect_warp_point("Quad-to-square warp missed source 2",
+                        matrix, destination[4], destination[5],
+                        0.0f, 1.0f) ||
+      expect_warp_point("Quad-to-square warp missed source 3",
+                        matrix, destination[6], destination[7],
+                        1.0f, 1.0f))
+    return 1;
+
+  if (expect_vgu_error("VGU rejected quad-to-quad warp",
+                       vguComputeWarpQuadToQuad(destination[0], destination[1],
+                                                destination[2], destination[3],
+                                                destination[4], destination[5],
+                                                destination[6], destination[7],
+                                                source[0], source[1],
+                                                source[2], source[3],
+                                                source[4], source[5],
+                                                source[6], source[7],
+                                                matrix),
+                       VGU_NO_ERROR))
+    return 1;
+
+  if (expect_warp_point("Quad-to-quad warp missed corner 0",
+                        matrix, source[0], source[1],
+                        destination[0], destination[1]) ||
+      expect_warp_point("Quad-to-quad warp missed corner 1",
+                        matrix, source[2], source[3],
+                        destination[2], destination[3]) ||
+      expect_warp_point("Quad-to-quad warp missed corner 2",
+                        matrix, source[4], source[5],
+                        destination[4], destination[5]) ||
+      expect_warp_point("Quad-to-quad warp missed corner 3",
+                        matrix, source[6], source[7],
+                        destination[6], destination[7]))
+    return 1;
+
+  for (i=0; i<9; ++i)
+    before[i] = matrix[i] = (VGfloat)(i + 10);
+
+  if (expect_vgu_error("VGU accepted a degenerate warp",
+                       vguComputeWarpSquareToQuad(0.0f, 0.0f,
+                                                  16.0f, 0.0f,
+                                                  32.0f, 0.0f,
+                                                  48.0f, 0.0f,
+                                                  matrix),
+                       VGU_BAD_WARP_ERROR))
+    return 1;
+
+  if (!matrix_unchanged(before, matrix)) {
+    fprintf(stderr, "VGU degenerate warp modified the output matrix\n");
+    return 1;
+  }
+
+  if (expect_vgu_error("VGU accepted a null warp output matrix",
+                       vguComputeWarpSquareToQuad(0.0f, 0.0f,
+                                                  1.0f, 0.0f,
+                                                  0.0f, 1.0f,
+                                                  1.0f, 1.0f,
+                                                  NULL),
+                       VGU_ILLEGAL_ARGUMENT_ERROR))
+    return 1;
+
+  return 0;
+}
+
 int main(void)
 {
   const EGLint width = 64;
@@ -510,6 +712,8 @@ int main(void)
       result = run_mask_test(pixels, width, height);
       if (result == 0)
         result = run_hardware_query_test();
+      if (result == 0)
+        result = run_warp_test();
       if (result == 0)
         printf("EGL/OpenVG pbuffer smoke test passed on EGL %d.%d\n", major, minor);
     }

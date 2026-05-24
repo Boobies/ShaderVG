@@ -52,6 +52,10 @@ $ ./test_tiger_shader
 #### test_vgu
   Constructs some path primitives using the VGU API.
 
+#### test_warp
+  Renders the tiger artwork into a VGImage and demonstrates the VGU
+  image warp helpers.
+
 #### test_tiger
   The most simple performance test. It draws the well known svg
   tiger using just simple stroke and fill of solid colors. It
@@ -233,9 +237,9 @@ vguRect                    | FULLY implemented
 vguRoundRect               | FULLY implemented    
 vguEllipse                 | FULLY implemented    
 vguArc                     | FULLY implemented    
-vguComputeWarpQuadToSquare | NOT implemented      
-vguComputeWarpSquareToQuad | NOT implemented      
-vguComputeWarpQuadToQuad   | NOT implemented      
+vguComputeWarpQuadToSquare | FULLY implemented
+vguComputeWarpSquareToQuad | FULLY implemented
+vguComputeWarpQuadToQuad   | FULLY implemented
         
 ## Extensions
 

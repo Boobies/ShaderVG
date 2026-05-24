@@ -94,18 +94,20 @@ noinst_PROGRAMS = test_pbuffer$(EXEEXT) test_egl_gl_vg$(EXEEXT) \
 	test_masking$(EXEEXT) $(am__EXEEXT_1) $(am__EXEEXT_2) \
 	$(am__EXEEXT_3) $(am__EXEEXT_4) $(am__EXEEXT_5) \
 	$(am__EXEEXT_6) $(am__EXEEXT_7) $(am__EXEEXT_8) \
-	$(am__EXEEXT_9) $(am__EXEEXT_10) $(am__EXEEXT_11)
+	$(am__EXEEXT_9) $(am__EXEEXT_10) $(am__EXEEXT_11) \
+	$(am__EXEEXT_12)
 @BUILD_VGU_TRUE@am__append_1 = test_vgu
-@BUILD_DASH_TRUE@am__append_2 = test_dash
-@BUILD_LINEAR_TRUE@am__append_3 = test_linear
-@BUILD_RADIAL_TRUE@am__append_4 = test_radial
-@BUILD_INTERPOLATE_TRUE@am__append_5 = test_interpolate
-@BUILD_TIGER_TRUE@am__append_6 = test_tiger
-@BUILD_IMAGE_TRUE@am__append_7 = test_image
-@BUILD_PATTERN_TRUE@am__append_8 = test_pattern
-@BUILD_BLEND_TRUE@am__append_9 = test_blend
-@BUILD_TIGER_SHADER_TRUE@am__append_10 = test_tiger_shader
-@BUILD_FONT_TRUE@am__append_11 = test_font
+@BUILD_WARP_TRUE@am__append_2 = test_warp
+@BUILD_DASH_TRUE@am__append_3 = test_dash
+@BUILD_LINEAR_TRUE@am__append_4 = test_linear
+@BUILD_RADIAL_TRUE@am__append_5 = test_radial
+@BUILD_INTERPOLATE_TRUE@am__append_6 = test_interpolate
+@BUILD_TIGER_TRUE@am__append_7 = test_tiger
+@BUILD_IMAGE_TRUE@am__append_8 = test_image
+@BUILD_PATTERN_TRUE@am__append_9 = test_pattern
+@BUILD_BLEND_TRUE@am__append_10 = test_blend
+@BUILD_TIGER_SHADER_TRUE@am__append_11 = test_tiger_shader
+@BUILD_FONT_TRUE@am__append_12 = test_font
 subdir = examples
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/configure.in
@@ -117,16 +119,17 @@ CONFIG_HEADER = $(top_builddir)/config.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 @BUILD_VGU_TRUE@am__EXEEXT_1 = test_vgu$(EXEEXT)
-@BUILD_DASH_TRUE@am__EXEEXT_2 = test_dash$(EXEEXT)
-@BUILD_LINEAR_TRUE@am__EXEEXT_3 = test_linear$(EXEEXT)
-@BUILD_RADIAL_TRUE@am__EXEEXT_4 = test_radial$(EXEEXT)
-@BUILD_INTERPOLATE_TRUE@am__EXEEXT_5 = test_interpolate$(EXEEXT)
-@BUILD_TIGER_TRUE@am__EXEEXT_6 = test_tiger$(EXEEXT)
-@BUILD_IMAGE_TRUE@am__EXEEXT_7 = test_image$(EXEEXT)
-@BUILD_PATTERN_TRUE@am__EXEEXT_8 = test_pattern$(EXEEXT)
-@BUILD_BLEND_TRUE@am__EXEEXT_9 = test_blend$(EXEEXT)
-@BUILD_TIGER_SHADER_TRUE@am__EXEEXT_10 = test_tiger_shader$(EXEEXT)
-@BUILD_FONT_TRUE@am__EXEEXT_11 = test_font$(EXEEXT)
+@BUILD_WARP_TRUE@am__EXEEXT_2 = test_warp$(EXEEXT)
+@BUILD_DASH_TRUE@am__EXEEXT_3 = test_dash$(EXEEXT)
+@BUILD_LINEAR_TRUE@am__EXEEXT_4 = test_linear$(EXEEXT)
+@BUILD_RADIAL_TRUE@am__EXEEXT_5 = test_radial$(EXEEXT)
+@BUILD_INTERPOLATE_TRUE@am__EXEEXT_6 = test_interpolate$(EXEEXT)
+@BUILD_TIGER_TRUE@am__EXEEXT_7 = test_tiger$(EXEEXT)
+@BUILD_IMAGE_TRUE@am__EXEEXT_8 = test_image$(EXEEXT)
+@BUILD_PATTERN_TRUE@am__EXEEXT_9 = test_pattern$(EXEEXT)
+@BUILD_BLEND_TRUE@am__EXEEXT_10 = test_blend$(EXEEXT)
+@BUILD_TIGER_SHADER_TRUE@am__EXEEXT_11 = test_tiger_shader$(EXEEXT)
+@BUILD_FONT_TRUE@am__EXEEXT_12 = test_font$(EXEEXT)
 PROGRAMS = $(noinst_PROGRAMS)
 am__objects_1 = test_blend-test.$(OBJEXT)
 am_test_blend_OBJECTS = $(am__objects_1) \
@@ -245,6 +248,14 @@ test_vgu_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_vgu_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_vgu_CFLAGS) \
 	$(CFLAGS) $(test_vgu_LDFLAGS) $(LDFLAGS) -o $@
+am__objects_14 = test_warp-test.$(OBJEXT)
+am_test_warp_OBJECTS = $(am__objects_14) test_warp-test_warp.$(OBJEXT) \
+	test_warp-test_tiger_paths.$(OBJEXT)
+test_warp_OBJECTS = $(am_test_warp_OBJECTS)
+test_warp_DEPENDENCIES = $(am__DEPENDENCIES_1)
+test_warp_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_warp_CFLAGS) \
+	$(CFLAGS) $(test_warp_LDFLAGS) $(LDFLAGS) -o $@
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -287,7 +298,10 @@ am__depfiles_remade = ./$(DEPDIR)/test_blend-test.Po \
 	./$(DEPDIR)/test_tiger_shader-test.Po \
 	./$(DEPDIR)/test_tiger_shader-test_tiger_paths.Po \
 	./$(DEPDIR)/test_tiger_shader-test_tiger_shader.Po \
-	./$(DEPDIR)/test_vgu-test.Po ./$(DEPDIR)/test_vgu-test_vgu.Po
+	./$(DEPDIR)/test_vgu-test.Po ./$(DEPDIR)/test_vgu-test_vgu.Po \
+	./$(DEPDIR)/test_warp-test.Po \
+	./$(DEPDIR)/test_warp-test_tiger_paths.Po \
+	./$(DEPDIR)/test_warp-test_warp.Po
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -313,14 +327,16 @@ SOURCES = $(test_blend_SOURCES) $(test_dash_SOURCES) \
 	$(test_linear_SOURCES) $(test_masking_SOURCES) \
 	$(test_pattern_SOURCES) $(test_pbuffer_SOURCES) \
 	$(test_radial_SOURCES) $(test_tiger_SOURCES) \
-	$(test_tiger_shader_SOURCES) $(test_vgu_SOURCES)
+	$(test_tiger_shader_SOURCES) $(test_vgu_SOURCES) \
+	$(test_warp_SOURCES)
 DIST_SOURCES = $(test_blend_SOURCES) $(test_dash_SOURCES) \
 	$(test_egl_gl_vg_SOURCES) $(test_font_SOURCES) \
 	$(test_image_SOURCES) $(test_interpolate_SOURCES) \
 	$(test_linear_SOURCES) $(test_masking_SOURCES) \
 	$(test_pattern_SOURCES) $(test_pbuffer_SOURCES) \
 	$(test_radial_SOURCES) $(test_tiger_SOURCES) \
-	$(test_tiger_shader_SOURCES) $(test_vgu_SOURCES)
+	$(test_tiger_shader_SOURCES) $(test_vgu_SOURCES) \
+	$(test_warp_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -494,6 +510,9 @@ EXTRA_DIST = *.jpg *.png
 test_vgu_SOURCES = \
 	${EXAMPLE_SRCS} test_vgu.c
 
+test_warp_SOURCES = \
+	${EXAMPLE_SRCS} test_warp.c test_tiger_paths.c
+
 test_dash_SOURCES = \
 	${EXAMPLE_SRCS} test_dash.c
 
@@ -536,6 +555,9 @@ test_font_SOURCES = \
 test_vgu_CFLAGS = ${EXAMPLE_CF}
 test_vgu_LDADD = ${EXAMPLE_LA}
 test_vgu_LDFLAGS = ${EXAMPLE_LF}
+test_warp_CFLAGS = ${EXAMPLE_CF}
+test_warp_LDADD = ${EXAMPLE_LA}
+test_warp_LDFLAGS = ${EXAMPLE_LF}
 test_dash_CFLAGS = ${EXAMPLE_CF}
 test_dash_LDADD = ${EXAMPLE_LA}
 test_dash_LDFLAGS = ${EXAMPLE_LF}
@@ -669,6 +691,10 @@ test_vgu$(EXEEXT): $(test_vgu_OBJECTS) $(test_vgu_DEPENDENCIES) $(EXTRA_test_vgu
 	@rm -f test_vgu$(EXEEXT)
 	$(AM_V_CCLD)$(test_vgu_LINK) $(test_vgu_OBJECTS) $(test_vgu_LDADD) $(LIBS)
 
+test_warp$(EXEEXT): $(test_warp_OBJECTS) $(test_warp_DEPENDENCIES) $(EXTRA_test_warp_DEPENDENCIES)
+	@rm -f test_warp$(EXEEXT)
+	$(AM_V_CCLD)$(test_warp_LINK) $(test_warp_OBJECTS) $(test_warp_LDADD) $(LIBS)
+
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
 
@@ -704,6 +730,9 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_tiger_shader-test_tiger_shader.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_vgu-test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_vgu-test_vgu.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_warp-test.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_warp-test_tiger_paths.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_warp-test_warp.Po@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
 	@$(MKDIR_P) $(@D)
@@ -1138,6 +1167,48 @@ test_vgu-test_vgu.obj: test_vgu.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_vgu_CFLAGS) $(CFLAGS) -c -o test_vgu-test_vgu.obj `if test -f 'test_vgu.c'; then $(CYGPATH_W) 'test_vgu.c'; else $(CYGPATH_W) '$(srcdir)/test_vgu.c'; fi`
 
+test_warp-test.o: test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -MT test_warp-test.o -MD -MP -MF $(DEPDIR)/test_warp-test.Tpo -c -o test_warp-test.o `test -f 'test.c' || echo '$(srcdir)/'`test.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_warp-test.Tpo $(DEPDIR)/test_warp-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test.c' object='test_warp-test.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -c -o test_warp-test.o `test -f 'test.c' || echo '$(srcdir)/'`test.c
+
+test_warp-test.obj: test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -MT test_warp-test.obj -MD -MP -MF $(DEPDIR)/test_warp-test.Tpo -c -o test_warp-test.obj `if test -f 'test.c'; then $(CYGPATH_W) 'test.c'; else $(CYGPATH_W) '$(srcdir)/test.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_warp-test.Tpo $(DEPDIR)/test_warp-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test.c' object='test_warp-test.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -c -o test_warp-test.obj `if test -f 'test.c'; then $(CYGPATH_W) 'test.c'; else $(CYGPATH_W) '$(srcdir)/test.c'; fi`
+
+test_warp-test_warp.o: test_warp.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -MT test_warp-test_warp.o -MD -MP -MF $(DEPDIR)/test_warp-test_warp.Tpo -c -o test_warp-test_warp.o `test -f 'test_warp.c' || echo '$(srcdir)/'`test_warp.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_warp-test_warp.Tpo $(DEPDIR)/test_warp-test_warp.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test_warp.c' object='test_warp-test_warp.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -c -o test_warp-test_warp.o `test -f 'test_warp.c' || echo '$(srcdir)/'`test_warp.c
+
+test_warp-test_warp.obj: test_warp.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -MT test_warp-test_warp.obj -MD -MP -MF $(DEPDIR)/test_warp-test_warp.Tpo -c -o test_warp-test_warp.obj `if test -f 'test_warp.c'; then $(CYGPATH_W) 'test_warp.c'; else $(CYGPATH_W) '$(srcdir)/test_warp.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_warp-test_warp.Tpo $(DEPDIR)/test_warp-test_warp.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test_warp.c' object='test_warp-test_warp.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -c -o test_warp-test_warp.obj `if test -f 'test_warp.c'; then $(CYGPATH_W) 'test_warp.c'; else $(CYGPATH_W) '$(srcdir)/test_warp.c'; fi`
+
+test_warp-test_tiger_paths.o: test_tiger_paths.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -MT test_warp-test_tiger_paths.o -MD -MP -MF $(DEPDIR)/test_warp-test_tiger_paths.Tpo -c -o test_warp-test_tiger_paths.o `test -f 'test_tiger_paths.c' || echo '$(srcdir)/'`test_tiger_paths.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_warp-test_tiger_paths.Tpo $(DEPDIR)/test_warp-test_tiger_paths.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test_tiger_paths.c' object='test_warp-test_tiger_paths.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -c -o test_warp-test_tiger_paths.o `test -f 'test_tiger_paths.c' || echo '$(srcdir)/'`test_tiger_paths.c
+
+test_warp-test_tiger_paths.obj: test_tiger_paths.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -MT test_warp-test_tiger_paths.obj -MD -MP -MF $(DEPDIR)/test_warp-test_tiger_paths.Tpo -c -o test_warp-test_tiger_paths.obj `if test -f 'test_tiger_paths.c'; then $(CYGPATH_W) 'test_tiger_paths.c'; else $(CYGPATH_W) '$(srcdir)/test_tiger_paths.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_warp-test_tiger_paths.Tpo $(DEPDIR)/test_warp-test_tiger_paths.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test_tiger_paths.c' object='test_warp-test_tiger_paths.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_warp_CFLAGS) $(CFLAGS) -c -o test_warp-test_tiger_paths.obj `if test -f 'test_tiger_paths.c'; then $(CYGPATH_W) 'test_tiger_paths.c'; else $(CYGPATH_W) '$(srcdir)/test_tiger_paths.c'; fi`
+
 mostlyclean-libtool:
 	-rm -f *.lo
 
@@ -1298,6 +1369,9 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/test_tiger_shader-test_tiger_shader.Po
 	-rm -f ./$(DEPDIR)/test_vgu-test.Po
 	-rm -f ./$(DEPDIR)/test_vgu-test_vgu.Po
+	-rm -f ./$(DEPDIR)/test_warp-test.Po
+	-rm -f ./$(DEPDIR)/test_warp-test_tiger_paths.Po
+	-rm -f ./$(DEPDIR)/test_warp-test_warp.Po
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -1372,6 +1446,9 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/test_tiger_shader-test_tiger_shader.Po
 	-rm -f ./$(DEPDIR)/test_vgu-test.Po
 	-rm -f ./$(DEPDIR)/test_vgu-test_vgu.Po
+	-rm -f ./$(DEPDIR)/test_warp-test.Po
+	-rm -f ./$(DEPDIR)/test_warp-test_tiger_paths.Po
+	-rm -f ./$(DEPDIR)/test_warp-test_warp.Po
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

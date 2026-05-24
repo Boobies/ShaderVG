@@ -25,6 +25,151 @@
 #include "shContext.h"
 #include <math.h>
 
+#define SH_WARP_EPSILON 0.000001f
+
+static int shIsFiniteWarpValue(VGfloat value)
+{
+  return isfinite(value);
+}
+
+static int shWarpIsNearZero(VGfloat value)
+{
+  return SH_ABS(value) <= SH_WARP_EPSILON;
+}
+
+static VGfloat shWarpGet(const VGfloat *matrix, int row, int column)
+{
+  return matrix[column * 3 + row];
+}
+
+static void shWarpSet(VGfloat *matrix,
+                      VGfloat m00, VGfloat m01, VGfloat m02,
+                      VGfloat m10, VGfloat m11, VGfloat m12,
+                      VGfloat m20, VGfloat m21, VGfloat m22)
+{
+  matrix[0] = m00; matrix[3] = m01; matrix[6] = m02;
+  matrix[1] = m10; matrix[4] = m11; matrix[7] = m12;
+  matrix[2] = m20; matrix[5] = m21; matrix[8] = m22;
+}
+
+static void shWarpCopy(VGfloat *dst, const VGfloat *src)
+{
+  int i;
+  for (i=0; i<9; ++i)
+    dst[i] = src[i];
+}
+
+static int shWarpIsFinite(const VGfloat *matrix)
+{
+  int i;
+  for (i=0; i<9; ++i) {
+    if (!shIsFiniteWarpValue(matrix[i]))
+      return 0;
+  }
+
+  return 1;
+}
+
+static VGfloat shWarpDeterminant(const VGfloat *matrix)
+{
+  VGfloat a = matrix[0], b = matrix[3], c = matrix[6];
+  VGfloat d = matrix[1], e = matrix[4], f = matrix[7];
+  VGfloat g = matrix[2], h = matrix[5], i = matrix[8];
+
+  return a * (e * i - f * h) -
+         b * (d * i - f * g) +
+         c * (d * h - e * g);
+}
+
+static int shWarpIsUsable(const VGfloat *matrix)
+{
+  return shWarpIsFinite(matrix) &&
+         !shWarpIsNearZero(shWarpDeterminant(matrix));
+}
+
+static int shWarpInvert(const VGfloat *matrix, VGfloat *inverse)
+{
+  VGfloat a = matrix[0], b = matrix[3], c = matrix[6];
+  VGfloat d = matrix[1], e = matrix[4], f = matrix[7];
+  VGfloat g = matrix[2], h = matrix[5], i = matrix[8];
+  VGfloat det = shWarpDeterminant(matrix);
+  VGfloat invdet;
+
+  if (shWarpIsNearZero(det))
+    return 0;
+
+  invdet = 1.0f / det;
+  shWarpSet(inverse,
+            (e * i - f * h) * invdet,
+            (c * h - b * i) * invdet,
+            (b * f - c * e) * invdet,
+            (f * g - d * i) * invdet,
+            (a * i - c * g) * invdet,
+            (c * d - a * f) * invdet,
+            (d * h - e * g) * invdet,
+            (b * g - a * h) * invdet,
+            (a * e - b * d) * invdet);
+
+  return shWarpIsUsable(inverse);
+}
+
+static int shWarpMultiply(const VGfloat *left, const VGfloat *right,
+                          VGfloat *product)
+{
+  int row, column;
+
+  for (row=0; row<3; ++row) {
+    for (column=0; column<3; ++column) {
+      product[column * 3 + row] =
+        shWarpGet(left, row, 0) * shWarpGet(right, 0, column) +
+        shWarpGet(left, row, 1) * shWarpGet(right, 1, column) +
+        shWarpGet(left, row, 2) * shWarpGet(right, 2, column);
+    }
+  }
+
+  return shWarpIsUsable(product);
+}
+
+static int shComputeWarpSquareToQuad(VGfloat dx0, VGfloat dy0,
+                                     VGfloat dx1, VGfloat dy1,
+                                     VGfloat dx2, VGfloat dy2,
+                                     VGfloat dx3, VGfloat dy3,
+                                     VGfloat *matrix)
+{
+  VGfloat a = dx1 - dx3;
+  VGfloat b = dx2 - dx3;
+  VGfloat c = dx3 - dx1 - dx2 + dx0;
+  VGfloat d = dy1 - dy3;
+  VGfloat e = dy2 - dy3;
+  VGfloat f = dy3 - dy1 - dy2 + dy0;
+  VGfloat det = a * e - b * d;
+  VGfloat w0, w1;
+
+  if (shWarpIsNearZero(det))
+    return 0;
+
+  w0 = (c * e - b * f) / det;
+  w1 = (a * f - c * d) / det;
+
+  if (shWarpIsNearZero(1.0f + w0) ||
+      shWarpIsNearZero(1.0f + w1) ||
+      shWarpIsNearZero(1.0f + w0 + w1))
+    return 0;
+
+  shWarpSet(matrix,
+            dx1 * (w0 + 1.0f) - dx0,
+            dx2 * (w1 + 1.0f) - dx0,
+            dx0,
+            dy1 * (w0 + 1.0f) - dy0,
+            dy2 * (w1 + 1.0f) - dy0,
+            dy0,
+            w0,
+            w1,
+            1.0f);
+
+  return shWarpIsUsable(matrix);
+}
+
 static VGUErrorCode shAppend(VGPath path, SHint commSize, const VGubyte *comm,
                              SHint dataSize, const VGfloat *data)
 {
@@ -317,6 +462,23 @@ VGU_API_CALL VGUErrorCode vguComputeWarpQuadToSquare(VGfloat sx0, VGfloat sy0,
                                                     VGfloat sx3, VGfloat sy3,
                                                     VGfloat * matrix)
 {
+  VGfloat squareToQuad[9];
+  VGfloat quadToSquare[9];
+
+  if (matrix == NULL)
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
+
+  if (!shComputeWarpSquareToQuad(sx0, sy0,
+                                 sx1, sy1,
+                                 sx2, sy2,
+                                 sx3, sy3,
+                                 squareToQuad))
+    return VGU_BAD_WARP_ERROR;
+
+  if (!shWarpInvert(squareToQuad, quadToSquare))
+    return VGU_BAD_WARP_ERROR;
+
+  shWarpCopy(matrix, quadToSquare);
   return VGU_NO_ERROR;
 }
 
@@ -326,6 +488,19 @@ VGU_API_CALL VGUErrorCode vguComputeWarpSquareToQuad(VGfloat dx0, VGfloat dy0,
                                                     VGfloat dx3, VGfloat dy3,
                                                     VGfloat * matrix)
 {
+  VGfloat squareToQuad[9];
+
+  if (matrix == NULL)
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
+
+  if (!shComputeWarpSquareToQuad(dx0, dy0,
+                                 dx1, dy1,
+                                 dx2, dy2,
+                                 dx3, dy3,
+                                 squareToQuad))
+    return VGU_BAD_WARP_ERROR;
+
+  shWarpCopy(matrix, squareToQuad);
   return VGU_NO_ERROR;
 }
 
@@ -339,5 +514,30 @@ VGU_API_CALL VGUErrorCode vguComputeWarpQuadToQuad(VGfloat dx0, VGfloat dy0,
                                                   VGfloat sx3, VGfloat sy3,
                                                   VGfloat * matrix)
 {
+  VGfloat sourceToSquare[9];
+  VGfloat squareToDestination[9];
+  VGfloat quadToQuad[9];
+
+  if (matrix == NULL)
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
+
+  if (vguComputeWarpQuadToSquare(sx0, sy0,
+                                 sx1, sy1,
+                                 sx2, sy2,
+                                 sx3, sy3,
+                                 sourceToSquare) != VGU_NO_ERROR)
+    return VGU_BAD_WARP_ERROR;
+
+  if (!shComputeWarpSquareToQuad(dx0, dy0,
+                                 dx1, dy1,
+                                 dx2, dy2,
+                                 dx3, dy3,
+                                 squareToDestination))
+    return VGU_BAD_WARP_ERROR;
+
+  if (!shWarpMultiply(squareToDestination, sourceToSquare, quadToQuad))
+    return VGU_BAD_WARP_ERROR;
+
+  shWarpCopy(matrix, quadToQuad);
   return VGU_NO_ERROR;
 }
