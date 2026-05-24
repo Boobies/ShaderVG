@@ -976,5 +976,27 @@ VG_API_CALL void vgRotate(VGfloat angle)
 VG_API_CALL VGHardwareQueryResult vgHardwareQuery(VGHardwareQueryType key,
                                                   VGint setting)
 {
-  return VG_HARDWARE_UNACCELERATED;
+  VG_GETCONTEXT(VG_HARDWARE_UNACCELERATED);
+
+  switch (key) {
+  case VG_IMAGE_FORMAT_QUERY:
+    VG_RETURN_ERR_IF(!shIsValidImageFormat((VGImageFormat)setting),
+                     VG_ILLEGAL_ARGUMENT_ERROR,
+                     VG_HARDWARE_UNACCELERATED);
+    break;
+
+  case VG_PATH_DATATYPE_QUERY:
+    VG_RETURN_ERR_IF(setting != VG_PATH_DATATYPE_S_8 &&
+                     setting != VG_PATH_DATATYPE_S_16 &&
+                     setting != VG_PATH_DATATYPE_S_32 &&
+                     setting != VG_PATH_DATATYPE_F,
+                     VG_ILLEGAL_ARGUMENT_ERROR,
+                     VG_HARDWARE_UNACCELERATED);
+    break;
+
+  default:
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_HARDWARE_UNACCELERATED);
+  }
+
+  VG_RETURN(VG_HARDWARE_UNACCELERATED);
 }

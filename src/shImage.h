@@ -90,6 +90,7 @@ void SHImage_ctor(SHImage *i);
 void SHImage_dtor(SHImage *i);
 void shImageAddRef(SHImage *i);
 void shImageRelease(SHImage *i);
+int shIsValidImageFormat(VGImageFormat format);
 
 #define _ITEM_T SHImage*
 #define _ARRAY_T SHImageArray

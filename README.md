@@ -221,7 +221,7 @@ vgLookupSingle          | NOT implemented
 #### Queries                                       
 API                     | status                   
 ----------------------- | ---------------------    
-vgHardwareQuery         | NOT implemented          
+vgHardwareQuery         | FULLY implemented
 vgGetString             | FULLY implemented        
                                                    
 #### VGU                                          

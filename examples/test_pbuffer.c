@@ -382,6 +382,53 @@ cleanup:
   return result;
 }
 
+static int expect_hardware_query(const char *message,
+                                 VGHardwareQueryType key,
+                                 VGint setting)
+{
+  VGHardwareQueryResult result = vgHardwareQuery(key, setting);
+  VGErrorCode error = vgGetError();
+
+  if (result == VG_HARDWARE_UNACCELERATED && error == VG_NO_ERROR)
+    return 0;
+
+  fprintf(stderr, "%s (result 0x%04x, VG error 0x%04x)\n",
+          message, result, error);
+  return 1;
+}
+
+static int run_hardware_query_test(void)
+{
+  if (expect_hardware_query("OpenVG rejected a valid image hardware query",
+                            VG_IMAGE_FORMAT_QUERY, VG_sRGBA_8888))
+    return 1;
+
+  if (expect_hardware_query("OpenVG rejected a valid unsupported image hardware query",
+                            VG_IMAGE_FORMAT_QUERY, VG_BW_1))
+    return 1;
+
+  if (expect_hardware_query("OpenVG rejected a valid path datatype hardware query",
+                            VG_PATH_DATATYPE_QUERY, VG_PATH_DATATYPE_F))
+    return 1;
+
+  vgHardwareQuery((VGHardwareQueryType)0, VG_sRGBA_8888);
+  if (expect_vg_error("OpenVG accepted an invalid hardware query key",
+                      VG_ILLEGAL_ARGUMENT_ERROR))
+    return 1;
+
+  vgHardwareQuery(VG_IMAGE_FORMAT_QUERY, 0x5555);
+  if (expect_vg_error("OpenVG accepted an invalid image hardware query setting",
+                      VG_ILLEGAL_ARGUMENT_ERROR))
+    return 1;
+
+  vgHardwareQuery(VG_PATH_DATATYPE_QUERY, 0x5555);
+  if (expect_vg_error("OpenVG accepted an invalid path datatype hardware query setting",
+                      VG_ILLEGAL_ARGUMENT_ERROR))
+    return 1;
+
+  return 0;
+}
+
 int main(void)
 {
   const EGLint width = 64;
@@ -461,6 +508,8 @@ int main(void)
       result = 1;
     } else {
       result = run_mask_test(pixels, width, height);
+      if (result == 0)
+        result = run_hardware_query_test();
       if (result == 0)
         printf("EGL/OpenVG pbuffer smoke test passed on EGL %d.%d\n", major, minor);
     }
