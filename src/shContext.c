@@ -454,6 +454,11 @@ void VGContext_ctor(VGContext *c)
   c->maskHeight = 0;
   c->maskTexture = 0;
   c->maskFramebuffer = 0;
+  c->renderToMaskWidth = 0;
+  c->renderToMaskHeight = 0;
+  c->renderToMaskTexture = 0;
+  c->renderToMaskFramebuffer = 0;
+  c->renderToMaskStencil = 0;
   
   /* Stroke parameters */
   c->strokeLineWidth = 1.0f;
@@ -529,6 +534,12 @@ void VGContext_dtor(VGContext *c)
     glDeleteTextures(1, &c->maskTexture);
   if (c->maskFramebuffer != 0)
     glDeleteFramebuffers(1, &c->maskFramebuffer);
+  if (c->renderToMaskTexture != 0)
+    glDeleteTextures(1, &c->renderToMaskTexture);
+  if (c->renderToMaskFramebuffer != 0)
+    glDeleteFramebuffers(1, &c->renderToMaskFramebuffer);
+  if (c->renderToMaskStencil != 0)
+    glDeleteRenderbuffers(1, &c->renderToMaskStencil);
   
   /* Destroy resources */
   for (i=0; i<c->fonts.size; ++i)
@@ -656,10 +667,13 @@ VG_API_CALL void vgFinish(void)
 typedef struct
 {
   GLint framebuffer;
+  GLint renderbuffer;
   GLint viewport[4];
   GLint program;
   GLint activeTexture;
   GLint maskTextureBinding;
+  GLint drawBuffer;
+  GLint readBuffer;
   GLint scissorBox[4];
   GLint blendSrcRgb;
   GLint blendDstRgb;
@@ -667,6 +681,15 @@ typedef struct
   GLint blendDstAlpha;
   GLint blendEquationRgb;
   GLint blendEquationAlpha;
+  GLint stencilFunc;
+  GLint stencilRef;
+  GLint stencilValueMask;
+  GLint stencilFail;
+  GLint stencilPassDepthFail;
+  GLint stencilPassDepthPass;
+  GLint stencilWriteMask;
+  GLint clearStencil;
+  GLfloat clearColor[4];
   GLboolean blend;
   GLboolean scissor;
   GLboolean depth;
@@ -677,9 +700,12 @@ typedef struct
 static void shSaveMaskGLState(SHMaskGLState *state)
 {
   glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
+  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
   glGetIntegerv(GL_VIEWPORT, state->viewport);
   glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
   glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
+  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
+  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
   glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
   glGetIntegerv(GL_BLEND_SRC_RGB, &state->blendSrcRgb);
   glGetIntegerv(GL_BLEND_DST_RGB, &state->blendDstRgb);
@@ -687,6 +713,15 @@ static void shSaveMaskGLState(SHMaskGLState *state)
   glGetIntegerv(GL_BLEND_DST_ALPHA, &state->blendDstAlpha);
   glGetIntegerv(GL_BLEND_EQUATION_RGB, &state->blendEquationRgb);
   glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &state->blendEquationAlpha);
+  glGetIntegerv(GL_STENCIL_FUNC, &state->stencilFunc);
+  glGetIntegerv(GL_STENCIL_REF, &state->stencilRef);
+  glGetIntegerv(GL_STENCIL_VALUE_MASK, &state->stencilValueMask);
+  glGetIntegerv(GL_STENCIL_FAIL, &state->stencilFail);
+  glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &state->stencilPassDepthFail);
+  glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &state->stencilPassDepthPass);
+  glGetIntegerv(GL_STENCIL_WRITEMASK, &state->stencilWriteMask);
+  glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &state->clearStencil);
+  glGetFloatv(GL_COLOR_CLEAR_VALUE, state->clearColor);
   glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
   state->blend = glIsEnabled(GL_BLEND);
   state->scissor = glIsEnabled(GL_SCISSOR_TEST);
@@ -714,12 +749,23 @@ static void shRestoreMaskGLState(const SHMaskGLState *state)
                       state->blendSrcAlpha, state->blendDstAlpha);
   glBlendEquationSeparate(state->blendEquationRgb,
                           state->blendEquationAlpha);
+  glStencilFunc(state->stencilFunc, state->stencilRef,
+                state->stencilValueMask);
+  glStencilOp(state->stencilFail, state->stencilPassDepthFail,
+              state->stencilPassDepthPass);
+  glStencilMask(state->stencilWriteMask);
+  glClearStencil(state->clearStencil);
   glScissor(state->scissorBox[0], state->scissorBox[1],
             state->scissorBox[2], state->scissorBox[3]);
   glColorMask(state->colorMask[0], state->colorMask[1],
               state->colorMask[2], state->colorMask[3]);
-  glUseProgram(state->program);
+  glClearColor(state->clearColor[0], state->clearColor[1],
+               state->clearColor[2], state->clearColor[3]);
   glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
+  glDrawBuffer(state->drawBuffer);
+  glReadBuffer(state->readBuffer);
+  glUseProgram(state->program);
   glViewport(state->viewport[0], state->viewport[1],
              state->viewport[2], state->viewport[3]);
   glActiveTexture(SH_TEXTURE_MASK);
@@ -822,6 +868,61 @@ static void shDrawMaskRect(VGContext *context,
 static VGint shMaskSourceModeForImage(SHImage *image)
 {
   return image->fd.amask ? SH_MASK_SOURCE_ALPHA : SH_MASK_SOURCE_RED;
+}
+
+static VGboolean shApplyMaskToSurface(VGContext *context,
+                                      GLuint sourceTexture,
+                                      VGint sourceMode,
+                                      VGfloat maskValue,
+                                      VGMaskOperation operation)
+{
+  SHMaskGLState state;
+
+  if (!shResizeMaskSurface(context,
+                           context->surfaceWidth,
+                           context->surfaceHeight))
+    return VG_FALSE;
+
+  if (context->maskTexture == 0 ||
+      context->maskFramebuffer == 0 ||
+      context->maskWidth <= 0 ||
+      context->maskHeight <= 0)
+    return VG_TRUE;
+
+  shSaveMaskGLState(&state);
+  shDrawMaskRect(context,
+                 context->maskFramebuffer,
+                 context->maskWidth, context->maskHeight,
+                 0, 0,
+                 context->maskWidth, context->maskHeight,
+                 sourceTexture, sourceMode, maskValue,
+                 0.0f, 0.0f, 1.0f, 1.0f,
+                 operation);
+  shRestoreMaskGLState(&state);
+
+  return VG_TRUE;
+}
+
+VGboolean shApplyMaskTextureToSurface(VGContext *context,
+                                      GLuint texture,
+                                      VGMaskOperation operation)
+{
+  return shApplyMaskToSurface(context,
+                              texture,
+                              SH_MASK_SOURCE_RED,
+                              1.0f,
+                              operation);
+}
+
+VGboolean shApplyMaskValueToSurface(VGContext *context,
+                                    VGfloat value,
+                                    VGMaskOperation operation)
+{
+  return shApplyMaskToSurface(context,
+                              0,
+                              SH_MASK_SOURCE_CONSTANT,
+                              value,
+                              operation);
 }
 
 VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,

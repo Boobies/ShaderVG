@@ -213,6 +213,38 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
   GL_CEHCK_ERROR;
 }
 
+static void shDrawCoverageMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
+                               VGPaintMode mode)
+{
+  SHPaint coveragePaint;
+  SHVector2 pmin, pmax;
+  SHfloat K = 1.0f;
+  GLfloat v[8];
+
+  if (mode == VG_STROKE_PATH)
+    K = SH_CEIL(c->strokeMiterLimit * c->strokeLineWidth) + 1.0f;
+
+  SET2V(pmin, (*min)); SUB2(pmin, K,K);
+  SET2V(pmax, (*max)); ADD2(pmax, K,K);
+
+  SHPaint_ctor(&coveragePaint);
+  CSET(coveragePaint.color, 1.0f, 1.0f, 1.0f, 1.0f);
+  shLoadOneColorMesh(&coveragePaint);
+  glUniform1i(c->locationDraw.maskEnabled, 0);
+
+  v[0] = pmin.x; v[1] = pmin.y;
+  v[2] = pmax.x; v[3] = pmin.y;
+  v[4] = pmin.x; v[5] = pmax.y;
+  v[6] = pmax.x; v[7] = pmax.y;
+
+  glEnableVertexAttribArray(c->locationDraw.pos);
+  glVertexAttribPointer(c->locationDraw.pos, 2, GL_FLOAT, GL_FALSE, 0, v);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  glDisableVertexAttribArray(c->locationDraw.pos);
+  SHPaint_dtor(&coveragePaint);
+  GL_CEHCK_ERROR;
+}
+
 VGboolean shIsTessCacheValid (VGContext *c, SHPath *p)
 {
   SHfloat nX, nY;
@@ -251,6 +283,322 @@ VGboolean shIsTessCacheValid (VGContext *c, SHPath *p)
   }
   
   return valid;
+}
+
+typedef struct
+{
+  GLint framebuffer;
+  GLint renderbuffer;
+  GLint viewport[4];
+  GLint program;
+  GLint activeTexture;
+  GLint maskTextureBinding;
+  GLint drawBuffer;
+  GLint readBuffer;
+  GLint scissorBox[4];
+  GLint blendSrcRgb;
+  GLint blendDstRgb;
+  GLint blendSrcAlpha;
+  GLint blendDstAlpha;
+  GLint blendEquationRgb;
+  GLint blendEquationAlpha;
+  GLint stencilFunc;
+  GLint stencilRef;
+  GLint stencilValueMask;
+  GLint stencilFail;
+  GLint stencilPassDepthFail;
+  GLint stencilPassDepthPass;
+  GLint stencilWriteMask;
+  GLint clearStencil;
+  GLfloat clearColor[4];
+  GLboolean blend;
+  GLboolean scissor;
+  GLboolean depth;
+  GLboolean stencil;
+  GLboolean colorMask[4];
+} SHRenderToMaskGLState;
+
+static void shSaveRenderToMaskGLState(SHRenderToMaskGLState *state)
+{
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
+  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
+  glGetIntegerv(GL_VIEWPORT, state->viewport);
+  glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
+  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
+  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
+  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
+  glGetIntegerv(GL_BLEND_SRC_RGB, &state->blendSrcRgb);
+  glGetIntegerv(GL_BLEND_DST_RGB, &state->blendDstRgb);
+  glGetIntegerv(GL_BLEND_SRC_ALPHA, &state->blendSrcAlpha);
+  glGetIntegerv(GL_BLEND_DST_ALPHA, &state->blendDstAlpha);
+  glGetIntegerv(GL_BLEND_EQUATION_RGB, &state->blendEquationRgb);
+  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &state->blendEquationAlpha);
+  glGetIntegerv(GL_STENCIL_FUNC, &state->stencilFunc);
+  glGetIntegerv(GL_STENCIL_REF, &state->stencilRef);
+  glGetIntegerv(GL_STENCIL_VALUE_MASK, &state->stencilValueMask);
+  glGetIntegerv(GL_STENCIL_FAIL, &state->stencilFail);
+  glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &state->stencilPassDepthFail);
+  glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &state->stencilPassDepthPass);
+  glGetIntegerv(GL_STENCIL_WRITEMASK, &state->stencilWriteMask);
+  glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &state->clearStencil);
+  glGetFloatv(GL_COLOR_CLEAR_VALUE, state->clearColor);
+  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
+  state->blend = glIsEnabled(GL_BLEND);
+  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
+  state->depth = glIsEnabled(GL_DEPTH_TEST);
+  state->stencil = glIsEnabled(GL_STENCIL_TEST);
+  glActiveTexture(SH_TEXTURE_MASK);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->maskTextureBinding);
+}
+
+static void shRestoreRenderToMaskGLState(const SHRenderToMaskGLState *state)
+{
+  if (state->blend) glEnable(GL_BLEND);
+  else glDisable(GL_BLEND);
+
+  if (state->scissor) glEnable(GL_SCISSOR_TEST);
+  else glDisable(GL_SCISSOR_TEST);
+
+  if (state->depth) glEnable(GL_DEPTH_TEST);
+  else glDisable(GL_DEPTH_TEST);
+
+  if (state->stencil) glEnable(GL_STENCIL_TEST);
+  else glDisable(GL_STENCIL_TEST);
+
+  glBlendFuncSeparate(state->blendSrcRgb, state->blendDstRgb,
+                      state->blendSrcAlpha, state->blendDstAlpha);
+  glBlendEquationSeparate(state->blendEquationRgb,
+                          state->blendEquationAlpha);
+  glStencilFunc(state->stencilFunc, state->stencilRef,
+                state->stencilValueMask);
+  glStencilOp(state->stencilFail, state->stencilPassDepthFail,
+              state->stencilPassDepthPass);
+  glStencilMask(state->stencilWriteMask);
+  glClearStencil(state->clearStencil);
+  glScissor(state->scissorBox[0], state->scissorBox[1],
+            state->scissorBox[2], state->scissorBox[3]);
+  glColorMask(state->colorMask[0], state->colorMask[1],
+              state->colorMask[2], state->colorMask[3]);
+  glClearColor(state->clearColor[0], state->clearColor[1],
+               state->clearColor[2], state->clearColor[3]);
+  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
+  glDrawBuffer(state->drawBuffer);
+  glReadBuffer(state->readBuffer);
+  glUseProgram(state->program);
+  glViewport(state->viewport[0], state->viewport[1],
+             state->viewport[2], state->viewport[3]);
+  glActiveTexture(SH_TEXTURE_MASK);
+  glBindTexture(GL_TEXTURE_2D, state->maskTextureBinding);
+  glActiveTexture(state->activeTexture);
+}
+
+static VGboolean shEnsureRenderToMaskTarget(VGContext *context)
+{
+  GLenum status;
+
+  if (context->surfaceWidth <= 0 || context->surfaceHeight <= 0)
+    return VG_FALSE;
+
+  if (context->renderToMaskTexture != 0 &&
+      context->renderToMaskFramebuffer != 0 &&
+      context->renderToMaskStencil != 0 &&
+      context->renderToMaskWidth == context->surfaceWidth &&
+      context->renderToMaskHeight == context->surfaceHeight)
+    return VG_TRUE;
+
+  if (context->renderToMaskTexture == 0)
+    glGenTextures(1, &context->renderToMaskTexture);
+  if (context->renderToMaskFramebuffer == 0)
+    glGenFramebuffers(1, &context->renderToMaskFramebuffer);
+  if (context->renderToMaskStencil == 0)
+    glGenRenderbuffers(1, &context->renderToMaskStencil);
+
+  if (context->renderToMaskTexture == 0 ||
+      context->renderToMaskFramebuffer == 0 ||
+      context->renderToMaskStencil == 0)
+    return VG_FALSE;
+
+  glActiveTexture(SH_TEXTURE_MASK);
+  glBindTexture(GL_TEXTURE_2D, context->renderToMaskTexture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_R8,
+               context->surfaceWidth, context->surfaceHeight, 0,
+               GL_RED, GL_UNSIGNED_BYTE, NULL);
+
+  glBindRenderbuffer(GL_RENDERBUFFER, context->renderToMaskStencil);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8,
+                        context->surfaceWidth, context->surfaceHeight);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, context->renderToMaskFramebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D, context->renderToMaskTexture, 0);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
+                            GL_RENDERBUFFER, context->renderToMaskStencil);
+  glDrawBuffer(GL_COLOR_ATTACHMENT0);
+  glReadBuffer(GL_COLOR_ATTACHMENT0);
+
+  status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (status != GL_FRAMEBUFFER_COMPLETE)
+    return VG_FALSE;
+
+  context->renderToMaskWidth = context->surfaceWidth;
+  context->renderToMaskHeight = context->surfaceHeight;
+  GL_CEHCK_ERROR;
+
+  return VG_TRUE;
+}
+
+static void shClearRenderToMaskTarget(VGContext *context)
+{
+  glBindFramebuffer(GL_FRAMEBUFFER, context->renderToMaskFramebuffer);
+  glDrawBuffer(GL_COLOR_ATTACHMENT0);
+  glReadBuffer(GL_COLOR_ATTACHMENT0);
+  glViewport(0, 0, context->surfaceWidth, context->surfaceHeight);
+  glDisable(GL_SCISSOR_TEST);
+  glDisable(GL_BLEND);
+  glDisable(GL_DEPTH_TEST);
+  glStencilMask(0xff);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+  glClearStencil(0);
+  glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
+
+static VGboolean shSetRenderToMaskScissor(VGContext *context)
+{
+  SHRectangle *rect;
+
+  if (context->scissoring != VG_TRUE) {
+    glDisable(GL_SCISSOR_TEST);
+    return VG_TRUE;
+  }
+
+  if (context->scissor.size == 0)
+    return VG_FALSE;
+
+  rect = &context->scissor.items[0];
+  if (rect->w <= 0.0f || rect->h <= 0.0f)
+    return VG_FALSE;
+
+  glScissor((GLint)rect->x, (GLint)rect->y,
+            (GLint)rect->w, (GLint)rect->h);
+  glEnable(GL_SCISSOR_TEST);
+  return VG_TRUE;
+}
+
+static void shEnsurePathGeometry(VGContext *context, SHPath *p)
+{
+  SHMatrix3x3 mi;
+
+  if (shIsTessCacheValid(context, p) == VG_FALSE) {
+    if (shInvertMatrix(&context->pathTransform, &mi)) {
+      shFlattenPath(p, 1);
+      shTransformVertices(&mi, p);
+    } else {
+      shFlattenPath(p, 0);
+    }
+    shFindBoundbox(p);
+  }
+}
+
+static void shRenderFillToMaskTarget(VGContext *context, SHPath *p)
+{
+  if (p->vertices.size <= 0)
+    return;
+
+  glEnable(GL_STENCIL_TEST);
+  glStencilMask(0xff);
+  glStencilFunc(GL_ALWAYS, 0, 0);
+  glStencilOp(GL_INVERT, GL_INVERT, GL_INVERT);
+  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+  shDrawVertices(p, GL_TRIANGLE_FAN);
+
+  glDisable(GL_BLEND);
+  glStencilFunc(GL_EQUAL, 1, 1);
+  glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  shDrawCoverageMesh(context, &p->min, &p->max, VG_FILL_PATH);
+
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glDisable(GL_STENCIL_TEST);
+}
+
+VGboolean shIsStrokeCacheValid (VGContext *c, SHPath *p);
+
+static void shRenderStrokeToMaskTarget(VGContext *context, SHPath *p)
+{
+  if (context->strokeLineWidth <= 0.0f || p->vertices.size <= 0)
+    return;
+
+  if (shIsStrokeCacheValid(context, p) == VG_FALSE) {
+    shVector2ArrayClear(&p->stroke);
+    shStrokePath(context, p);
+  }
+
+  if (p->stroke.size <= 0)
+    return;
+
+  glEnable(GL_STENCIL_TEST);
+  glStencilMask(0xff);
+  glStencilFunc(GL_NOTEQUAL, 1, 1);
+  glStencilOp(GL_KEEP, GL_INCR, GL_INCR);
+  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+  shDrawStroke(p);
+
+  glDisable(GL_BLEND);
+  glStencilFunc(GL_EQUAL, 1, 1);
+  glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  shDrawCoverageMesh(context, &p->min, &p->max, VG_STROKE_PATH);
+
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glDisable(GL_STENCIL_TEST);
+}
+
+static VGboolean shRenderPathPassToMask(VGContext *context,
+                                        SHPath *p,
+                                        VGPaintMode mode,
+                                        VGMaskOperation operation)
+{
+  SHfloat mgl[16];
+  VGboolean renderCoverage;
+
+  if (context->surfaceWidth <= 0 || context->surfaceHeight <= 0)
+    return VG_TRUE;
+
+  if (!shEnsureRenderToMaskTarget(context))
+    return VG_FALSE;
+
+  shClearRenderToMaskTarget(context);
+  renderCoverage = shSetRenderToMaskScissor(context);
+
+  glUseProgram(context->progDraw);
+  shMatrixToGL(&context->pathTransform, mgl);
+  glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, mgl);
+  glUniform1i(context->locationDraw.drawMode, 0);
+  glUniform1i(context->locationDraw.maskEnabled, 0);
+  GL_CEHCK_ERROR;
+
+  if (renderCoverage) {
+    if (mode == VG_FILL_PATH)
+      shRenderFillToMaskTarget(context, p);
+    else
+      shRenderStrokeToMaskTarget(context, p);
+  }
+
+  glDisable(GL_STENCIL_TEST);
+  glDisable(GL_BLEND);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+  return shApplyMaskTextureToSurface(context,
+                                     context->renderToMaskTexture,
+                                     operation);
 }
 
 VGboolean shIsStrokeCacheValid (VGContext *c, SHPath *p)
@@ -425,6 +773,62 @@ VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
 
   shDrawPath(context, (SHPath*)path, paintModes);
 
+  VG_RETURN(VG_NO_RETVAL);
+}
+
+VG_API_CALL void vgRenderToMask(VGPath path,
+                                VGbitfield paintModes,
+                                VGMaskOperation operation)
+{
+  SHPath *p;
+  SHRenderToMaskGLState state;
+  VGboolean success = VG_TRUE;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(operation != VG_CLEAR_MASK &&
+                   operation != VG_FILL_MASK &&
+                   operation != VG_SET_MASK &&
+                   operation != VG_UNION_MASK &&
+                   operation != VG_INTERSECT_MASK &&
+                   operation != VG_SUBTRACT_MASK,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  if (operation == VG_CLEAR_MASK) {
+    VG_RETURN_ERR_IF(!shApplyMaskValueToSurface(context,
+                                                0.0f,
+                                                operation),
+                     VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+    VG_RETURN(VG_NO_RETVAL);
+  }
+
+  if (operation == VG_FILL_MASK) {
+    VG_RETURN_ERR_IF(!shApplyMaskValueToSurface(context,
+                                                1.0f,
+                                                operation),
+                     VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+    VG_RETURN(VG_NO_RETVAL);
+  }
+
+  if (paintModes == 0 ||
+      context->surfaceWidth <= 0 ||
+      context->surfaceHeight <= 0)
+    VG_RETURN(VG_NO_RETVAL);
+
+  p = (SHPath*)path;
+  shEnsurePathGeometry(context, p);
+
+  shSaveRenderToMaskGLState(&state);
+  if (paintModes & VG_FILL_PATH)
+    success = shRenderPathPassToMask(context, p, VG_FILL_PATH, operation);
+  if (success && (paintModes & VG_STROKE_PATH))
+    success = shRenderPathPassToMask(context, p, VG_STROKE_PATH, operation);
+  shRestoreRenderToMaskGLState(&state);
+
+  VG_RETURN_ERR_IF(!success, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   VG_RETURN(VG_NO_RETVAL);
 }
 

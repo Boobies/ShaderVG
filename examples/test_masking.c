@@ -4,6 +4,7 @@
 #define PANEL_H 220
 #define PANEL_Y 70
 #define PANEL_GAP 32
+#define PANEL_COUNT 4
 
 static VGPath panelPath = VG_INVALID_HANDLE;
 static VGPath circlePath = VG_INVALID_HANDLE;
@@ -15,6 +16,12 @@ static VGImage imageMask = VG_INVALID_HANDLE;
 static VGMaskLayer barMask = VG_INVALID_HANDLE;
 static VGMaskLayer savedMask = VG_INVALID_HANDLE;
 static VGfloat angle = 0.0f;
+
+static VGfloat firstPanelX(void)
+{
+  return (testWidth() -
+          (PANEL_W * PANEL_COUNT + PANEL_GAP * (PANEL_COUNT - 1))) * 0.5f;
+}
 
 static void setPaintColor(VGPaint paint,
                           VGfloat r, VGfloat g, VGfloat b, VGfloat a)
@@ -192,9 +199,10 @@ static void createOpenVGContent(void)
 static void drawBackground(void)
 {
   VGfloat clearColor[] = {0.16f, 0.18f, 0.20f, 1.0f};
-  VGfloat x1 = (testWidth() - (PANEL_W * 3 + PANEL_GAP * 2)) * 0.5f;
+  VGfloat x1 = firstPanelX();
   VGfloat x2 = x1 + PANEL_W + PANEL_GAP;
   VGfloat x3 = x2 + PANEL_W + PANEL_GAP;
+  VGfloat x4 = x3 + PANEL_W + PANEL_GAP;
 
   vgSeti(VG_MASKING, VG_FALSE);
   vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
@@ -203,13 +211,15 @@ static void drawBackground(void)
   drawPanelFrame(x1, PANEL_Y);
   drawPanelFrame(x2, PANEL_Y);
   drawPanelFrame(x3, PANEL_Y);
+  drawPanelFrame(x4, PANEL_Y);
 }
 
 static void display(float interval)
 {
-  VGfloat x1 = (testWidth() - (PANEL_W * 3 + PANEL_GAP * 2)) * 0.5f;
+  VGfloat x1 = firstPanelX();
   VGfloat x2 = x1 + PANEL_W + PANEL_GAP;
   VGfloat x3 = x2 + PANEL_W + PANEL_GAP;
+  VGfloat x4 = x3 + PANEL_W + PANEL_GAP;
 
   angle += interval * 48.0f;
   if (angle > 360.0f)
@@ -235,11 +245,24 @@ static void display(float interval)
   vgMask(savedMask, VG_INTERSECT_MASK, (VGint)x3, PANEL_Y, PANEL_W, PANEL_H);
   drawArtwork(x3, PANEL_Y, 0.52f, 0.46f, 0.92f);
 
+  clearSurfaceMask();
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgTranslate(x4 + PANEL_W * 0.5f, PANEL_Y + PANEL_H * 0.53f);
+  vgRenderToMask(circlePath, VG_FILL_PATH, VG_SET_MASK);
+  vgLoadIdentity();
+  vgTranslate(x4 + PANEL_W * 0.5f, PANEL_Y + PANEL_H * 0.50f);
+  vgRotate(angle * 0.45f);
+  vgSetf(VG_STROKE_LINE_WIDTH, 18.0f);
+  vgRenderToMask(diamondPath, VG_STROKE_PATH, VG_SUBTRACT_MASK);
+  drawArtwork(x4, PANEL_Y, 0.18f, 0.74f, 0.46f);
+
   vgSeti(VG_MASKING, VG_FALSE);
   fillSurfaceMask();
   drawPanelStroke(x1, PANEL_Y);
   drawPanelStroke(x2, PANEL_Y);
   drawPanelStroke(x3, PANEL_Y);
+  drawPanelStroke(x4, PANEL_Y);
 }
 
 static void cleanup(void)
@@ -266,7 +289,10 @@ static void cleanup(void)
 
 int main(int argc, char **argv)
 {
-  testInit(argc, argv, 640, 360, "ShaderVG: Masking");
+  testInit(argc, argv,
+           PANEL_W * PANEL_COUNT + PANEL_GAP * (PANEL_COUNT - 1) + 64,
+           360,
+           "ShaderVG: Masking");
   testCallback(TEST_CALLBACK_DISPLAY, (CallbackFunc)display);
   testCallback(TEST_CALLBACK_CLEANUP, (CallbackFunc)cleanup);
 

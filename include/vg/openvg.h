@@ -487,6 +487,9 @@ VG_API_CALL void vgRotate(VGfloat angle);
 /* Masking and Clearing */
 VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
                         VGint x, VGint y, VGint width, VGint height);
+VG_API_CALL void vgRenderToMask(VGPath path,
+                                VGbitfield paintModes,
+                                VGMaskOperation operation);
 VG_API_CALL VGMaskLayer vgCreateMaskLayer(VGint width, VGint height);
 VG_API_CALL void vgDestroyMaskLayer(VGMaskLayer maskLayer);
 VG_API_CALL void vgFillMaskLayer(VGMaskLayer maskLayer,

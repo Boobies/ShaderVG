@@ -88,6 +88,11 @@ typedef struct
   SHint              maskHeight;
   GLuint             maskTexture;
   GLuint             maskFramebuffer;
+  SHint              renderToMaskWidth;
+  SHint              renderToMaskHeight;
+  GLuint             renderToMaskTexture;
+  GLuint             renderToMaskFramebuffer;
+  GLuint             renderToMaskStencil;
   
 	/* Stroke parameters */
   SHfloat           strokeLineWidth;
@@ -204,6 +209,12 @@ VGboolean shSetCurrentContext(VGContext *c, VGint width, VGint height);
 void shClearCurrentContext(void);
 void shResizeCurrentSurface(VGint width, VGint height);
 void shEnsureMaskTexture(VGContext *c);
+VGboolean shApplyMaskTextureToSurface(VGContext *c,
+                                      GLuint texture,
+                                      VGMaskOperation operation);
+VGboolean shApplyMaskValueToSurface(VGContext *c,
+                                    VGfloat value,
+                                    VGMaskOperation operation);
 
 /*----------------------------------------------------
  * TODO: Add mutex locking/unlocking to these macros

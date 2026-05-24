@@ -34,6 +34,16 @@ static int expect_vg_error(const char *message, VGErrorCode expected)
   return 1;
 }
 
+static int expect_no_vg_error(const char *message)
+{
+  VGErrorCode error = vgGetError();
+  if (error == VG_NO_ERROR)
+    return 0;
+
+  fprintf(stderr, "%s (VG error 0x%04x)\n", message, error);
+  return 1;
+}
+
 static VGPath create_glyph_square(void)
 {
   VGPath path;
@@ -125,6 +135,24 @@ static void draw_masked_rect(VGPath rect, VGPaint paint,
   vgDrawPath(rect, VG_FILL_PATH);
   vgFinish();
   vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+}
+
+static int expect_green_visibility(const unsigned char *pixels,
+                                   EGLint width,
+                                   EGLint x,
+                                   EGLint y,
+                                   int visible,
+                                   const char *message)
+{
+  size_t sample = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+
+  if (visible && pixels[sample + 1] >= 128)
+    return 0;
+  if (!visible && pixels[sample + 1] <= 32)
+    return 0;
+
+  fprintf(stderr, "%s\n", message);
+  return 1;
 }
 
 static int run_image_draw_test(unsigned char *pixels,
@@ -508,6 +536,185 @@ cleanup:
   return result;
 }
 
+static int run_render_to_mask_test(unsigned char *pixels,
+                                   EGLint width, EGLint height)
+{
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGPath fullRect = VG_INVALID_HANDLE;
+  VGPath halfRect = VG_INVALID_HANDLE;
+  VGPath box = VG_INVALID_HANDLE;
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat green[] = {0.0f, 1.0f, 0.0f, 1.0f};
+  VGfloat transparent[] = {0.0f, 0.0f, 0.0f, 0.0f};
+  VGint scissor[] = {0, 0, width / 2, height};
+  int result = 0;
+
+  paint = vgCreatePaint();
+  fullRect = create_rect_path((VGfloat)width, (VGfloat)height);
+  halfRect = create_rect_path((VGfloat)(width / 2), (VGfloat)height);
+  box = create_rect_path(24.0f, 24.0f);
+  if (paint == VG_INVALID_HANDLE ||
+      fullRect == VG_INVALID_HANDLE ||
+      halfRect == VG_INVALID_HANDLE ||
+      box == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG render-to-mask test setup failed");
+    goto cleanup;
+  }
+
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, green);
+  vgSeti(VG_MASKING, VG_TRUE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+
+  vgLoadIdentity();
+  vgRenderToMask(halfRect, VG_FILL_PATH, VG_SET_MASK);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+  if (expect_green_visibility(pixels, width, width / 4, height / 2, 1,
+                              "OpenVG vgRenderToMask fill did not expose covered pixels") ||
+      expect_green_visibility(pixels, width, 3 * width / 4, height / 2, 0,
+                              "OpenVG vgRenderToMask fill did not clear uncovered pixels")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, transparent);
+  vgLoadIdentity();
+  vgTranslate((VGfloat)(width / 2), 0.0f);
+  vgRenderToMask(halfRect, VG_FILL_PATH, VG_UNION_MASK);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, green);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+  if (expect_green_visibility(pixels, width, width / 4, height / 2, 1,
+                              "OpenVG vgRenderToMask union lost previous coverage") ||
+      expect_green_visibility(pixels, width, 3 * width / 4, height / 2, 1,
+                              "OpenVG vgRenderToMask union ignored path geometry")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgLoadIdentity();
+  vgRenderToMask(halfRect, VG_FILL_PATH, VG_INTERSECT_MASK);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+  if (expect_green_visibility(pixels, width, width / 4, height / 2, 1,
+                              "OpenVG vgRenderToMask intersect removed covered pixels") ||
+      expect_green_visibility(pixels, width, 3 * width / 4, height / 2, 0,
+                              "OpenVG vgRenderToMask intersect kept uncovered pixels")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgRenderToMask(halfRect, VG_FILL_PATH, VG_FILL_MASK);
+  vgLoadIdentity();
+  vgRenderToMask(halfRect, VG_FILL_PATH, VG_SUBTRACT_MASK);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+  if (expect_green_visibility(pixels, width, width / 4, height / 2, 0,
+                              "OpenVG vgRenderToMask subtract kept subtracted pixels") ||
+      expect_green_visibility(pixels, width, 3 * width / 4, height / 2, 1,
+                              "OpenVG vgRenderToMask subtract removed untouched pixels")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgRenderToMask(halfRect, VG_FILL_PATH, VG_CLEAR_MASK);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+  if (expect_green_visibility(pixels, width, width / 4, height / 2, 0,
+                              "OpenVG vgRenderToMask clear did not clear the surface mask") ||
+      expect_green_visibility(pixels, width, 3 * width / 4, height / 2, 0,
+                              "OpenVG vgRenderToMask clear was limited by path coverage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgRenderToMask(halfRect, VG_FILL_PATH, VG_FILL_MASK);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+  if (expect_green_visibility(pixels, width, width / 4, height / 2, 1,
+                              "OpenVG vgRenderToMask fill-mask did not fill the mask") ||
+      expect_green_visibility(pixels, width, 3 * width / 4, height / 2, 1,
+                              "OpenVG vgRenderToMask fill-mask was limited by path coverage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetf(VG_STROKE_LINE_WIDTH, 8.0f);
+  vgLoadIdentity();
+  vgTranslate(20.0f, 20.0f);
+  vgRenderToMask(box, VG_FILL_PATH | VG_STROKE_PATH, VG_SET_MASK);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+  if (expect_green_visibility(pixels, width, 20, 32, 1,
+                              "OpenVG vgRenderToMask stroke pass did not affect the stroke edge") ||
+      expect_green_visibility(pixels, width, 32, 32, 0,
+                              "OpenVG vgRenderToMask fill+stroke did not apply stroke as the second pass")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetiv(VG_SCISSOR_RECTS, 4, scissor);
+  vgSeti(VG_SCISSORING, VG_TRUE);
+  vgLoadIdentity();
+  vgRenderToMask(fullRect, VG_FILL_PATH, VG_SET_MASK);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+  if (expect_green_visibility(pixels, width, width / 4, height / 2, 1,
+                              "OpenVG vgRenderToMask scissor removed covered pixels") ||
+      expect_green_visibility(pixels, width, 3 * width / 4, height / 2, 0,
+                              "OpenVG vgRenderToMask ignored scissoring")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgLoadIdentity();
+  vgRenderToMask(halfRect, VG_FILL_PATH, VG_SET_MASK);
+  vgSeti(VG_MASKING, VG_TRUE);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+  if (expect_green_visibility(pixels, width, width / 4, height / 2, 1,
+                              "OpenVG vgRenderToMask did not modify the mask while masking was disabled") ||
+      expect_green_visibility(pixels, width, 3 * width / 4, height / 2, 0,
+                              "OpenVG vgRenderToMask disabled-masking update leaked coverage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (expect_no_vg_error("OpenVG vgRenderToMask produced an unexpected error")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgRenderToMask(VG_INVALID_HANDLE, VG_FILL_PATH, VG_SET_MASK);
+  if (expect_vg_error("OpenVG accepted an invalid render-to-mask path",
+                      VG_BAD_HANDLE_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgRenderToMask(halfRect, VG_FILL_PATH | 0x4000, VG_SET_MASK);
+  if (expect_vg_error("OpenVG accepted invalid render-to-mask paint modes",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgRenderToMask(halfRect, VG_FILL_PATH, (VGMaskOperation)0);
+  if (expect_vg_error("OpenVG accepted an invalid render-to-mask operation",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSetf(VG_STROKE_LINE_WIDTH, 1.0f);
+  if (box != VG_INVALID_HANDLE)
+    vgDestroyPath(box);
+  if (halfRect != VG_INVALID_HANDLE)
+    vgDestroyPath(halfRect);
+  if (fullRect != VG_INVALID_HANDLE)
+    vgDestroyPath(fullRect);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  return result;
+}
+
 static int expect_hardware_query(const char *message,
                                  VGHardwareQueryType key,
                                  VGint setting)
@@ -835,6 +1042,8 @@ int main(void)
       result = run_image_draw_test(pixels, width, height);
       if (result == 0)
         result = run_mask_test(pixels, width, height);
+      if (result == 0)
+        result = run_render_to_mask_test(pixels, width, height);
       if (result == 0)
         result = run_hardware_query_test();
       if (result == 0)
