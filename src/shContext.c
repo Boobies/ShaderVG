@@ -402,24 +402,41 @@ void shDestroyContext(VGContext *context)
     g_current_context = previous;
 }
 
-VGboolean shSetCurrentContext(VGContext *context, VGint width, VGint height)
+VGboolean shSetCurrentContextForImage(VGContext *context,
+                                      VGint width,
+                                      VGint height,
+                                      SHImage *image)
 {
   g_current_context = context;
 
   if (!context)
     return VG_TRUE;
 
+  context->renderTargetImage = image;
   return shInitContextGL(context, width, height);
+}
+
+VGboolean shSetCurrentContext(VGContext *context, VGint width, VGint height)
+{
+  return shSetCurrentContextForImage(context, width, height, NULL);
 }
 
 void shClearCurrentContext(void)
 {
+  if (g_current_context)
+    g_current_context->renderTargetImage = NULL;
   g_current_context = NULL;
 }
 
 void shResizeCurrentSurface(VGint width, VGint height)
 {
   shResizeSurface(g_current_context, width, height);
+}
+
+void shMarkRenderTargetDirty(VGContext *context)
+{
+  if (context && context->renderTargetImage)
+    shImageMarkGpuDataDirty(context->renderTargetImage);
 }
 
 /*-----------------------------------------------------
@@ -498,6 +515,7 @@ void VGContext_ctor(VGContext *c)
   
   /* Error */
   c->error = VG_NO_ERROR;
+  c->renderTargetImage = NULL;
   
   /* Resources */
   SH_INITOBJ(SHPathArray, c->paths);
@@ -963,6 +981,8 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
 
     if (maskType == SH_RESOURCE_IMAGE) {
       image = (SHImage*)mask;
+      VG_RETURN_ERR_IF(shImageIsRenderTarget(image),
+                       VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
       sourceWidth = image->width;
       sourceHeight = image->height;
       sourceTexture = image->texture;
@@ -1233,6 +1253,7 @@ VG_API_CALL void vgClear(VGint x, VGint y, VGint width, VGint height)
           GL_DEPTH_BUFFER_BIT);
   
   glDisable(GL_SCISSOR_TEST);
+  shMarkRenderTargetDirty(context);
   
   VG_RETURN(VG_NO_RETVAL);
 }

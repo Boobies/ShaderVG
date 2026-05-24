@@ -17,6 +17,17 @@ static int fail_egl(const char *message)
   return 1;
 }
 
+static int expect_egl_error(const char *message, EGLint expected)
+{
+  EGLint error = eglGetError();
+  if (error == expected)
+    return 0;
+
+  fprintf(stderr, "%s (expected EGL error 0x%04x, got 0x%04x)\n",
+          message, expected, error);
+  return 1;
+}
+
 static int fail_vg(const char *message)
 {
   fprintf(stderr, "%s (VG error 0x%04x)\n", message, vgGetError());
@@ -276,6 +287,211 @@ static int run_image_draw_test(unsigned char *pixels,
   vgDestroyImage(patternImage);
   vgDestroyImage(image);
   return 0;
+}
+
+static int expect_pixel(const unsigned char *pixels,
+                        EGLint width,
+                        EGLint x,
+                        EGLint y,
+                        unsigned char minRed,
+                        unsigned char maxGreen,
+                        unsigned char maxBlue,
+                        const char *message)
+{
+  size_t sample = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+
+  if (pixels[sample] >= minRed &&
+      pixels[sample + 1] <= maxGreen &&
+      pixels[sample + 2] <= maxBlue &&
+      pixels[sample + 3] != 0)
+    return 0;
+
+  fprintf(stderr, "%s\n", message);
+  return 1;
+}
+
+static int run_client_buffer_pbuffer_test(EGLDisplay display,
+                                          EGLConfig config,
+                                          EGLSurface baseSurface,
+                                          EGLContext context,
+                                          unsigned char *pixels,
+                                          EGLint width,
+                                          EGLint height)
+{
+  const EGLint imageWidth = 16;
+  const EGLint imageHeight = 16;
+  EGLSurface imageSurface = EGL_NO_SURFACE;
+  VGImage image = VG_INVALID_HANDLE;
+  VGubyte imageData[16 * 16 * 4];
+  VGfloat red[] = {1.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  EGLint textureAttribs[] = {
+    EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
+    EGL_NONE
+  };
+  EGLint value;
+  int result = 0;
+
+  image = vgCreateImage(VG_sRGBA_8888, imageWidth, imageHeight,
+                        VG_IMAGE_QUALITY_BETTER);
+  if (image == VG_INVALID_HANDLE)
+    return fail_vg("OpenVG image-backed pbuffer setup failed");
+
+  if (eglCreatePbufferFromClientBuffer(display, 0,
+                                       (EGLClientBuffer)image,
+                                       config, NULL) != EGL_NO_SURFACE ||
+      expect_egl_error("EGL accepted an invalid client buffer type",
+                       EGL_BAD_PARAMETER)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
+                                       (EGLClientBuffer)VG_INVALID_HANDLE,
+                                       config, NULL) != EGL_NO_SURFACE ||
+      expect_egl_error("EGL accepted an invalid OpenVG image client buffer",
+                       EGL_BAD_PARAMETER)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (!eglMakeCurrent(display,
+                      EGL_NO_SURFACE,
+                      EGL_NO_SURFACE,
+                      EGL_NO_CONTEXT)) {
+    result = fail_egl("EGL could not release the current OpenVG context");
+    goto cleanup;
+  }
+
+  if (eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
+                                       (EGLClientBuffer)image,
+                                       config, NULL) != EGL_NO_SURFACE ||
+      expect_egl_error("EGL created an OpenVG image pbuffer without a current context",
+                       EGL_BAD_ACCESS)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (!eglMakeCurrent(display, baseSurface, baseSurface, context)) {
+    result = fail_egl("EGL could not restore the base pbuffer context");
+    goto cleanup;
+  }
+
+  if (eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
+                                       (EGLClientBuffer)image,
+                                       config,
+                                       textureAttribs) != EGL_NO_SURFACE ||
+      expect_egl_error("EGL accepted texture binding for an OpenVG image pbuffer",
+                       EGL_BAD_MATCH)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  imageSurface = eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
+                                                 (EGLClientBuffer)image,
+                                                 config, NULL);
+  if (imageSurface == EGL_NO_SURFACE) {
+    result = fail_egl("EGL OpenVG image pbuffer creation failed");
+    goto cleanup;
+  }
+
+  if (eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
+                                       (EGLClientBuffer)image,
+                                       config, NULL) != EGL_NO_SURFACE ||
+      expect_egl_error("EGL allowed one OpenVG image to back two pbuffers",
+                       EGL_BAD_ACCESS)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (!eglQuerySurface(display, imageSurface, EGL_WIDTH, &value) ||
+      value != imageWidth ||
+      !eglQuerySurface(display, imageSurface, EGL_HEIGHT, &value) ||
+      value != imageHeight ||
+      !eglQuerySurface(display, imageSurface, EGL_TEXTURE_FORMAT, &value) ||
+      value != EGL_NO_TEXTURE ||
+      !eglQuerySurface(display, imageSurface, EGL_TEXTURE_TARGET, &value) ||
+      value != EGL_NO_TEXTURE ||
+      !eglQuerySurface(display, imageSurface, EGL_MIPMAP_TEXTURE, &value) ||
+      value != EGL_FALSE ||
+      !eglQuerySurface(display, imageSurface, EGL_VG_COLORSPACE, &value) ||
+      value != EGL_VG_COLORSPACE_sRGB ||
+      !eglQuerySurface(display, imageSurface, EGL_VG_ALPHA_FORMAT, &value) ||
+      value != EGL_VG_ALPHA_FORMAT_NONPRE) {
+    result = fail_egl("EGL OpenVG image pbuffer surface query failed");
+    goto cleanup;
+  }
+
+  if (!eglMakeCurrent(display, imageSurface, imageSurface, context)) {
+    result = fail_egl("EGL could not bind an OpenVG image pbuffer");
+    goto cleanup;
+  }
+
+  vgGetImageSubData(image, imageData, imageWidth * 4,
+                    VG_sRGBA_8888, 0, 0, imageWidth, imageHeight);
+  if (expect_vg_error("OpenVG allowed direct access to a current render target image",
+                      VG_IMAGE_IN_USE_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, red);
+  vgClear(0, 0, imageWidth, imageHeight);
+  vgFinish();
+  vgReadPixels(pixels, imageWidth * 4,
+               VG_sRGBA_8888, 0, 0, imageWidth, imageHeight);
+  if (expect_no_vg_error("OpenVG image pbuffer rendering failed") ||
+      expect_pixel(pixels, imageWidth, 8, 8, 192, 32, 32,
+                   "OpenVG image pbuffer readback did not see rendered pixels")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (!eglMakeCurrent(display, baseSurface, baseSurface, context)) {
+    result = fail_egl("EGL could not restore the base pbuffer after image rendering");
+    goto cleanup;
+  }
+
+  vgGetImageSubData(image, imageData, imageWidth * 4,
+                    VG_sRGBA_8888, 0, 0, imageWidth, imageHeight);
+  if (expect_no_vg_error("OpenVG could not read back a rendered image pbuffer") ||
+      expect_pixel(imageData, imageWidth, 8, 8, 192, 32, 32,
+                   "OpenVG image data did not reflect image pbuffer rendering")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_IMAGE_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSeti(VG_IMAGE_MODE, VG_DRAW_IMAGE_NORMAL);
+  vgDrawImage(image);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG could not draw an image-backed pbuffer") ||
+      expect_pixel(pixels, width, 8, 8, 192, 32, 32,
+                   "OpenVG drawing did not sample the image-backed pbuffer")) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  if ((eglGetCurrentContext() != context ||
+       eglGetCurrentSurface(EGL_DRAW) != baseSurface) &&
+      !eglMakeCurrent(display, baseSurface, baseSurface, context) &&
+      result == 0)
+    result = fail_egl("EGL could not restore the base pbuffer during cleanup");
+  if (image != VG_INVALID_HANDLE)
+    vgDestroyImage(image);
+  if (imageSurface != EGL_NO_SURFACE &&
+      !eglDestroySurface(display, imageSurface) &&
+      result == 0)
+    result = fail_egl("EGL could not destroy an OpenVG image pbuffer");
+  if (result == 0 &&
+      !eglMakeCurrent(display, baseSurface, baseSurface, context))
+    result = fail_egl("EGL could not leave the base pbuffer current");
+  return result;
 }
 
 static int run_mask_test(unsigned char *pixels, EGLint width, EGLint height)
@@ -1092,6 +1308,9 @@ int main(void)
       result = 1;
     } else {
       result = run_image_draw_test(pixels, width, height);
+      if (result == 0)
+        result = run_client_buffer_pbuffer_test(display, config, surface,
+                                                context, pixels, width, height);
       if (result == 0)
         result = run_mask_test(pixels, width, height);
       if (result == 0)

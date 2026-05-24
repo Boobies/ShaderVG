@@ -83,6 +83,11 @@ typedef struct
   SHfloat texheightK;
   GLuint texture;
   SHint refCount;
+  SHint eglPbufferRefs;
+  SHint renderTargetRefs;
+  SHint paintPatternRefs;
+  SHint glyphRefs;
+  VGboolean gpuDataDirty;
   
 } SHImage;
 
@@ -90,6 +95,19 @@ void SHImage_ctor(SHImage *i);
 void SHImage_dtor(SHImage *i);
 void shImageAddRef(SHImage *i);
 void shImageRelease(SHImage *i);
+void shImageAddEGLPbufferRef(SHImage *i);
+void shImageReleaseEGLPbufferRef(SHImage *i);
+void shImageAddPaintPatternRef(SHImage *i);
+void shImageReleasePaintPatternRef(SHImage *i);
+void shImageAddGlyphRef(SHImage *i);
+void shImageReleaseGlyphRef(SHImage *i);
+void shImageBeginRenderTarget(SHImage *i);
+void shImageEndRenderTarget(SHImage *i);
+VGboolean shImageIsEGLPbufferBound(SHImage *i);
+VGboolean shImageIsRenderTarget(SHImage *i);
+VGboolean shImageIsRenderTargetEligible(SHImage *i);
+void shImageMarkGpuDataDirty(SHImage *i);
+VGboolean shImageSyncDataFromTexture(SHImage *i);
 int shIsValidImageFormat(VGImageFormat format);
 
 #define _ITEM_T SHImage*

@@ -87,7 +87,8 @@ $ ./test_tiger_shader
 
 #### test_pbuffer
   Minimal EGL/OpenVG pbuffer smoke test that clears an offscreen surface
-  and reads one pixel back.
+  and reads one pixel back. It also covers OpenVG image-backed pbuffers
+  created with `eglCreatePbufferFromClientBuffer`.
 
 #### test_egl_gl_vg
   Interleaves raw OpenGL and OpenVG drawing on the same EGL surface.
@@ -273,6 +274,13 @@ creation to the platform EGL implementation. ShaderVG only supplies the OpenVG
 implementation and the glue needed for `EGL_OPENVG_API` / `EGL_OPENVG_BIT` to
 select a ShaderVG OpenVG context. OpenVG-capable configs advertise
 `EGL_ALPHA_MASK_SIZE == 8`, matching ShaderVG's 8-bit GPU mask surface.
+
+`eglCreatePbufferFromClientBuffer` supports `EGL_OPENVG_IMAGE` client buffers.
+The resulting pbuffer renders directly into the supplied `VGImage`, can only be
+bound to the OpenVG context that created it, and follows the OpenVG in-use rules
+while it is current. Texture-bound EGL pbuffer attributes are rejected for these
+surfaces because ShaderVG exposes them as OpenVG render targets rather than EGL
+texture surfaces.
 
 ## License
 

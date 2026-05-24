@@ -56,8 +56,10 @@ void shFontReleaseGlyph(SHGlyph *glyph)
 
   if (glyph->type == SH_GLYPH_PATH)
     shPathRelease(glyph->path);
-  else if (glyph->type == SH_GLYPH_IMAGE)
+  else if (glyph->type == SH_GLYPH_IMAGE) {
+    shImageReleaseGlyphRef(glyph->image);
     shImageRelease(glyph->image);
+  }
 
   glyph->type = SH_GLYPH_EMPTY;
   glyph->path = NULL;
@@ -203,6 +205,9 @@ VG_API_CALL void vgSetGlyphToImage(VGFont font,
   VG_RETURN_ERR_IF(image != VG_INVALID_HANDLE &&
                    !shIsValidImage(context, image),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(image != VG_INVALID_HANDLE &&
+                   shImageIsRenderTarget((SHImage*)image),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
 
   f = (SHFont*)font;
   glyph = shFontEnsureGlyph(f, glyphIndex);
@@ -211,6 +216,7 @@ VG_API_CALL void vgSetGlyphToImage(VGFont font,
   if (image != VG_INVALID_HANDLE) {
     newImage = (SHImage*)image;
     shImageAddRef(newImage);
+    shImageAddGlyphRef(newImage);
   }
 
   shFontReleaseGlyph(glyph);

@@ -192,7 +192,11 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
     
   case VG_PAINT_TYPE_PATTERN:
     if (p->pattern != VG_INVALID_HANDLE) {
-    shLoadPatternMesh(p, mode, VG_MATRIX_PATH_USER_TO_SURFACE);
+      if (shImageIsRenderTarget((SHImage*)p->pattern)) {
+        shSetError(c, VG_IMAGE_IN_USE_ERROR);
+        return;
+      }
+      shLoadPatternMesh(p, mode, VG_MATRIX_PATH_USER_TO_SURFACE);
       break;
     }/* else behave as a color paint */
   
@@ -758,6 +762,9 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   if (context->scissoring == VG_TRUE)
     glDisable( GL_SCISSOR_TEST );
 
+  if (paintModes & (VG_FILL_PATH | VG_STROKE_PATH))
+    shMarkRenderTargetDirty(context);
+
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -839,7 +846,10 @@ void shDrawImage(VGContext *context, SHImage *i)
   SHVector2 min, max;
   SHRectangle *rect;
 
-  /* TODO: check if image is current render target */
+  if (shImageIsRenderTarget(i)) {
+    shSetError(context, VG_IMAGE_IN_USE_ERROR);
+    return;
+  }
   
   /* Check whether scissoring is enabled and scissor
      rectangle is valid */
@@ -930,6 +940,8 @@ void shDrawImage(VGContext *context, SHImage *i)
 
   if (context->scissoring == VG_TRUE)
     glDisable( GL_SCISSOR_TEST );
+
+  shMarkRenderTargetDirty(context);
   
   VG_RETURN(VG_NO_RETVAL);
 }

@@ -468,6 +468,11 @@ void SHImage_ctor(SHImage *i)
   i->height = 0;
   i->texture = 0;
   i->refCount = 1;
+  i->eglPbufferRefs = 0;
+  i->renderTargetRefs = 0;
+  i->paintPatternRefs = 0;
+  i->glyphRefs = 0;
+  i->gpuDataDirty = VG_FALSE;
 }
 
 void SHImage_dtor(SHImage *i)
@@ -493,6 +498,107 @@ void shImageRelease(SHImage *i)
   --i->refCount;
   if (i->refCount <= 0)
     SH_DELETEOBJ(SHImage, i);
+}
+
+void shImageAddEGLPbufferRef(SHImage *i)
+{
+  if (!i)
+    return;
+
+  ++i->eglPbufferRefs;
+  shImageAddRef(i);
+}
+
+void shImageReleaseEGLPbufferRef(SHImage *i)
+{
+  if (!i)
+    return;
+
+  if (i->eglPbufferRefs > 0)
+    --i->eglPbufferRefs;
+  shImageRelease(i);
+}
+
+void shImageAddPaintPatternRef(SHImage *i)
+{
+  if (i)
+    ++i->paintPatternRefs;
+}
+
+void shImageReleasePaintPatternRef(SHImage *i)
+{
+  if (i && i->paintPatternRefs > 0)
+    --i->paintPatternRefs;
+}
+
+void shImageAddGlyphRef(SHImage *i)
+{
+  if (i)
+    ++i->glyphRefs;
+}
+
+void shImageReleaseGlyphRef(SHImage *i)
+{
+  if (i && i->glyphRefs > 0)
+    --i->glyphRefs;
+}
+
+void shImageBeginRenderTarget(SHImage *i)
+{
+  if (i)
+    ++i->renderTargetRefs;
+}
+
+void shImageEndRenderTarget(SHImage *i)
+{
+  if (i && i->renderTargetRefs > 0)
+    --i->renderTargetRefs;
+}
+
+VGboolean shImageIsEGLPbufferBound(SHImage *i)
+{
+  return (i && i->eglPbufferRefs > 0) ? VG_TRUE : VG_FALSE;
+}
+
+VGboolean shImageIsRenderTarget(SHImage *i)
+{
+  return (i && i->renderTargetRefs > 0) ? VG_TRUE : VG_FALSE;
+}
+
+VGboolean shImageIsRenderTargetEligible(SHImage *i)
+{
+  return (i &&
+          i->paintPatternRefs == 0 &&
+          i->glyphRefs == 0) ? VG_TRUE : VG_FALSE;
+}
+
+void shImageMarkGpuDataDirty(SHImage *i)
+{
+  if (i)
+    i->gpuDataDirty = VG_TRUE;
+}
+
+VGboolean shImageSyncDataFromTexture(SHImage *i)
+{
+  GLint previousTexture;
+
+  if (!i || !i->gpuDataDirty)
+    return VG_TRUE;
+
+  if (i->texture == 0 || !i->data)
+    return VG_FALSE;
+
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glBindTexture(GL_TEXTURE_2D, i->texture);
+  glGetTexImage(GL_TEXTURE_2D, 0, i->fd.glformat, i->fd.gltype, i->data);
+  glBindTexture(GL_TEXTURE_2D, previousTexture);
+
+  if (glGetError() != GL_NO_ERROR)
+    return VG_FALSE;
+
+  i->gpuDataDirty = VG_FALSE;
+  return VG_TRUE;
 }
 
 /*--------------------------------------------------------
@@ -543,6 +649,8 @@ void shUpdateImageTexture(SHImage *i, VGContext *c)
     GLint swizzle[4] = {GL_ONE, GL_ONE, GL_ONE, GL_RED};
     glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
   }
+
+  i->gpuDataDirty = VG_FALSE;
 }
 
 /*----------------------------------------------------------
@@ -641,10 +749,10 @@ VG_API_CALL void vgClearImage(VGImage image,
   
   VG_RETURN_ERR_IF(!shIsValidImage(context, image),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  
-  /* TODO: check if image current render target */
-  
+
   i = (SHImage*)image;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
@@ -660,6 +768,9 @@ VG_API_CALL void vgClearImage(VGImage image,
   width  = SH_MIN( width  - dx, i->width  - ix);
   height = SH_MIN( height - dy, i->height - iy);
   stride = i->texwidth * i->fd.bytes;
+
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   
   /* Walk pixels and clear*/
   clear = context->clearColor;
@@ -802,9 +913,9 @@ VG_API_CALL void vgImageSubData(VGImage image,
   
   VG_RETURN_ERR_IF(!shIsValidImage(context, image),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  
-  /* TODO: check if image current render target */
   i = (SHImage*)image;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
   /* Reject invalid formats */
   VG_RETURN_ERR_IF(!shIsValidImageFormat(dataFormat),
@@ -820,6 +931,9 @@ VG_API_CALL void vgImageSubData(VGImage image,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* TODO: check data array alignment */
+
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   
   shCopyPixels(i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
                data, dataFormat,dataStride,
@@ -847,9 +961,9 @@ VG_API_CALL void vgGetImageSubData(VGImage image,
   
   VG_RETURN_ERR_IF(!shIsValidImage(context, image),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  
-  /* TODO: check if image current render target */
   i = (SHImage*)image;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
   /* Reject invalid formats */
   VG_RETURN_ERR_IF(!shIsValidImageFormat(dataFormat),
@@ -865,6 +979,9 @@ VG_API_CALL void vgGetImageSubData(VGImage image,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* TODO: check data array alignment */
+
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   
   shCopyPixels(data, dataFormat, dataStride,
                i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
@@ -894,11 +1011,16 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
                    !shIsValidImage(context, dst),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  /* TODO: check if images current render target */
-
   s = (SHImage*)src; d = (SHImage*)dst;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
+                   shImageIsRenderTarget(d),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
+                   !shImageSyncDataFromTexture(d),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   /* In order to perform copying in a cosistent fashion
      we first copy to a temporary buffer and only then to
@@ -945,12 +1067,15 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
   
   VG_RETURN_ERR_IF(!shIsValidImage(context, src),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  
-  /* TODO: check if image current render target (requires EGL) */
 
   i = (SHImage*)src;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   /* Setup window image format descriptor */
   /* TODO: this actually depends on the target framebuffer type
@@ -1062,12 +1187,15 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
   
   VG_RETURN_ERR_IF(!shIsValidImage(context, dst),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  
-   /* TODO: check if image current render target */
 
   i = (SHImage*)dst;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   /* Setup window image format descriptor */
   /* TODO: this actually depends on the target framebuffer type
@@ -1245,7 +1373,9 @@ VG_API_CALL void vgBindImageSH(VGImage image, VGImageUnitSH unit){
   VG_GETCONTEXT(VG_NO_RETVAL);
   SH_RETURN_ERR_IF(unit < VG_IMAGE_UNIT_OFFSET_SH, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
   SH_RETURN_ERR_IF(image == VG_INVALID_HANDLE,     VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+  SH_RETURN_ERR_IF(!shIsValidImage(context, image), VG_BAD_HANDLE_ERROR, SH_NO_RETVAL);
   SHImage *i = (SHImage*)image;
+  SH_RETURN_ERR_IF(shImageIsRenderTarget(i), VG_IMAGE_IN_USE_ERROR, SH_NO_RETVAL);
   
   glActiveTexture(GL_TEXTURE0 + unit);
 

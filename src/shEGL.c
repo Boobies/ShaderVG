@@ -46,6 +46,11 @@
 #define SH_EGL_SURFACE_MAGIC 0x53454753u
 #define SH_EGL_ALPHA_MASK_SIZE 8
 
+typedef enum {
+  SH_EGL_SURFACE_PLATFORM = 0,
+  SH_EGL_SURFACE_OPENVG_IMAGE = 1
+} SHEGLSurfaceType;
+
 typedef struct {
   unsigned int magic;
   EGLNativeDisplayType nativeDisplay;
@@ -56,6 +61,19 @@ typedef struct {
   unsigned int magic;
   SHEGLDisplay *display;
   EGLSurface realSurface;
+  SHEGLSurfaceType type;
+  EGLConfig config;
+  SHImage *vgImage;
+  VGContext *vgContext;
+  GLuint framebuffer;
+  GLuint stencil;
+  EGLint width;
+  EGLint height;
+  EGLint textureFormat;
+  EGLint textureTarget;
+  EGLint mipmapTexture;
+  EGLint vgColorspace;
+  EGLint vgAlphaFormat;
 } SHEGLSurface;
 
 typedef struct {
@@ -219,6 +237,240 @@ static SHEGLContext *shContext(EGLContext context)
     return NULL;
   }
   return c;
+}
+
+static EGLint shChannelBits(SHuint32 mask, SHuint8 max)
+{
+  EGLint bits = 0;
+
+  if (mask == 0)
+    return 0;
+
+  while (max != 0) {
+    ++bits;
+    max >>= 1;
+  }
+
+  return bits;
+}
+
+static EGLint shImageVGColorspace(SHImage *image)
+{
+  EGLint base = image->fd.vgformat & 0x1F;
+
+  return (base == VG_lRGBX_8888 ||
+          base == VG_lRGBA_8888 ||
+          base == VG_lRGBA_8888_PRE ||
+          base == VG_lL_8) ?
+         EGL_VG_COLORSPACE_LINEAR :
+         EGL_VG_COLORSPACE_sRGB;
+}
+
+static EGLint shImageVGAlphaFormat(SHImage *image)
+{
+  EGLint base = image->fd.vgformat & 0x1F;
+
+  return (base == VG_sRGBA_8888_PRE ||
+          base == VG_lRGBA_8888_PRE) ?
+         EGL_VG_ALPHA_FORMAT_PRE :
+         EGL_VG_ALPHA_FORMAT_NONPRE;
+}
+
+static EGLBoolean shQueryConfigInt(SHEGLDisplay *display,
+                                   EGLConfig config,
+                                   EGLint attribute,
+                                   EGLint *value)
+{
+  if (!g_egl.GetConfigAttrib(display->realDisplay, config, attribute, value)) {
+    shSetEGLError(EGL_BAD_CONFIG);
+    return EGL_FALSE;
+  }
+
+  return EGL_TRUE;
+}
+
+static EGLBoolean shConfigMatchesImage(SHEGLDisplay *display,
+                                       EGLConfig config,
+                                       SHImage *image)
+{
+  EGLint configRed, configGreen, configBlue, configAlpha;
+  EGLint imageRed, imageGreen, imageBlue, imageAlpha;
+  EGLint baseFormat = image->fd.vgformat & 0x1F;
+
+  if (baseFormat == VG_sL_8 ||
+      baseFormat == VG_lL_8 ||
+      baseFormat == VG_A_8 ||
+      baseFormat == VG_BW_1) {
+    shSetEGLError(EGL_BAD_MATCH);
+    return EGL_FALSE;
+  }
+
+  if (!shQueryConfigInt(display, config, EGL_RED_SIZE, &configRed) ||
+      !shQueryConfigInt(display, config, EGL_GREEN_SIZE, &configGreen) ||
+      !shQueryConfigInt(display, config, EGL_BLUE_SIZE, &configBlue) ||
+      !shQueryConfigInt(display, config, EGL_ALPHA_SIZE, &configAlpha))
+    return EGL_FALSE;
+
+  imageRed = shChannelBits(image->fd.rmask, image->fd.rmax);
+  imageGreen = shChannelBits(image->fd.gmask, image->fd.gmax);
+  imageBlue = shChannelBits(image->fd.bmask, image->fd.bmax);
+  imageAlpha = shChannelBits(image->fd.amask, image->fd.amax);
+
+  if (configRed != imageRed ||
+      configGreen != imageGreen ||
+      configBlue != imageBlue ||
+      configAlpha != imageAlpha) {
+    shSetEGLError(EGL_BAD_MATCH);
+    return EGL_FALSE;
+  }
+
+  return EGL_TRUE;
+}
+
+static EGLBoolean shParseClientPbufferAttribs(const EGLint *attribs,
+                                              EGLint *textureFormat,
+                                              EGLint *textureTarget,
+                                              EGLint *mipmapTexture)
+{
+  int i;
+
+  *textureFormat = EGL_NO_TEXTURE;
+  *textureTarget = EGL_NO_TEXTURE;
+  *mipmapTexture = EGL_FALSE;
+
+  if (!attribs)
+    return EGL_TRUE;
+
+  for (i = 0; attribs[i] != EGL_NONE; i += 2) {
+    EGLint attribute = attribs[i];
+    EGLint value = attribs[i + 1];
+
+    switch (attribute) {
+    case EGL_TEXTURE_FORMAT:
+      if (value != EGL_NO_TEXTURE &&
+          value != EGL_TEXTURE_RGB &&
+          value != EGL_TEXTURE_RGBA) {
+        shSetEGLError(EGL_BAD_ATTRIBUTE);
+        return EGL_FALSE;
+      }
+      *textureFormat = value;
+      break;
+    case EGL_TEXTURE_TARGET:
+      if (value != EGL_NO_TEXTURE &&
+          value != EGL_TEXTURE_2D) {
+        shSetEGLError(EGL_BAD_ATTRIBUTE);
+        return EGL_FALSE;
+      }
+      *textureTarget = value;
+      break;
+    case EGL_MIPMAP_TEXTURE:
+      if (value != EGL_FALSE && value != EGL_TRUE) {
+        shSetEGLError(EGL_BAD_ATTRIBUTE);
+        return EGL_FALSE;
+      }
+      *mipmapTexture = value;
+      break;
+    default:
+      shSetEGLError(EGL_BAD_ATTRIBUTE);
+      return EGL_FALSE;
+    }
+  }
+
+  if (*textureFormat != EGL_NO_TEXTURE ||
+      *textureTarget != EGL_NO_TEXTURE ||
+      *mipmapTexture != EGL_FALSE) {
+    shSetEGLError(EGL_BAD_MATCH);
+    return EGL_FALSE;
+  }
+
+  return EGL_TRUE;
+}
+
+static EGLBoolean shCreateImageFramebuffer(SHImage *image,
+                                           GLuint *framebuffer,
+                                           GLuint *stencil)
+{
+  GLint previousFramebuffer;
+  GLint previousRenderbuffer;
+  GLint previousTexture;
+  GLint previousDrawBuffer;
+  GLint previousReadBuffer;
+  GLenum status;
+
+  *framebuffer = 0;
+  *stencil = 0;
+
+  if (!image || image->texture == 0)
+    return EGL_FALSE;
+
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+  glGetIntegerv(GL_RENDERBUFFER_BINDING, &previousRenderbuffer);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+  glGetIntegerv(GL_DRAW_BUFFER, &previousDrawBuffer);
+  glGetIntegerv(GL_READ_BUFFER, &previousReadBuffer);
+
+  glGenFramebuffers(1, framebuffer);
+  glGenRenderbuffers(1, stencil);
+  if (*framebuffer == 0 || *stencil == 0)
+    goto fail;
+
+  glBindFramebuffer(GL_FRAMEBUFFER, *framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D, image->texture, 0);
+  glBindRenderbuffer(GL_RENDERBUFFER, *stencil);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8,
+                        image->width, image->height);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
+                            GL_RENDERBUFFER, *stencil);
+  glDrawBuffer(GL_COLOR_ATTACHMENT0);
+  glReadBuffer(GL_COLOR_ATTACHMENT0);
+
+  status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (status != GL_FRAMEBUFFER_COMPLETE)
+    goto fail;
+
+  glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, previousRenderbuffer);
+  glBindTexture(GL_TEXTURE_2D, previousTexture);
+  glDrawBuffer(previousDrawBuffer);
+  glReadBuffer(previousReadBuffer);
+
+  return EGL_TRUE;
+
+fail:
+  if (*framebuffer != 0) {
+    glDeleteFramebuffers(1, framebuffer);
+    *framebuffer = 0;
+  }
+  if (*stencil != 0) {
+    glDeleteRenderbuffers(1, stencil);
+    *stencil = 0;
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, previousRenderbuffer);
+  glBindTexture(GL_TEXTURE_2D, previousTexture);
+  glDrawBuffer(previousDrawBuffer);
+  glReadBuffer(previousReadBuffer);
+  glGetError();
+  return EGL_FALSE;
+}
+
+static void shDestroyImageSurfaceResources(SHEGLSurface *surface)
+{
+  if (surface->framebuffer != 0) {
+    glDeleteFramebuffers(1, &surface->framebuffer);
+    surface->framebuffer = 0;
+  }
+
+  if (surface->stencil != 0) {
+    glDeleteRenderbuffers(1, &surface->stencil);
+    surface->stencil = 0;
+  }
+
+  if (surface->vgImage) {
+    shImageReleaseEGLPbufferRef(surface->vgImage);
+    surface->vgImage = NULL;
+  }
 }
 
 static EGLint *shTranslateConfigAttribs(const EGLint *attribs,
@@ -503,6 +755,8 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreateWindowSurface(EGLDisplay dpy, EGLConfig c
   surface->magic = SH_EGL_SURFACE_MAGIC;
   surface->display = display;
   surface->realSurface = realSurface;
+  surface->type = SH_EGL_SURFACE_PLATFORM;
+  surface->config = config;
   return (EGLSurface)surface;
 }
 
@@ -533,6 +787,126 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig 
   surface->magic = SH_EGL_SURFACE_MAGIC;
   surface->display = display;
   surface->realSurface = realSurface;
+  surface->type = SH_EGL_SURFACE_PLATFORM;
+  surface->config = config;
+  return (EGLSurface)surface;
+}
+
+EGLAPI EGLSurface EGLAPIENTRY
+eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
+                                 EGLenum buftype,
+                                 EGLClientBuffer buffer,
+                                 EGLConfig config,
+                                 const EGLint *attrib_list)
+{
+  SHEGLDisplay *display;
+  SHEGLSurface *surface = NULL;
+  SHImage *image;
+  EGLSurface realSurface;
+  EGLint textureFormat;
+  EGLint textureTarget;
+  EGLint mipmapTexture;
+  EGLint hiddenAttribs[5];
+  GLuint framebuffer = 0;
+  GLuint stencil = 0;
+
+  if (!shLoadRealEGL())
+    return EGL_NO_SURFACE;
+  display = shDisplay(dpy);
+  if (!display)
+    return EGL_NO_SURFACE;
+
+  if (buftype != EGL_OPENVG_IMAGE) {
+    shSetEGLError(EGL_BAD_PARAMETER);
+    return EGL_NO_SURFACE;
+  }
+
+  if (!t_currentContext ||
+      t_currentContext->api != EGL_OPENVG_API ||
+      !t_currentContext->vgContext) {
+    shSetEGLError(EGL_BAD_ACCESS);
+    return EGL_NO_SURFACE;
+  }
+
+  if (t_currentContext->display != display) {
+    shSetEGLError(EGL_BAD_ACCESS);
+    return EGL_NO_SURFACE;
+  }
+
+  if (!shIsValidImage(t_currentContext->vgContext, (VGHandle)buffer)) {
+    shSetEGLError(EGL_BAD_PARAMETER);
+    return EGL_NO_SURFACE;
+  }
+
+  image = (SHImage*)buffer;
+  if (shImageIsEGLPbufferBound(image) ||
+      shImageIsRenderTarget(image)) {
+    shSetEGLError(EGL_BAD_ACCESS);
+    return EGL_NO_SURFACE;
+  }
+
+  if (!shImageIsRenderTargetEligible(image)) {
+    shSetEGLError(EGL_BAD_MATCH);
+    return EGL_NO_SURFACE;
+  }
+
+  if (!shParseClientPbufferAttribs(attrib_list,
+                                   &textureFormat,
+                                   &textureTarget,
+                                   &mipmapTexture))
+    return EGL_NO_SURFACE;
+
+  if (!shConfigMatchesImage(display, config, image))
+    return EGL_NO_SURFACE;
+
+  hiddenAttribs[0] = EGL_WIDTH;
+  hiddenAttribs[1] = image->width;
+  hiddenAttribs[2] = EGL_HEIGHT;
+  hiddenAttribs[3] = image->height;
+  hiddenAttribs[4] = EGL_NONE;
+
+  realSurface = g_egl.CreatePbufferSurface(display->realDisplay,
+                                           config,
+                                           hiddenAttribs);
+  if (realSurface == EGL_NO_SURFACE)
+    return EGL_NO_SURFACE;
+
+  if (!shCreateImageFramebuffer(image, &framebuffer, &stencil)) {
+    g_egl.DestroySurface(display->realDisplay, realSurface);
+    shSetEGLError(EGL_BAD_ALLOC);
+    return EGL_NO_SURFACE;
+  }
+
+  surface = (SHEGLSurface*)calloc(1, sizeof(SHEGLSurface));
+  if (!surface) {
+    if (framebuffer != 0)
+      glDeleteFramebuffers(1, &framebuffer);
+    if (stencil != 0)
+      glDeleteRenderbuffers(1, &stencil);
+    g_egl.DestroySurface(display->realDisplay, realSurface);
+    shSetEGLError(EGL_BAD_ALLOC);
+    return EGL_NO_SURFACE;
+  }
+
+  shImageAddEGLPbufferRef(image);
+
+  surface->magic = SH_EGL_SURFACE_MAGIC;
+  surface->display = display;
+  surface->realSurface = realSurface;
+  surface->type = SH_EGL_SURFACE_OPENVG_IMAGE;
+  surface->config = config;
+  surface->vgImage = image;
+  surface->vgContext = t_currentContext->vgContext;
+  surface->framebuffer = framebuffer;
+  surface->stencil = stencil;
+  surface->width = image->width;
+  surface->height = image->height;
+  surface->textureFormat = textureFormat;
+  surface->textureTarget = textureTarget;
+  surface->mipmapTexture = mipmapTexture;
+  surface->vgColorspace = shImageVGColorspace(image);
+  surface->vgAlphaFormat = shImageVGAlphaFormat(image);
+
   return (EGLSurface)surface;
 }
 
@@ -551,10 +925,17 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
 
   result = g_egl.DestroySurface(display->realDisplay, s->realSurface);
   if (result) {
-    if (t_currentDraw == s)
+    if (t_currentDraw == s) {
+      if (s->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+        shImageEndRenderTarget(s->vgImage);
       t_currentDraw = NULL;
+      if (t_currentContext && t_currentContext->vgContext)
+        t_currentContext->vgContext->renderTargetImage = NULL;
+    }
     if (t_currentRead == s)
       t_currentRead = NULL;
+    if (s->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+      shDestroyImageSurfaceResources(s);
     s->magic = 0;
     free(s);
   }
@@ -571,8 +952,43 @@ EGLAPI EGLBoolean EGLAPIENTRY eglQuerySurface(EGLDisplay dpy, EGLSurface surface
     return EGL_FALSE;
   display = shDisplay(dpy);
   s = shSurface(surface);
-  return (display && s) ? g_egl.QuerySurface(display->realDisplay, s->realSurface,
-                                             attribute, value) : EGL_FALSE;
+  if (!display || !s)
+    return EGL_FALSE;
+  if (!value) {
+    shSetEGLError(EGL_BAD_PARAMETER);
+    return EGL_FALSE;
+  }
+
+  if (s->type == SH_EGL_SURFACE_OPENVG_IMAGE) {
+    switch (attribute) {
+    case EGL_WIDTH:
+      *value = s->width;
+      return EGL_TRUE;
+    case EGL_HEIGHT:
+      *value = s->height;
+      return EGL_TRUE;
+    case EGL_TEXTURE_FORMAT:
+      *value = s->textureFormat;
+      return EGL_TRUE;
+    case EGL_TEXTURE_TARGET:
+      *value = s->textureTarget;
+      return EGL_TRUE;
+    case EGL_MIPMAP_TEXTURE:
+      *value = s->mipmapTexture;
+      return EGL_TRUE;
+    case EGL_VG_COLORSPACE:
+      *value = s->vgColorspace;
+      return EGL_TRUE;
+    case EGL_VG_ALPHA_FORMAT:
+      *value = s->vgAlphaFormat;
+      return EGL_TRUE;
+    default:
+      break;
+    }
+  }
+
+  return g_egl.QuerySurface(display->realDisplay, s->realSurface,
+                            attribute, value);
 }
 
 EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
@@ -646,7 +1062,12 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
     return EGL_FALSE;
 
   if (t_currentContext == context) {
+    if (t_currentDraw &&
+        t_currentDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+      shImageEndRenderTarget(t_currentDraw->vgImage);
     shClearCurrentContext();
+    t_currentDraw = NULL;
+    t_currentRead = NULL;
     t_currentContext = NULL;
   }
 
@@ -676,6 +1097,9 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
   EGLContext realContext = EGL_NO_CONTEXT;
   EGLint width = 0;
   EGLint height = 0;
+  SHEGLSurface *oldDraw;
+  SHImage *renderTargetImage = NULL;
+  EGLBoolean usesImageSurface = EGL_FALSE;
 
   if (!shLoadRealEGL())
     return EGL_FALSE;
@@ -705,11 +1129,50 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
     realContext = context->realContext;
   }
 
+  usesImageSurface =
+    (drawSurface && drawSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE) ||
+    (readSurface && readSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE);
+
+  if (usesImageSurface) {
+    if (!context || context->api != EGL_OPENVG_API) {
+      shSetEGLError(EGL_BAD_MATCH);
+      return EGL_FALSE;
+    }
+
+    if (drawSurface != readSurface) {
+      shSetEGLError(EGL_BAD_MATCH);
+      return EGL_FALSE;
+    }
+
+    if (!drawSurface ||
+        drawSurface->vgContext != context->vgContext) {
+      shSetEGLError(EGL_BAD_MATCH);
+      return EGL_FALSE;
+    }
+
+    if (shImageIsRenderTarget(drawSurface->vgImage) &&
+        t_currentDraw != drawSurface) {
+      shSetEGLError(EGL_BAD_ACCESS);
+      return EGL_FALSE;
+    }
+  }
+
   if (context && context->api == EGL_OPENVG_API && !g_egl.BindAPI(EGL_OPENGL_API))
     return EGL_FALSE;
 
   if (!g_egl.MakeCurrent(display->realDisplay, realDraw, realRead, realContext))
     return EGL_FALSE;
+
+  oldDraw = t_currentDraw;
+  if (oldDraw != drawSurface &&
+      oldDraw &&
+      oldDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+    shImageEndRenderTarget(oldDraw->vgImage);
+
+  if (oldDraw != drawSurface &&
+      drawSurface &&
+      drawSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+    shImageBeginRenderTarget(drawSurface->vgImage);
 
   t_currentDisplay = display;
   t_currentDraw = drawSurface;
@@ -721,10 +1184,22 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
     return EGL_TRUE;
   }
 
-  if (!shQuerySurfaceSize(display, drawSurface, &width, &height))
-    return EGL_FALSE;
+  if (drawSurface &&
+      drawSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE) {
+    glBindFramebuffer(GL_FRAMEBUFFER, drawSurface->framebuffer);
+    width = drawSurface->width;
+    height = drawSurface->height;
+    renderTargetImage = drawSurface->vgImage;
+  } else {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!shQuerySurfaceSize(display, drawSurface, &width, &height))
+      return EGL_FALSE;
+  }
 
-  if (!shSetCurrentContext(context->vgContext, width, height)) {
+  if (!shSetCurrentContextForImage(context->vgContext,
+                                   width,
+                                   height,
+                                   renderTargetImage)) {
     shSetEGLError(EGL_BAD_ALLOC);
     return EGL_FALSE;
   }
@@ -817,6 +1292,9 @@ EGLAPI const char *EGLAPIENTRY eglQueryString(EGLDisplay dpy, EGLint name)
 
 EGLAPI EGLBoolean EGLAPIENTRY eglReleaseThread(void)
 {
+  if (t_currentDraw &&
+      t_currentDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+    shImageEndRenderTarget(t_currentDraw->vgImage);
   shClearCurrentContext();
   t_currentDisplay = NULL;
   t_currentDraw = NULL;
@@ -847,6 +1325,7 @@ eglGetProcAddress(const char *procname)
   SH_PROC(GetConfigAttrib);
   SH_PROC(CreateWindowSurface);
   SH_PROC(CreatePbufferSurface);
+  SH_PROC(CreatePbufferFromClientBuffer);
   SH_PROC(DestroySurface);
   SH_PROC(QuerySurface);
   SH_PROC(BindAPI);

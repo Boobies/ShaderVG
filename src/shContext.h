@@ -131,6 +131,7 @@ typedef struct
   SHPaint           defaultPaint;
   
   VGErrorCode       error;
+  SHImage*          renderTargetImage;
   
   /* Resources */
   SHPathArray       paths;
@@ -206,8 +207,13 @@ VGContext* shGetContext();
 VGContext* shCreateContext(void);
 void shDestroyContext(VGContext *c);
 VGboolean shSetCurrentContext(VGContext *c, VGint width, VGint height);
+VGboolean shSetCurrentContextForImage(VGContext *c,
+                                      VGint width,
+                                      VGint height,
+                                      SHImage *image);
 void shClearCurrentContext(void);
 void shResizeCurrentSurface(VGint width, VGint height);
+void shMarkRenderTargetDirty(VGContext *c);
 void shEnsureMaskTexture(VGContext *c);
 VGboolean shApplyMaskTextureToSurface(VGContext *c,
                                       GLuint texture,

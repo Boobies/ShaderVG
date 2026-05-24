@@ -73,6 +73,12 @@ void SHPaint_dtor(SHPaint *p)
   SH_DEINITOBJ(SHStopArray, p->instops);
   SH_DEINITOBJ(SHStopArray, p->stops);
   
+  if (p->pattern != VG_INVALID_HANDLE) {
+    shImageReleasePaintPatternRef((SHImage*)p->pattern);
+    shImageRelease((SHImage*)p->pattern);
+    p->pattern = VG_INVALID_HANDLE;
+  }
+
   if (p->texture != 0 && glIsTexture(p->texture))
     glDeleteTextures(1, &p->texture);
 }
@@ -133,6 +139,8 @@ VG_API_CALL void vgSetPaint(VGPaint paint, VGbitfield paintModes)
 
 VG_API_CALL void vgPaintPattern(VGPaint paint, VGImage pattern)
 {
+  SHPaint *p;
+  SHImage *image;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if handle valid */
@@ -143,10 +151,20 @@ VG_API_CALL void vgPaintPattern(VGPaint paint, VGImage pattern)
   VG_RETURN_ERR_IF(!shIsValidImage(context, pattern),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  /* TODO: Check if pattern image is current rendering target */
+  image = (SHImage*)pattern;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(image),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
   /* Set pattern image */
-  ((SHPaint*)paint)->pattern = pattern;
+  p = (SHPaint*)paint;
+  if (p->pattern != VG_INVALID_HANDLE) {
+    shImageReleasePaintPatternRef((SHImage*)p->pattern);
+    shImageRelease((SHImage*)p->pattern);
+  }
+
+  shImageAddRef(image);
+  shImageAddPaintPatternRef(image);
+  p->pattern = pattern;
   
   VG_RETURN(VG_NO_RETVAL);
 }
