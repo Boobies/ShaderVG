@@ -79,7 +79,9 @@ void SHPaint_dtor(SHPaint *p)
     p->pattern = VG_INVALID_HANDLE;
   }
 
-  if (p->texture != 0 && glIsTexture(p->texture))
+  if (shCanDeleteResourceGL() &&
+      p->texture != 0 &&
+      glIsTexture(p->texture))
     glDeleteTextures(1, &p->texture);
 }
 
@@ -94,7 +96,7 @@ VG_API_CALL VGPaint vgCreatePaint(void)
                    VG_INVALID_HANDLE);
   
   /* Add to resource list */
-  shPaintArrayPushBack(&context->paints, p);
+  shPaintArrayPushBack(&context->resources->paints, p);
   
   VG_RETURN((VGPaint)p);
 }
@@ -105,12 +107,12 @@ VG_API_CALL void vgDestroyPaint(VGPaint paint)
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if handle valid */
-  index = shPaintArrayFind(&context->paints, (SHPaint*)paint);
+  index = shPaintArrayFind(&context->resources->paints, (SHPaint*)paint);
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Delete object and remove resource */
   SH_DELETEOBJ(SHPaint, (SHPaint*)paint);
-  shPaintArrayRemoveAt(&context->paints, index);
+  shPaintArrayRemoveAt(&context->resources->paints, index);
   
   VG_RETURN(VG_NO_RETVAL);
 }

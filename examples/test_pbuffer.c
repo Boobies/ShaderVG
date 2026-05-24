@@ -365,6 +365,179 @@ static int expect_pixel(const unsigned char *pixels,
   return 1;
 }
 
+static int run_shared_context_test(EGLDisplay display,
+                                   EGLConfig config,
+                                   EGLSurface surface,
+                                   EGLContext baseContext,
+                                   unsigned char *pixels,
+                                   EGLint width,
+                                   EGLint height)
+{
+  EGLContext sharedContext = EGL_NO_CONTEXT;
+  VGPath rect = VG_INVALID_HANDLE;
+  VGPath fullRect = VG_INVALID_HANDLE;
+  VGPath glyphPath = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGImage image = VG_INVALID_HANDLE;
+  VGFont font = VG_INVALID_HANDLE;
+  VGMaskLayer maskLayer = VG_INVALID_HANDLE;
+  VGubyte imageData[16 * 16 * 4];
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat green[] = {0.0f, 1.0f, 0.0f, 1.0f};
+  VGfloat glyphOrigin[] = {0.0f, 0.0f};
+  VGfloat escapement[] = {12.0f, 0.0f};
+  VGfloat drawOrigin[] = {24.0f, 24.0f};
+  int i;
+  int result = 0;
+
+  rect = create_rect_path(16.0f, 16.0f);
+  fullRect = create_rect_path((VGfloat)width, (VGfloat)height);
+  glyphPath = create_rect_path(10.0f, 10.0f);
+  paint = vgCreatePaint();
+  image = vgCreateImage(VG_sRGBA_8888, 16, 16, VG_IMAGE_QUALITY_BETTER);
+  font = vgCreateFont(1);
+  maskLayer = vgCreateMaskLayer(width, height);
+
+  if (rect == VG_INVALID_HANDLE ||
+      fullRect == VG_INVALID_HANDLE ||
+      glyphPath == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE ||
+      image == VG_INVALID_HANDLE ||
+      font == VG_INVALID_HANDLE ||
+      maskLayer == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG shared context test setup failed");
+    goto cleanup;
+  }
+
+  for (i=0; i<16 * 16; ++i) {
+    imageData[i * 4 + 0] = 255;
+    imageData[i * 4 + 1] = 0;
+    imageData[i * 4 + 2] = 0;
+    imageData[i * 4 + 3] = 255;
+  }
+
+  vgImageSubData(image, imageData, 16 * 4, VG_sRGBA_8888,
+                 0, 0, 16, 16);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, green);
+  vgSetGlyphToPath(font, 7, glyphPath, VG_FALSE,
+                   glyphOrigin, escapement);
+  if (expect_no_vg_error("OpenVG shared context resource setup failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  sharedContext = eglCreateContext(display, config, baseContext, NULL);
+  if (sharedContext == EGL_NO_CONTEXT) {
+    result = fail_egl("EGL could not create a shared OpenVG context");
+    goto cleanup;
+  }
+
+  if (!eglMakeCurrent(display, surface, surface, sharedContext)) {
+    result = fail_egl("EGL could not bind a shared OpenVG context");
+    goto cleanup;
+  }
+
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgDrawPath(rect, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG shared context path draw failed") ||
+      expect_green_visibility(pixels, width, 8, 8, 1,
+                              "OpenVG shared context could not draw a shared path")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_IMAGE_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgTranslate(24.0f, 0.0f);
+  vgSeti(VG_IMAGE_MODE, VG_DRAW_IMAGE_NORMAL);
+  vgDrawImage(image);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG shared context image draw failed") ||
+      expect_pixel(pixels, width, 32, 8, 192, 32, 32,
+                   "OpenVG shared context could not draw a shared image")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_GLYPH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSetfv(VG_GLYPH_ORIGIN, 2, drawOrigin);
+  vgDrawGlyph(font, 7, VG_FILL_PATH, VG_FALSE);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG shared context font draw failed") ||
+      expect_green_visibility(pixels, width, 28, 28, 1,
+                              "OpenVG shared context could not draw a shared font")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgFillMaskLayer(maskLayer, 0, 0, width, height, 0.0f);
+  vgFillMaskLayer(maskLayer, 0, 0, width / 2, height, 1.0f);
+  vgSeti(VG_MASKING, VG_TRUE);
+  vgMask(maskLayer, VG_SET_MASK, 0, 0, width, height);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgDrawPath(fullRect, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG shared context mask layer draw failed") ||
+      expect_green_visibility(pixels, width, width / 4, height / 2, 1,
+                              "OpenVG shared context mask layer hid covered pixels") ||
+      expect_green_visibility(pixels, width, 3 * width / 4, height / 2, 0,
+                              "OpenVG shared context mask layer exposed uncovered pixels")) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  if (sharedContext != EGL_NO_CONTEXT)
+    eglMakeCurrent(display, surface, surface, sharedContext);
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  if (maskLayer != VG_INVALID_HANDLE)
+    vgDestroyMaskLayer(maskLayer);
+  if (font != VG_INVALID_HANDLE)
+    vgDestroyFont(font);
+  if (image != VG_INVALID_HANDLE)
+    vgDestroyImage(image);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (glyphPath != VG_INVALID_HANDLE)
+    vgDestroyPath(glyphPath);
+  if (fullRect != VG_INVALID_HANDLE)
+    vgDestroyPath(fullRect);
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+
+  if (sharedContext != EGL_NO_CONTEXT &&
+      !eglMakeCurrent(display, surface, surface, baseContext) &&
+      result == 0)
+    result = fail_egl("EGL could not restore the base context after shared context test");
+
+  if (sharedContext != EGL_NO_CONTEXT &&
+      !eglDestroyContext(display, sharedContext) &&
+      result == 0)
+    result = fail_egl("EGL could not destroy the shared OpenVG context");
+
+  if (result == 0 &&
+      !eglMakeCurrent(display, surface, surface, baseContext))
+    result = fail_egl("EGL could not leave the base context current after shared context test");
+
+  return result;
+}
+
 static int run_client_buffer_pbuffer_test(EGLDisplay display,
                                           EGLConfig config,
                                           EGLSurface baseSurface,
@@ -1365,6 +1538,9 @@ int main(void)
       result = run_image_draw_test(pixels, width, height);
       if (result == 0)
         result = run_src_over_alpha_test(pixels, width, height);
+      if (result == 0)
+        result = run_shared_context_test(display, config, surface,
+                                         context, pixels, width, height);
       if (result == 0)
         result = run_client_buffer_pbuffer_test(display, config, surface,
                                                 context, pixels, width, height);

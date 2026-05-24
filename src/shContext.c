@@ -31,6 +31,58 @@
 #define _ARRAY_DEFINE
 #include "shArrayBase.h"
 
+static void SHResourceGroup_ctor(SHResourceGroup *resources)
+{
+  resources->refCount = 1;
+  SH_INITOBJ(SHPathArray, resources->paths);
+  SH_INITOBJ(SHPaintArray, resources->paints);
+  SH_INITOBJ(SHImageArray, resources->images);
+  SH_INITOBJ(SHFontArray, resources->fonts);
+  SH_INITOBJ(SHMaskLayerArray, resources->maskLayers);
+}
+
+static void SHResourceGroup_dtor(SHResourceGroup *resources)
+{
+  int i;
+
+  for (i=0; i<resources->fonts.size; ++i)
+    SH_DELETEOBJ(SHFont, resources->fonts.items[i]);
+
+  for (i=0; i<resources->maskLayers.size; ++i)
+    SH_DELETEOBJ(SHMaskLayer, resources->maskLayers.items[i]);
+
+  for (i=0; i<resources->paths.size; ++i)
+    shPathRelease(resources->paths.items[i]);
+
+  for (i=0; i<resources->paints.size; ++i)
+    SH_DELETEOBJ(SHPaint, resources->paints.items[i]);
+
+  for (i=0; i<resources->images.size; ++i)
+    shImageRelease(resources->images.items[i]);
+
+  SH_DEINITOBJ(SHMaskLayerArray, resources->maskLayers);
+  SH_DEINITOBJ(SHFontArray, resources->fonts);
+  SH_DEINITOBJ(SHPathArray, resources->paths);
+  SH_DEINITOBJ(SHPaintArray, resources->paints);
+  SH_DEINITOBJ(SHImageArray, resources->images);
+}
+
+static void shResourceGroupAddRef(SHResourceGroup *resources)
+{
+  if (resources)
+    ++resources->refCount;
+}
+
+static void shResourceGroupRelease(SHResourceGroup *resources)
+{
+  if (!resources)
+    return;
+
+  --resources->refCount;
+  if (resources->refCount <= 0)
+    SH_DELETEOBJ(SHResourceGroup, resources);
+}
+
 /*-----------------------------------------------------
  * The current VG context is selected by the EGL frontend
  * when a ShaderVG-backed EGLContext is made current.
@@ -43,6 +95,12 @@
 #endif
 
 static SH_TLS VGContext *g_current_context = NULL;
+static SH_TLS VGboolean g_can_delete_resource_gl = VG_TRUE;
+
+VGboolean shCanDeleteResourceGL(void)
+{
+  return g_can_delete_resource_gl;
+}
 
 void shBindContextVertexState(VGContext *context, SHVertexState *state)
 {
@@ -60,7 +118,11 @@ void shRestoreVertexState(const SHVertexState *state)
   if (!state)
     return;
 
-  glBindVertexArray((GLuint)state->vertexArray);
+  if (state->vertexArray == 0 ||
+      glIsVertexArray((GLuint)state->vertexArray))
+    glBindVertexArray((GLuint)state->vertexArray);
+  else
+    glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
 }
 
@@ -113,10 +175,10 @@ void SHMaskLayer_ctor(SHMaskLayer *m)
 
 void SHMaskLayer_dtor(SHMaskLayer *m)
 {
-  if (m->texture != 0)
+  if (shCanDeleteResourceGL() && m->texture != 0)
     glDeleteTextures(1, &m->texture);
 
-  if (m->framebuffer != 0)
+  if (shCanDeleteResourceGL() && m->framebuffer != 0)
     glDeleteFramebuffers(1, &m->framebuffer);
 
   m->texture = 0;
@@ -385,6 +447,44 @@ static void shDeinitContextVertexState(VGContext *context)
   }
 }
 
+static void shDeinitContextGL(VGContext *context)
+{
+  if (!context || !context->glInitialized)
+    return;
+
+  shDeinitMaskProgram(context);
+  shDeinitPiplelineShaders();
+  shDeinitRampShaders();
+
+  if (context->maskTexture != 0) {
+    glDeleteTextures(1, &context->maskTexture);
+    context->maskTexture = 0;
+  }
+
+  if (context->maskFramebuffer != 0) {
+    glDeleteFramebuffers(1, &context->maskFramebuffer);
+    context->maskFramebuffer = 0;
+  }
+
+  if (context->renderToMaskTexture != 0) {
+    glDeleteTextures(1, &context->renderToMaskTexture);
+    context->renderToMaskTexture = 0;
+  }
+
+  if (context->renderToMaskFramebuffer != 0) {
+    glDeleteFramebuffers(1, &context->renderToMaskFramebuffer);
+    context->renderToMaskFramebuffer = 0;
+  }
+
+  if (context->renderToMaskStencil != 0) {
+    glDeleteRenderbuffers(1, &context->renderToMaskStencil);
+    context->renderToMaskStencil = 0;
+  }
+
+  shDeinitContextVertexState(context);
+  context->glInitialized = VG_FALSE;
+}
+
 static VGboolean shInitContextGL(VGContext *context, VGint width, VGint height)
 {
   if (!context)
@@ -415,26 +515,51 @@ VGContext* shCreateContext(void)
 {
   VGContext *context = NULL;
   SH_NEWOBJ(VGContext, context);
+  if (context && !context->resources) {
+    SH_DELETEOBJ(VGContext, context);
+    context = NULL;
+  }
+  return context;
+}
+
+VGContext* shCreateContextShared(VGContext *shareContext)
+{
+  VGContext *context = shCreateContext();
+
+  if (!context)
+    return NULL;
+
+  if (!shareContext)
+    return context;
+
+  if (!shareContext->resources) {
+    SH_DELETEOBJ(VGContext, context);
+    return NULL;
+  }
+
+  shResourceGroupRelease(context->resources);
+  context->resources = shareContext->resources;
+  shResourceGroupAddRef(context->resources);
+
   return context;
 }
 
 void shDestroyContext(VGContext *context)
 {
   VGContext *previous = g_current_context;
+  VGboolean previousCanDeleteResourceGL = g_can_delete_resource_gl;
 
   if (!context)
     return;
 
-  if (context->glInitialized) {
-    g_current_context = context;
-    shDeinitMaskProgram(context);
-    shDeinitPiplelineShaders();
-    shDeinitRampShaders();
-    shDeinitContextVertexState(context);
-    context->glInitialized = VG_FALSE;
-  }
+  if (previous == context)
+    shDeinitContextGL(context);
 
+  /* EGL destroys non-current GL context objects; deleting names here could
+   * target whichever unrelated context is current. */
+  g_can_delete_resource_gl = (previous == context) ? VG_TRUE : VG_FALSE;
   SH_DELETEOBJ(VGContext, context);
+  g_can_delete_resource_gl = previousCanDeleteResourceGL;
 
   if (previous == context)
     g_current_context = NULL;
@@ -557,12 +682,9 @@ void VGContext_ctor(VGContext *c)
   c->error = VG_NO_ERROR;
   c->renderTargetImage = NULL;
   
-  /* Resources */
-  SH_INITOBJ(SHPathArray, c->paths);
-  SH_INITOBJ(SHPaintArray, c->paints);
-  SH_INITOBJ(SHImageArray, c->images);
-  SH_INITOBJ(SHFontArray, c->fonts);
-  SH_INITOBJ(SHMaskLayerArray, c->maskLayers);
+  /* Shared resources */
+  c->resources = NULL;
+  SH_NEWOBJ(SHResourceGroup, c->resources);
   
   /* GL state is initialized lazily after EGL makes the context current */
   c->progDraw = 0;
@@ -585,48 +707,12 @@ void VGContext_ctor(VGContext *c)
 
 void VGContext_dtor(VGContext *c)
 {
-  int i;
-  
   SH_DEINITOBJ(SHRectArray, c->scissor);
   SH_DEINITOBJ(SHFloatArray, c->strokeDashPattern);
 
-  if (c->maskTexture != 0)
-    glDeleteTextures(1, &c->maskTexture);
-  if (c->maskFramebuffer != 0)
-    glDeleteFramebuffers(1, &c->maskFramebuffer);
-  if (c->renderToMaskTexture != 0)
-    glDeleteTextures(1, &c->renderToMaskTexture);
-  if (c->renderToMaskFramebuffer != 0)
-    glDeleteFramebuffers(1, &c->renderToMaskFramebuffer);
-  if (c->renderToMaskStencil != 0)
-    glDeleteRenderbuffers(1, &c->renderToMaskStencil);
-  if (c->arrayBuffer != 0)
-    glDeleteBuffers(1, &c->arrayBuffer);
-  if (c->arrayObject != 0)
-    glDeleteVertexArrays(1, &c->arrayObject);
-  
-  /* Destroy resources */
-  for (i=0; i<c->fonts.size; ++i)
-    SH_DELETEOBJ(SHFont, c->fonts.items[i]);
-
-  for (i=0; i<c->maskLayers.size; ++i)
-    SH_DELETEOBJ(SHMaskLayer, c->maskLayers.items[i]);
-
-  for (i=0; i<c->paths.size; ++i)
-    shPathRelease(c->paths.items[i]);
-  
-  for (i=0; i<c->paints.size; ++i)
-    SH_DELETEOBJ(SHPaint, c->paints.items[i]);
-  
-  for (i=0; i<c->images.size; ++i)
-    shImageRelease(c->images.items[i]);
-
+  shResourceGroupRelease(c->resources);
+  c->resources = NULL;
   SH_DEINITOBJ(SHPaint, c->defaultPaint);
-  SH_DEINITOBJ(SHMaskLayerArray, c->maskLayers);
-  SH_DEINITOBJ(SHFontArray, c->fonts);
-  SH_DEINITOBJ(SHPathArray, c->paths);
-  SH_DEINITOBJ(SHPaintArray, c->paints);
-  SH_DEINITOBJ(SHImageArray, c->images);
 }
 
 /*--------------------------------------------------
@@ -635,31 +721,41 @@ void VGContext_dtor(VGContext *c)
 
 SHint shIsValidPath(VGContext *c, VGHandle h)
 {
-  int index = shPathArrayFind(&c->paths, (SHPath*)h);
+  int index = c && c->resources ?
+              shPathArrayFind(&c->resources->paths, (SHPath*)h) :
+              -1;
   return (index == -1) ? 0 : 1;
 }
 
 SHint shIsValidPaint(VGContext *c, VGHandle h)
 {
-  int index = shPaintArrayFind(&c->paints, (SHPaint*)h);
+  int index = c && c->resources ?
+              shPaintArrayFind(&c->resources->paints, (SHPaint*)h) :
+              -1;
   return (index == -1) ? 0 : 1;
 }
 
 SHint shIsValidImage(VGContext *c, VGHandle h)
 {
-  int index = shImageArrayFind(&c->images, (SHImage*)h);
+  int index = c && c->resources ?
+              shImageArrayFind(&c->resources->images, (SHImage*)h) :
+              -1;
   return (index == -1) ? 0 : 1;
 }
 
 SHint shIsValidFont(VGContext *c, VGHandle h)
 {
-  int index = shFontArrayFind(&c->fonts, (SHFont*)h);
+  int index = c && c->resources ?
+              shFontArrayFind(&c->resources->fonts, (SHFont*)h) :
+              -1;
   return (index == -1) ? 0 : 1;
 }
 
 SHint shIsValidMaskLayer(VGContext *c, VGHandle h)
 {
-  int index = shMaskLayerArrayFind(&c->maskLayers, (SHMaskLayer*)h);
+  int index = c && c->resources ?
+              shMaskLayerArrayFind(&c->resources->maskLayers, (SHMaskLayer*)h) :
+              -1;
   return (index == -1) ? 0 : 1;
 }
 
@@ -834,7 +930,11 @@ static void shRestoreMaskGLState(const SHMaskGLState *state)
   glDrawBuffer(state->drawBuffer);
   glReadBuffer(state->readBuffer);
   glUseProgram(state->program);
-  glBindVertexArray((GLuint)state->vertexArray);
+  if (state->vertexArray == 0 ||
+      glIsVertexArray((GLuint)state->vertexArray))
+    glBindVertexArray((GLuint)state->vertexArray);
+  else
+    glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
   glViewport(state->viewport[0], state->viewport[1],
              state->viewport[2], state->viewport[3]);
@@ -1145,7 +1245,7 @@ VG_API_CALL VGMaskLayer vgCreateMaskLayer(VGint width, VGint height)
   layer->width = width;
   layer->height = height;
 
-  if (!shMaskLayerArrayPushBack(&context->maskLayers, layer)) {
+  if (!shMaskLayerArrayPushBack(&context->resources->maskLayers, layer)) {
     SH_DELETEOBJ(SHMaskLayer, layer);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
@@ -1158,10 +1258,10 @@ VG_API_CALL void vgDestroyMaskLayer(VGMaskLayer maskLayer)
   SHint index;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  index = shMaskLayerArrayFind(&context->maskLayers, (SHMaskLayer*)maskLayer);
+  index = shMaskLayerArrayFind(&context->resources->maskLayers, (SHMaskLayer*)maskLayer);
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  shMaskLayerArrayRemoveAt(&context->maskLayers, index);
+  shMaskLayerArrayRemoveAt(&context->resources->maskLayers, index);
   SH_DELETEOBJ(SHMaskLayer, (SHMaskLayer*)maskLayer);
 
   VG_RETURN(VG_NO_RETVAL);

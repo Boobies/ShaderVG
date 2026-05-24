@@ -124,7 +124,7 @@ VG_API_CALL VGFont vgCreateFont(VGint glyphCapacityHint)
 
   f->glyphCapacityHint = glyphCapacityHint;
 
-  if (!shFontArrayPushBack(&context->fonts, f)) {
+  if (!shFontArrayPushBack(&context->resources->fonts, f)) {
     SH_DELETEOBJ(SHFont, f);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
@@ -137,11 +137,11 @@ VG_API_CALL void vgDestroyFont(VGFont font)
   SHint index;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  index = shFontArrayFind(&context->fonts, (SHFont*)font);
+  index = shFontArrayFind(&context->resources->fonts, (SHFont*)font);
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
   SH_DELETEOBJ(SHFont, (SHFont*)font);
-  shFontArrayRemoveAt(&context->fonts, index);
+  shFontArrayRemoveAt(&context->resources->fonts, index);
 
   VG_RETURN(VG_NO_RETVAL);
 }

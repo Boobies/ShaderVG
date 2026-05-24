@@ -58,6 +58,7 @@ PFNGLGETSHADERINFOLOGPROC           glGetShaderInfoLog;
 PFNGLGETSHADERIVPROC                glGetShaderiv;
 PFNGLGETUNIFORMFVPROC               glGetUniformfv;
 PFNGLGETUNIFORMLOCATIONPROC         glGetUniformLocation;
+PFNGLISVERTEXARRAYPROC              glIsVertexArray;
 PFNGLLINKPROGRAMPROC                glLinkProgram;
 PFNGLRENDERBUFFERSTORAGEPROC        glRenderbufferStorage;
 PFNGLSHADERSOURCEPROC               glShaderSource;
@@ -142,6 +143,7 @@ void shLoadExtensions(void *c)
   SH_LOAD_GL(PFNGLGETSHADERIVPROC, glGetShaderiv);
   SH_LOAD_GL(PFNGLGETUNIFORMFVPROC, glGetUniformfv);
   SH_LOAD_GL(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation);
+  SH_LOAD_GL(PFNGLISVERTEXARRAYPROC, glIsVertexArray);
   SH_LOAD_GL(PFNGLLINKPROGRAMPROC, glLinkProgram);
   SH_LOAD_GL(PFNGLRENDERBUFFERSTORAGEPROC, glRenderbufferStorage);
   SH_LOAD_GL(PFNGLSHADERSOURCEPROC, glShaderSource);

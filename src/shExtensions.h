@@ -55,6 +55,7 @@ extern PFNGLGETSHADERINFOLOGPROC           glGetShaderInfoLog;
 extern PFNGLGETSHADERIVPROC                glGetShaderiv;
 extern PFNGLGETUNIFORMFVPROC               glGetUniformfv;
 extern PFNGLGETUNIFORMLOCATIONPROC         glGetUniformLocation;
+extern PFNGLISVERTEXARRAYPROC              glIsVertexArray;
 extern PFNGLLINKPROGRAMPROC                glLinkProgram;
 extern PFNGLRENDERBUFFERSTORAGEPROC        glRenderbufferStorage;
 extern PFNGLSHADERSOURCEPROC               glShaderSource;

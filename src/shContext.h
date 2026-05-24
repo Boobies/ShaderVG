@@ -62,6 +62,16 @@ typedef enum
 
 typedef struct
 {
+  SHint refCount;
+  SHPathArray paths;
+  SHPaintArray paints;
+  SHImageArray images;
+  SHFontArray fonts;
+  SHMaskLayerArray maskLayers;
+} SHResourceGroup;
+
+typedef struct
+{
   /* Surface info supplied by the EGL frontend */
   SHint surfaceWidth;
   SHint surfaceHeight;
@@ -133,12 +143,8 @@ typedef struct
   VGErrorCode       error;
   SHImage*          renderTargetImage;
   
-  /* Resources */
-  SHPathArray       paths;
-  SHPaintArray      paints;
-  SHImageArray      images;
-  SHFontArray       fonts;
-  SHMaskLayerArray  maskLayers;
+  /* Shared resources */
+  SHResourceGroup  *resources;
 
   /* Pointers to extensions */
   
@@ -213,6 +219,7 @@ SHint shIsValidMaskLayer(VGContext *c, VGHandle h);
 SHResourceType shGetResourceType(VGContext *c, VGHandle h);
 VGContext* shGetContext();
 VGContext* shCreateContext(void);
+VGContext* shCreateContextShared(VGContext *shareContext);
 void shDestroyContext(VGContext *c);
 VGboolean shSetCurrentContext(VGContext *c, VGint width, VGint height);
 VGboolean shSetCurrentContextForImage(VGContext *c,
@@ -222,6 +229,7 @@ VGboolean shSetCurrentContextForImage(VGContext *c,
 void shClearCurrentContext(void);
 void shResizeCurrentSurface(VGint width, VGint height);
 void shMarkRenderTargetDirty(VGContext *c);
+VGboolean shCanDeleteResourceGL(void);
 void shBindContextVertexState(VGContext *c, SHVertexState *state);
 void shRestoreVertexState(const SHVertexState *state);
 void shEnsureMaskTexture(VGContext *c);

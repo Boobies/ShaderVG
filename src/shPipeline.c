@@ -425,7 +425,11 @@ static void shRestoreRenderToMaskGLState(const SHRenderToMaskGLState *state)
   glDrawBuffer(state->drawBuffer);
   glReadBuffer(state->readBuffer);
   glUseProgram(state->program);
-  glBindVertexArray((GLuint)state->vertexArray);
+  if (state->vertexArray == 0 ||
+      glIsVertexArray((GLuint)state->vertexArray))
+    glBindVertexArray((GLuint)state->vertexArray);
+  else
+    glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
   glViewport(state->viewport[0], state->viewport[1],
              state->viewport[2], state->viewport[3]);

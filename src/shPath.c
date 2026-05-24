@@ -170,7 +170,7 @@ VG_API_CALL VGPath vgCreatePath(VGint pathFormat,
   /* Allocate new resource */
   SH_NEWOBJ(SHPath, p);
   VG_RETURN_ERR_IF(!p, VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
-  shPathArrayPushBack(&context->paths, p);
+  shPathArrayPushBack(&context->resources->paths, p);
   
   /* Set parameters */
   p->format = pathFormat;
@@ -234,11 +234,11 @@ VG_API_CALL void vgDestroyPath(VGPath path)
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if handle valid */
-  index = shPathArrayFind(&context->paths, (SHPath*)path);
+  index = shPathArrayFind(&context->resources->paths, (SHPath*)path);
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Remove the public handle; retained font glyphs may keep the object alive. */
-  shPathArrayRemoveAt(&context->paths, index);
+  shPathArrayRemoveAt(&context->resources->paths, index);
   shPathRelease((SHPath*)path);
   
   VG_RETURN_ERR(VG_NO_ERROR, VG_NO_RETVAL);

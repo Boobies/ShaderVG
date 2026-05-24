@@ -1012,6 +1012,10 @@ EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
     share = shContext(share_context);
     if (!share)
       return EGL_NO_CONTEXT;
+    if (share->api != api) {
+      shSetEGLError(EGL_BAD_MATCH);
+      return EGL_NO_CONTEXT;
+    }
     realShare = share->realContext;
   }
 
@@ -1036,7 +1040,7 @@ EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
   context->api = api;
 
   if (api == EGL_OPENVG_API) {
-    context->vgContext = shCreateContext();
+    context->vgContext = shCreateContextShared(share ? share->vgContext : NULL);
     if (!context->vgContext) {
       g_egl.DestroyContext(display->realDisplay, realContext);
       free(context);
@@ -1061,19 +1065,21 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
   if (!display || !context)
     return EGL_FALSE;
 
-  if (t_currentContext == context) {
-    if (t_currentDraw &&
-        t_currentDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE)
-      shImageEndRenderTarget(t_currentDraw->vgImage);
-    shClearCurrentContext();
-    t_currentDraw = NULL;
-    t_currentRead = NULL;
-    t_currentContext = NULL;
-  }
+  if (t_currentContext == context &&
+      t_currentDraw &&
+      t_currentDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+    shImageEndRenderTarget(t_currentDraw->vgImage);
 
   if (context->vgContext) {
     shDestroyContext(context->vgContext);
     context->vgContext = NULL;
+  }
+
+  if (t_currentContext == context) {
+    shClearCurrentContext();
+    t_currentDraw = NULL;
+    t_currentRead = NULL;
+    t_currentContext = NULL;
   }
 
   result = g_egl.DestroyContext(display->realDisplay, context->realContext);
