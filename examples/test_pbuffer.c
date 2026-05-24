@@ -961,17 +961,14 @@ static int run_warp_test(void)
   return 0;
 }
 
-int main(void)
+static int expect_alpha_mask_config(EGLDisplay display,
+                                    EGLint requestedSize,
+                                    EGLBoolean expectMatch,
+                                    EGLConfig *configOut)
 {
-  const EGLint width = 64;
-  const EGLint height = 64;
-  EGLDisplay display;
   EGLConfig config;
-  EGLSurface surface;
-  EGLContext context;
-  EGLint major, minor, count;
-  unsigned char *pixels;
-  int result = 0;
+  EGLint count = 0;
+  EGLint actualSize = -1;
   EGLint configAttribs[] = {
     EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
     EGL_RENDERABLE_TYPE, EGL_OPENVG_BIT,
@@ -980,8 +977,58 @@ int main(void)
     EGL_BLUE_SIZE, 8,
     EGL_ALPHA_SIZE, 8,
     EGL_STENCIL_SIZE, 8,
+    EGL_ALPHA_MASK_SIZE, requestedSize,
     EGL_NONE
   };
+
+  if (!eglChooseConfig(display, configAttribs, &config, 1, &count))
+    return fail_egl("EGL OpenVG alpha mask config selection failed");
+
+  if (!expectMatch) {
+    if (count != 0) {
+      fprintf(stderr,
+              "EGL_ALPHA_MASK_SIZE %d unexpectedly matched %d configs\n",
+              requestedSize, count);
+      return 1;
+    }
+    return 0;
+  }
+
+  if (count < 1) {
+    fprintf(stderr,
+            "EGL_ALPHA_MASK_SIZE %d did not match an OpenVG config\n",
+            requestedSize);
+    return 1;
+  }
+
+  if (!eglGetConfigAttrib(display, config,
+                          EGL_ALPHA_MASK_SIZE, &actualSize))
+    return fail_egl("EGL OpenVG alpha mask config query failed");
+
+  if (actualSize != 8) {
+    fprintf(stderr,
+            "EGL_ALPHA_MASK_SIZE query returned %d, expected 8\n",
+            actualSize);
+    return 1;
+  }
+
+  if (configOut)
+    *configOut = config;
+
+  return 0;
+}
+
+int main(void)
+{
+  const EGLint width = 64;
+  const EGLint height = 64;
+  EGLDisplay display;
+  EGLConfig config;
+  EGLSurface surface;
+  EGLContext context;
+  EGLint major, minor;
+  unsigned char *pixels;
+  int result = 0;
   EGLint pbufferAttribs[] = {
     EGL_WIDTH, width,
     EGL_HEIGHT, height,
@@ -996,11 +1043,16 @@ int main(void)
   if (!eglInitialize(display, &major, &minor))
     return fail_egl("eglInitialize failed");
 
-  if (!eglBindAPI(EGL_OPENVG_API) ||
-      !eglChooseConfig(display, configAttribs, &config, 1, &count) ||
-      count < 1) {
+  if (!eglBindAPI(EGL_OPENVG_API)) {
     eglTerminate(display);
     return fail_egl("EGL OpenVG config selection failed");
+  }
+
+  if (expect_alpha_mask_config(display, 1, EGL_TRUE, &config) ||
+      expect_alpha_mask_config(display, 8, EGL_TRUE, NULL) ||
+      expect_alpha_mask_config(display, 9, EGL_FALSE, NULL)) {
+    eglTerminate(display);
+    return 1;
   }
 
   surface = eglCreatePbufferSurface(display, config, pbufferAttribs);

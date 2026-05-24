@@ -44,6 +44,7 @@
 #define SH_EGL_DISPLAY_MAGIC 0x53454744u
 #define SH_EGL_CONTEXT_MAGIC 0x53454743u
 #define SH_EGL_SURFACE_MAGIC 0x53454753u
+#define SH_EGL_ALPHA_MASK_SIZE 8
 
 typedef struct {
   unsigned int magic;
@@ -220,13 +221,17 @@ static SHEGLContext *shContext(EGLContext context)
   return c;
 }
 
-static EGLint *shTranslateConfigAttribs(const EGLint *attribs)
+static EGLint *shTranslateConfigAttribs(const EGLint *attribs,
+                                        EGLBoolean *emptyResult)
 {
   EGLint *out;
   int pairs = 0;
   int foundRenderable = 0;
   int i;
   int j = 0;
+
+  if (emptyResult)
+    *emptyResult = EGL_FALSE;
 
   if (attribs) {
     while (attribs[pairs * 2] != EGL_NONE)
@@ -240,6 +245,14 @@ static EGLint *shTranslateConfigAttribs(const EGLint *attribs)
   for (i = 0; i < pairs; ++i) {
     EGLint key = attribs[i * 2];
     EGLint value = attribs[i * 2 + 1];
+
+    if (key == EGL_ALPHA_MASK_SIZE) {
+      if (emptyResult &&
+          value != EGL_DONT_CARE &&
+          value > SH_EGL_ALPHA_MASK_SIZE)
+        *emptyResult = EGL_TRUE;
+      continue;
+    }
 
     out[j++] = key;
     if (key == EGL_RENDERABLE_TYPE) {
@@ -359,7 +372,9 @@ EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *attr
 {
   SHEGLDisplay *display;
   EGLint *translated;
+  EGLBoolean emptyResult = EGL_FALSE;
   EGLBoolean result;
+  EGLint realCount = 0;
 
   if (!shLoadRealEGL())
     return EGL_FALSE;
@@ -367,13 +382,32 @@ EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *attr
   if (!display)
     return EGL_FALSE;
 
-  translated = shTranslateConfigAttribs(attrib_list);
+  if (!num_config) {
+    shSetEGLError(EGL_BAD_PARAMETER);
+    return EGL_FALSE;
+  }
+
+  if (config_size < 0) {
+    shSetEGLError(EGL_BAD_PARAMETER);
+    return EGL_FALSE;
+  }
+
+  translated = shTranslateConfigAttribs(attrib_list, &emptyResult);
   if (!translated) {
     shSetEGLError(EGL_BAD_ALLOC);
     return EGL_FALSE;
   }
 
-  result = g_egl.ChooseConfig(display->realDisplay, translated, configs, config_size, num_config);
+  if (emptyResult) {
+    result = g_egl.ChooseConfig(display->realDisplay, translated,
+                                NULL, 0, &realCount);
+    if (result)
+      *num_config = 0;
+  } else {
+    result = g_egl.ChooseConfig(display->realDisplay, translated,
+                                configs, config_size, num_config);
+  }
+
   free(translated);
   return result;
 }
@@ -383,11 +417,30 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy, EGLConfig confi
 {
   SHEGLDisplay *display;
   EGLBoolean result;
+  EGLint renderable;
   if (!shLoadRealEGL())
     return EGL_FALSE;
   display = shDisplay(dpy);
   if (!display)
     return EGL_FALSE;
+
+  if (attribute == EGL_ALPHA_MASK_SIZE) {
+    if (!value) {
+      shSetEGLError(EGL_BAD_PARAMETER);
+      return EGL_FALSE;
+    }
+
+    result = g_egl.GetConfigAttrib(display->realDisplay, config,
+                                   EGL_RENDERABLE_TYPE, &renderable);
+    if (!result)
+      return EGL_FALSE;
+
+    if (renderable & EGL_OPENGL_BIT) {
+      *value = SH_EGL_ALPHA_MASK_SIZE;
+      return EGL_TRUE;
+    }
+  }
+
   result = g_egl.GetConfigAttrib(display->realDisplay, config, attribute, value);
   if (result && attribute == EGL_RENDERABLE_TYPE && value && (*value & EGL_OPENGL_BIT))
     *value |= EGL_OPENVG_BIT;

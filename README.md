@@ -271,7 +271,8 @@ eglSwapBuffers(dpy, surface);
 `libShaderVGEGL` delegates native display, surface, and backing OpenGL context
 creation to the platform EGL implementation. ShaderVG only supplies the OpenVG
 implementation and the glue needed for `EGL_OPENVG_API` / `EGL_OPENVG_BIT` to
-select a ShaderVG OpenVG context.
+select a ShaderVG OpenVG context. OpenVG-capable configs advertise
+`EGL_ALPHA_MASK_SIZE == 8`, matching ShaderVG's 8-bit GPU mask surface.
 
 ## License
 
