@@ -735,6 +735,13 @@ VG_API_CALL void vgDestroyImage(VGImage image)
   VG_RETURN(VG_NO_RETVAL);
 }
 
+static VGboolean shTryDirectClearImage(SHImage *image,
+                                       const SHColor *clear,
+                                       VGint x,
+                                       VGint y,
+                                       VGint width,
+                                       VGint height);
+
 /*---------------------------------------------------
  * Clear given rectangle area in the image data with
  * color set via vgSetfv(VG_CLEAR_COLOR, ...)
@@ -757,6 +764,10 @@ VG_API_CALL void vgClearImage(VGImage image,
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  clear = context->clearColor;
+  if (shTryDirectClearImage(i, &clear, x, y, width, height))
+    VG_RETURN(VG_NO_RETVAL);
   
   /* Nothing to do if target rectangle out of bounds */
   if (x >= i->width || y >= i->height)
@@ -775,8 +786,6 @@ VG_API_CALL void vgClearImage(VGImage image,
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   
   /* Walk pixels and clear*/
-  clear = context->clearColor;
-  
   for (Y=iy; Y<iy+height; ++Y) {
     data = i->data + ( Y*stride + ix * i->fd.bytes );
     
@@ -970,10 +979,20 @@ static VGboolean shClipImageTransfer(SHint targetWidth,
 
 static VGboolean shFormatHasDirectGLStorage(const SHImageFormatDesc *format)
 {
-  return (format &&
-          format->glintformat != 0 &&
-          format->glformat != 0 &&
-          format->gltype != 0) ? VG_TRUE : VG_FALSE;
+  SHuint32 baseFormat;
+
+  if (!format)
+    return VG_FALSE;
+
+  baseFormat = format->vgformat & 0x1F;
+  return (baseFormat == VG_sRGBX_8888 ||
+          baseFormat == VG_sRGBA_8888 ||
+          baseFormat == VG_lRGBX_8888 ||
+          baseFormat == VG_lRGBA_8888 ||
+          baseFormat == VG_sRGB_565 ||
+          baseFormat == VG_sRGBA_5551 ||
+          baseFormat == VG_sRGBA_4444 ||
+          baseFormat == VG_A_8) ? VG_TRUE : VG_FALSE;
 }
 
 static VGboolean shCanDirectImageFormat(const SHImage *image,
@@ -1078,6 +1097,59 @@ static void shRestoreImageReadGLState(const SHImageReadGLState *state)
   glReadBuffer(state->readBuffer);
 }
 
+typedef struct
+{
+  GLint framebuffer;
+  GLint renderbuffer;
+  GLint viewport[4];
+  GLint activeTexture;
+  GLint textureBinding;
+  GLint drawBuffer;
+  GLint readBuffer;
+  GLint scissorBox[4];
+  GLfloat clearColor[4];
+  GLboolean scissor;
+  GLboolean colorMask[4];
+} SHImageTargetGLState;
+
+static void shSaveImageTargetGLState(SHImageTargetGLState *state)
+{
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
+  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
+  glGetIntegerv(GL_VIEWPORT, state->viewport);
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
+  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
+  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
+  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
+  glGetFloatv(GL_COLOR_CLEAR_VALUE, state->clearColor);
+  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
+  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
+  glActiveTexture(GL_TEXTURE0);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->textureBinding);
+}
+
+static void shRestoreImageTargetGLState(const SHImageTargetGLState *state)
+{
+  if (state->scissor) glEnable(GL_SCISSOR_TEST);
+  else glDisable(GL_SCISSOR_TEST);
+
+  glScissor(state->scissorBox[0], state->scissorBox[1],
+            state->scissorBox[2], state->scissorBox[3]);
+  glColorMask(state->colorMask[0], state->colorMask[1],
+              state->colorMask[2], state->colorMask[3]);
+  glClearColor(state->clearColor[0], state->clearColor[1],
+               state->clearColor[2], state->clearColor[3]);
+  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
+  glDrawBuffer(state->drawBuffer);
+  glReadBuffer(state->readBuffer);
+  glViewport(state->viewport[0], state->viewport[1],
+             state->viewport[2], state->viewport[3]);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, state->textureBinding);
+  glActiveTexture(state->activeTexture);
+}
+
 static VGboolean shTryDirectImageSubData(SHImage *image,
                                          const void *data,
                                          VGint dataStride,
@@ -1153,6 +1225,92 @@ static VGboolean shBindTextureReadFramebuffer(GLuint texture,
 
   status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
   return status == GL_FRAMEBUFFER_COMPLETE ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shCanDirectClearImage(const SHImage *image)
+{
+  GLenum internalFormat;
+
+  if (!image ||
+      image->texture == 0 ||
+      image->texwidth != image->width ||
+      image->texheight != image->height ||
+      !shFormatHasDirectGLStorage(&image->fd))
+    return VG_FALSE;
+
+  internalFormat = image->fd.glintformat;
+  if (internalFormat == GL_RGBA)
+    return image->fd.amask != 0 ? VG_TRUE : VG_FALSE;
+  return (internalFormat == GL_RGB ||
+          internalFormat == GL_R8) ? VG_TRUE : VG_FALSE;
+}
+
+static void shGetImageClearColor(const SHImage *image,
+                                 const SHColor *clear,
+                                 GLfloat out[4])
+{
+  if ((image->fd.vgformat & 0x1F) == VG_A_8) {
+    out[0] = clear->a;
+    out[1] = 0.0f;
+    out[2] = 0.0f;
+    out[3] = 0.0f;
+  } else {
+    out[0] = clear->r;
+    out[1] = clear->g;
+    out[2] = clear->b;
+    out[3] = clear->a;
+  }
+}
+
+static VGboolean shTryDirectClearImage(SHImage *image,
+                                       const SHColor *clear,
+                                       VGint x,
+                                       VGint y,
+                                       VGint width,
+                                       VGint height)
+{
+  SHint copyDx = x;
+  SHint copyDy = y;
+  SHint copySx = 0;
+  SHint copySy = 0;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  GLuint framebuffer = 0;
+  GLfloat clearColor[4];
+  VGboolean success = VG_FALSE;
+  SHImageTargetGLState state;
+
+  if (!shClipImageTransfer(image->width, image->height,
+                           width, height,
+                           &copyDx, &copyDy,
+                           &copySx, &copySy,
+                           &copyWidth, &copyHeight))
+    return VG_TRUE;
+
+  if (!shCanDirectClearImage(image))
+    return VG_FALSE;
+
+  shSaveImageTargetGLState(&state);
+  if (!shBindTextureReadFramebuffer(image->texture, &framebuffer))
+    goto cleanup;
+
+  shGetImageClearColor(image, clear, clearColor);
+  glViewport(0, 0, image->width, image->height);
+  glEnable(GL_SCISSOR_TEST);
+  glScissor(copyDx, copyDy, copyWidth, copyHeight);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glClearColor(clearColor[0], clearColor[1],
+               clearColor[2], clearColor[3]);
+  glClear(GL_COLOR_BUFFER_BIT);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+
+cleanup:
+  shRestoreImageTargetGLState(&state);
+  if (framebuffer != 0)
+    glDeleteFramebuffers(1, &framebuffer);
+  if (success)
+    image->gpuDataDirty = VG_TRUE;
+  return success;
 }
 
 static VGboolean shTryDirectGetImageSubData(SHImage *image,
@@ -1347,6 +1505,84 @@ static VGboolean shTryDirectGetPixels(VGContext *context,
 
   image->gpuDataDirty = VG_TRUE;
   return VG_TRUE;
+}
+
+static VGboolean shCanDirectCopyImagePair(const SHImage *dst,
+                                          const SHImage *src)
+{
+  GLenum internalFormat;
+
+  if (!dst ||
+      !src ||
+      dst == src ||
+      dst->texture == 0 ||
+      src->texture == 0 ||
+      dst->texwidth != dst->width ||
+      dst->texheight != dst->height ||
+      src->texwidth != src->width ||
+      src->texheight != src->height ||
+      dst->fd.vgformat != src->fd.vgformat ||
+      !shFormatHasDirectGLStorage(&dst->fd))
+    return VG_FALSE;
+
+  internalFormat = dst->fd.glintformat;
+  if (internalFormat == GL_RGBA)
+    return dst->fd.amask != 0 ? VG_TRUE : VG_FALSE;
+  return (internalFormat == GL_RGB ||
+          internalFormat == GL_R8) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shTryDirectCopyImage(SHImage *dst,
+                                      VGint dx,
+                                      VGint dy,
+                                      SHImage *src,
+                                      VGint sx,
+                                      VGint sy,
+                                      VGint width,
+                                      VGint height)
+{
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  GLuint framebuffer = 0;
+  VGboolean success = VG_FALSE;
+  SHImageReadGLState readState;
+  SHImageUploadGLState textureState;
+
+  if (!shClipImageTransfer(dst->width, dst->height,
+                           src->width, src->height,
+                           &copyDx, &copyDy,
+                           &copySx, &copySy,
+                           &copyWidth, &copyHeight))
+    return VG_TRUE;
+
+  if (!shCanDirectCopyImagePair(dst, src))
+    return VG_FALSE;
+
+  shSaveImageReadGLState(&readState);
+  shSaveImageUploadGLState(&textureState);
+  if (!shBindTextureReadFramebuffer(src->texture, &framebuffer))
+    goto cleanup;
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, dst->texture);
+  glCopyTexSubImage2D(GL_TEXTURE_2D, 0,
+                      copyDx, copyDy,
+                      copySx, copySy,
+                      copyWidth, copyHeight);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+
+cleanup:
+  shRestoreImageUploadGLState(&textureState);
+  shRestoreImageReadGLState(&readState);
+  if (framebuffer != 0)
+    glDeleteFramebuffers(1, &framebuffer);
+  if (success)
+    dst->gpuDataDirty = VG_TRUE;
+  return success;
 }
 
 typedef struct
@@ -1848,6 +2084,9 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  if (shTryDirectCopyImage(d, dx, dy, s, sx, sy, width, height))
+    VG_RETURN(VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
                    !shImageSyncDataFromTexture(d),

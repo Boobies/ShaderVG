@@ -500,12 +500,16 @@ static int run_pixel_transfer_test(unsigned char *pixels,
 {
   VGImage image = VG_INVALID_HANDLE;
   VGImage dstImage = VG_INVALID_HANDLE;
+  VGImage alphaImage = VG_INVALID_HANDLE;
   VGubyte writeData[8 * 5 * 4];
   VGubyte imageData[5 * 5 * 4];
   VGubyte stridedImageData[7 * 4 * 4];
   VGubyte imageRead[6 * 6 * 4];
+  VGubyte alphaRead[4 * 4];
   VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGfloat blue[] = {0.0f, 0.0f, 1.0f, 1.0f};
+  VGfloat transparent[] = {0.0f, 0.0f, 0.0f, 0.0f};
+  VGfloat opaqueAlpha[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGint scissor[] = {12, 9, 2, 2};
   int i;
   int result = 0;
@@ -514,6 +518,7 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   memset(imageData, 0, sizeof(imageData));
   memset(stridedImageData, 0, sizeof(stridedImageData));
   memset(imageRead, 0, sizeof(imageRead));
+  memset(alphaRead, 0, sizeof(alphaRead));
 
   for (i=0; i<6 * 5; ++i) {
     VGint x = i % 6;
@@ -532,7 +537,10 @@ static int run_pixel_transfer_test(unsigned char *pixels,
 
   image = vgCreateImage(VG_lABGR_8888, 5, 5, VG_IMAGE_QUALITY_BETTER);
   dstImage = vgCreateImage(VG_lABGR_8888, 5, 5, VG_IMAGE_QUALITY_BETTER);
-  if (image == VG_INVALID_HANDLE || dstImage == VG_INVALID_HANDLE) {
+  alphaImage = vgCreateImage(VG_A_8, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  if (image == VG_INVALID_HANDLE ||
+      dstImage == VG_INVALID_HANDLE ||
+      alphaImage == VG_INVALID_HANDLE) {
     result = fail_vg("OpenVG pixel transfer test setup failed");
     goto cleanup;
   }
@@ -564,6 +572,19 @@ static int run_pixel_transfer_test(unsigned char *pixels,
                     VG_lABGR_8888, 2, 2, 1, 1);
   if (expect_rgba_at(imageRead, 6 * 4, 0, 0, 0, 0, 255, 255,
                      "OpenVG vgClearImage did not update the requested image rectangle")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, transparent);
+  vgClearImage(alphaImage, 0, 0, 4, 4);
+  vgSetfv(VG_CLEAR_COLOR, 4, opaqueAlpha);
+  vgClearImage(alphaImage, 1, 1, 2, 2);
+  vgGetImageSubData(alphaImage, alphaRead, 4, VG_A_8, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG alpha image clear/readback failed") ||
+      alphaRead[1 * 4 + 1] < 250 ||
+      alphaRead[0] > 5) {
+    fprintf(stderr, "OpenVG vgClearImage did not clear VG_A_8 alpha coverage\n");
     result = 1;
     goto cleanup;
   }
@@ -612,6 +633,23 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   if (expect_no_vg_error("OpenVG vgSetPixels failed") ||
       expect_rgba_at(pixels, width * 4, 20, 8, 0, 0, 255, 255,
                      "OpenVG vgSetPixels did not copy image pixels to the surface")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  for (i=0; i<5 * 5; ++i)
+    set_rgba(imageData, 5 * 4, i % 5, i / 5, 255, 0, 0, 255);
+  set_rgba(imageData, 5 * 4, 1, 1, 0, 255, 0, 255);
+  set_rgba(imageData, 5 * 4, 2, 1, 255, 255, 0, 255);
+  vgImageSubData(image, imageData, 5 * 4, VG_lABGR_8888, 0, 0, 5, 5);
+  vgCopyImage(image, 2, 1, image, 1, 1, 2, 1, VG_FALSE);
+  vgGetImageSubData(image, imageRead, 5 * 4,
+                    VG_lABGR_8888, 0, 0, 5, 5);
+  if (expect_no_vg_error("OpenVG overlapping image copy failed") ||
+      expect_rgba_at(imageRead, 5 * 4, 2, 1, 0, 255, 0, 255,
+                     "OpenVG overlapping vgCopyImage did not preserve the first source pixel") ||
+      expect_rgba_at(imageRead, 5 * 4, 3, 1, 255, 255, 0, 255,
+                     "OpenVG overlapping vgCopyImage did not use a temporary source copy")) {
     result = 1;
     goto cleanup;
   }
@@ -671,6 +709,8 @@ cleanup:
   vgSeti(VG_SCISSORING, VG_FALSE);
   vgSeti(VG_MASKING, VG_FALSE);
   vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  if (alphaImage != VG_INVALID_HANDLE)
+    vgDestroyImage(alphaImage);
   if (dstImage != VG_INVALID_HANDLE)
     vgDestroyImage(dstImage);
   if (image != VG_INVALID_HANDLE)
