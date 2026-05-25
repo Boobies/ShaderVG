@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <EGL/egl.h>
 #include <vg/openvg.h>
@@ -363,6 +364,208 @@ static int expect_pixel(const unsigned char *pixels,
 
   fprintf(stderr, "%s\n", message);
   return 1;
+}
+
+static void set_rgba(VGubyte *data, VGint stride,
+                     VGint x, VGint y,
+                     VGubyte r, VGubyte g, VGubyte b, VGubyte a)
+{
+  size_t offset = (size_t)y * (size_t)stride + (size_t)x * 4u;
+
+  data[offset + 0] = r;
+  data[offset + 1] = g;
+  data[offset + 2] = b;
+  data[offset + 3] = a;
+}
+
+static int channel_near(VGubyte actual, VGubyte expected)
+{
+  int delta = (int)actual - (int)expected;
+
+  if (delta < 0)
+    delta = -delta;
+  return delta <= 8;
+}
+
+static int expect_rgba_at(const VGubyte *data,
+                          VGint stride,
+                          VGint x,
+                          VGint y,
+                          VGubyte r,
+                          VGubyte g,
+                          VGubyte b,
+                          VGubyte a,
+                          const char *message)
+{
+  size_t offset = (size_t)y * (size_t)stride + (size_t)x * 4u;
+
+  if (channel_near(data[offset + 0], r) &&
+      channel_near(data[offset + 1], g) &&
+      channel_near(data[offset + 2], b) &&
+      channel_near(data[offset + 3], a))
+    return 0;
+
+  fprintf(stderr, "%s (got %u,%u,%u,%u)\n",
+          message,
+          data[offset + 0], data[offset + 1],
+          data[offset + 2], data[offset + 3]);
+  return 1;
+}
+
+static int run_pixel_transfer_test(unsigned char *pixels,
+                                   EGLint width,
+                                   EGLint height)
+{
+  VGImage image = VG_INVALID_HANDLE;
+  VGImage dstImage = VG_INVALID_HANDLE;
+  VGubyte writeData[8 * 5 * 4];
+  VGubyte imageData[5 * 5 * 4];
+  VGubyte imageRead[6 * 6 * 4];
+  VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat blue[] = {0.0f, 0.0f, 1.0f, 1.0f};
+  VGint scissor[] = {12, 9, 2, 2};
+  int i;
+  int result = 0;
+
+  memset(writeData, 0, sizeof(writeData));
+  memset(imageData, 0, sizeof(imageData));
+  memset(imageRead, 0, sizeof(imageRead));
+
+  for (i=0; i<6 * 5; ++i) {
+    VGint x = i % 6;
+    VGint y = i / 6;
+    set_rgba(writeData, 8 * 4, x, y, 255, 0, 0, 255);
+  }
+  set_rgba(writeData, 8 * 4, 2, 2, 0, 255, 0, 255);
+  set_rgba(writeData, 8 * 4, 3, 2, 255, 255, 0, 255);
+  set_rgba(writeData, 8 * 4, 0, 0, 0, 255, 0, 255);
+
+  for (i=0; i<5 * 5; ++i)
+    set_rgba(imageData, 5 * 4, i % 5, i / 5, 255, 0, 0, 255);
+
+  image = vgCreateImage(VG_lABGR_8888, 5, 5, VG_IMAGE_QUALITY_BETTER);
+  dstImage = vgCreateImage(VG_lABGR_8888, 5, 5, VG_IMAGE_QUALITY_BETTER);
+  if (image == VG_INVALID_HANDLE || dstImage == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG pixel transfer test setup failed");
+    goto cleanup;
+  }
+
+  vgImageSubData(image, imageData, 5 * 4, VG_lABGR_8888, 0, 0, 5, 5);
+  vgSetfv(VG_CLEAR_COLOR, 4, blue);
+  vgClearImage(image, 2, 1, 2, 3);
+  vgGetImageSubData(image, imageRead, 6 * 4,
+                    VG_lABGR_8888, 2, 4, 1, 1);
+  if (expect_no_vg_error("OpenVG image clear/readback setup failed") ||
+      expect_rgba_at(imageRead, 6 * 4, 0, 0, 255, 0, 0, 255,
+                     "OpenVG vgGetImageSubData used the wrong source y coordinate")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgGetImageSubData(image, imageRead, 6 * 4,
+                    VG_lABGR_8888, 2, 2, 1, 1);
+  if (expect_rgba_at(imageRead, 6 * 4, 0, 0, 0, 0, 255, 255,
+                     "OpenVG vgClearImage did not update the requested image rectangle")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  memset(imageRead, 0, sizeof(imageRead));
+  vgImageSubData(dstImage, imageRead, 5 * 4, VG_lABGR_8888, 0, 0, 5, 5);
+  vgCopyImage(dstImage, 1, 1, image, 2, 1, 2, 2, VG_FALSE);
+  vgGetImageSubData(dstImage, imageRead, 5 * 4,
+                    VG_lABGR_8888, 0, 0, 5, 5);
+  if (expect_rgba_at(imageRead, 5 * 4, 1, 1, 0, 0, 255, 255,
+                     "OpenVG vgCopyImage did not copy the source subrectangle")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgMask(VG_INVALID_HANDLE, VG_CLEAR_MASK, 0, 0, width, height);
+  vgSeti(VG_MASKING, VG_TRUE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_DST_IN);
+  vgSetiv(VG_SCISSOR_RECTS, 4, scissor);
+  vgSeti(VG_SCISSORING, VG_TRUE);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_IMAGE_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgTranslate(100.0f, 100.0f);
+  vgWritePixels(writeData, 8 * 4, VG_lABGR_8888, 10, 8, 6, 5);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG vgWritePixels state isolation failed") ||
+      expect_rgba_at(pixels, width * 4, 12, 10, 0, 255, 0, 255,
+                     "OpenVG vgWritePixels did not write inside the scissor") ||
+      expect_rgba_at(pixels, width * 4, 10, 8, 0, 0, 0, 255,
+                     "OpenVG vgWritePixels ignored scissoring")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSetPixels(20, 8, image, 2, 1, 2, 2);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG vgSetPixels failed") ||
+      expect_rgba_at(pixels, width * 4, 20, 8, 0, 0, 255, 255,
+                     "OpenVG vgSetPixels did not copy image pixels to the surface")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgWritePixels(writeData, 8 * 4, VG_lABGR_8888, 30, 8, 6, 5);
+  memset(imageRead, 0, sizeof(imageRead));
+  vgImageSubData(dstImage, imageRead, 5 * 4, VG_lABGR_8888, 0, 0, 5, 5);
+  vgGetPixels(dstImage, 1, 2, 32, 10, 2, 2);
+  vgGetImageSubData(dstImage, imageRead, 5 * 4,
+                    VG_lABGR_8888, 0, 0, 5, 5);
+  if (expect_no_vg_error("OpenVG vgGetPixels failed") ||
+      expect_rgba_at(imageRead, 5 * 4, 1, 2, 0, 255, 0, 255,
+                     "OpenVG vgGetPixels did not copy surface pixels into the image")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  memset(imageRead, 0, sizeof(imageRead));
+  vgReadPixels(imageRead, 5 * 4, VG_sRGBA_8888, 32, 10, 1, 1);
+  if (expect_no_vg_error("OpenVG vgReadPixels failed") ||
+      expect_rgba_at(imageRead, 5 * 4, 0, 0, 0, 255, 0, 255,
+                     "OpenVG vgReadPixels did not copy the requested surface pixel")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgWritePixels(writeData, 8 * 4, VG_lABGR_8888, 30, 20, 6, 5);
+  vgCopyPixels(32, 21, 30, 20, 4, 3);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG vgCopyPixels failed") ||
+      expect_rgba_at(pixels, width * 4, 32, 21, 0, 255, 0, 255,
+                     "OpenVG vgCopyPixels did not copy the source rectangle") ||
+      expect_rgba_at(pixels, width * 4, 35, 23, 255, 255, 0, 255,
+                     "OpenVG vgCopyPixels did not preserve overlapping source pixels")) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  if (dstImage != VG_INVALID_HANDLE)
+    vgDestroyImage(dstImage);
+  if (image != VG_INVALID_HANDLE)
+    vgDestroyImage(image);
+  return result;
 }
 
 static int run_shared_context_test(EGLDisplay display,
@@ -1544,6 +1747,8 @@ int main(void)
       if (result == 0)
         result = run_client_buffer_pbuffer_test(display, config, surface,
                                                 context, pixels, width, height);
+      if (result == 0)
+        result = run_pixel_transfer_test(pixels, width, height);
       if (result == 0)
         result = run_mask_test(pixels, width, height);
       if (result == 0)

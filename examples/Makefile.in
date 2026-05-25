@@ -92,10 +92,11 @@ build_triplet = @build@
 host_triplet = @host@
 noinst_PROGRAMS = test_pbuffer$(EXEEXT) test_egl_gl_vg$(EXEEXT) \
 	test_egl_features$(EXEEXT) test_masking$(EXEEXT) \
-	$(am__EXEEXT_1) $(am__EXEEXT_2) $(am__EXEEXT_3) \
-	$(am__EXEEXT_4) $(am__EXEEXT_5) $(am__EXEEXT_6) \
-	$(am__EXEEXT_7) $(am__EXEEXT_8) $(am__EXEEXT_9) \
-	$(am__EXEEXT_10) $(am__EXEEXT_11) $(am__EXEEXT_12)
+	test_pixels$(EXEEXT) $(am__EXEEXT_1) $(am__EXEEXT_2) \
+	$(am__EXEEXT_3) $(am__EXEEXT_4) $(am__EXEEXT_5) \
+	$(am__EXEEXT_6) $(am__EXEEXT_7) $(am__EXEEXT_8) \
+	$(am__EXEEXT_9) $(am__EXEEXT_10) $(am__EXEEXT_11) \
+	$(am__EXEEXT_12)
 @BUILD_VGU_TRUE@am__append_1 = test_vgu
 @BUILD_WARP_TRUE@am__append_2 = test_warp
 @BUILD_DASH_TRUE@am__append_3 = test_dash
@@ -140,7 +141,7 @@ test_blend_DEPENDENCIES = $(am__DEPENDENCIES_1)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
-am__v_lt_1 =
+am__v_lt_1 = 
 test_blend_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_blend_CFLAGS) \
 	$(CFLAGS) $(test_blend_LDFLAGS) $(LDFLAGS) -o $@
@@ -223,16 +224,24 @@ test_pbuffer_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_pbuffer_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_pbuffer_CFLAGS) \
 	$(CFLAGS) $(test_pbuffer_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_11 = test_radial-test.$(OBJEXT)
-am_test_radial_OBJECTS = $(am__objects_11) \
+am__objects_11 = test_pixels-test.$(OBJEXT)
+am_test_pixels_OBJECTS = $(am__objects_11) \
+	test_pixels-test_pixels.$(OBJEXT)
+test_pixels_OBJECTS = $(am_test_pixels_OBJECTS)
+test_pixels_DEPENDENCIES = $(am__DEPENDENCIES_1)
+test_pixels_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_pixels_CFLAGS) \
+	$(CFLAGS) $(test_pixels_LDFLAGS) $(LDFLAGS) -o $@
+am__objects_12 = test_radial-test.$(OBJEXT)
+am_test_radial_OBJECTS = $(am__objects_12) \
 	test_radial-test_radial.$(OBJEXT)
 test_radial_OBJECTS = $(am_test_radial_OBJECTS)
 test_radial_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_radial_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_radial_CFLAGS) \
 	$(CFLAGS) $(test_radial_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_12 = test_tiger-test.$(OBJEXT)
-am_test_tiger_OBJECTS = $(am__objects_12) \
+am__objects_13 = test_tiger-test.$(OBJEXT)
+am_test_tiger_OBJECTS = $(am__objects_13) \
 	test_tiger-test_tiger.$(OBJEXT) \
 	test_tiger-test_tiger_paths.$(OBJEXT)
 test_tiger_OBJECTS = $(am_test_tiger_OBJECTS)
@@ -240,8 +249,8 @@ test_tiger_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_tiger_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_tiger_CFLAGS) \
 	$(CFLAGS) $(test_tiger_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_13 = test_tiger_shader-test.$(OBJEXT)
-am_test_tiger_shader_OBJECTS = $(am__objects_13) \
+am__objects_14 = test_tiger_shader-test.$(OBJEXT)
+am_test_tiger_shader_OBJECTS = $(am__objects_14) \
 	test_tiger_shader-test_tiger_shader.$(OBJEXT) \
 	test_tiger_shader-test_tiger_paths.$(OBJEXT)
 test_tiger_shader_OBJECTS = $(am_test_tiger_shader_OBJECTS)
@@ -250,15 +259,15 @@ test_tiger_shader_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(test_tiger_shader_CFLAGS) $(CFLAGS) \
 	$(test_tiger_shader_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_14 = test_vgu-test.$(OBJEXT)
-am_test_vgu_OBJECTS = $(am__objects_14) test_vgu-test_vgu.$(OBJEXT)
+am__objects_15 = test_vgu-test.$(OBJEXT)
+am_test_vgu_OBJECTS = $(am__objects_15) test_vgu-test_vgu.$(OBJEXT)
 test_vgu_OBJECTS = $(am_test_vgu_OBJECTS)
 test_vgu_DEPENDENCIES = $(am__DEPENDENCIES_1)
 test_vgu_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(test_vgu_CFLAGS) \
 	$(CFLAGS) $(test_vgu_LDFLAGS) $(LDFLAGS) -o $@
-am__objects_15 = test_warp-test.$(OBJEXT)
-am_test_warp_OBJECTS = $(am__objects_15) test_warp-test_warp.$(OBJEXT) \
+am__objects_16 = test_warp-test.$(OBJEXT)
+am_test_warp_OBJECTS = $(am__objects_16) test_warp-test_warp.$(OBJEXT) \
 	test_warp-test_tiger_paths.$(OBJEXT)
 test_warp_OBJECTS = $(am_test_warp_OBJECTS)
 test_warp_DEPENDENCIES = $(am__DEPENDENCIES_1)
@@ -272,11 +281,11 @@ am__v_P_1 = :
 AM_V_GEN = $(am__v_GEN_@AM_V@)
 am__v_GEN_ = $(am__v_GEN_@AM_DEFAULT_V@)
 am__v_GEN_0 = @echo "  GEN     " $@;
-am__v_GEN_1 =
+am__v_GEN_1 = 
 AM_V_at = $(am__v_at_@AM_V@)
 am__v_at_ = $(am__v_at_@AM_DEFAULT_V@)
 am__v_at_0 = @
-am__v_at_1 =
+am__v_at_1 = 
 DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir)
 depcomp = $(SHELL) $(top_srcdir)/depcomp
 am__maybe_remake_depfiles = depfiles
@@ -301,6 +310,8 @@ am__depfiles_remade = ./$(DEPDIR)/test_blend-test.Po \
 	./$(DEPDIR)/test_pattern-test.Po \
 	./$(DEPDIR)/test_pattern-test_pattern.Po \
 	./$(DEPDIR)/test_pbuffer-test_pbuffer.Po \
+	./$(DEPDIR)/test_pixels-test.Po \
+	./$(DEPDIR)/test_pixels-test_pixels.Po \
 	./$(DEPDIR)/test_radial-test.Po \
 	./$(DEPDIR)/test_radial-test_radial.Po \
 	./$(DEPDIR)/test_tiger-test.Po \
@@ -323,7 +334,7 @@ LTCOMPILE = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 AM_V_CC = $(am__v_CC_@AM_V@)
 am__v_CC_ = $(am__v_CC_@AM_DEFAULT_V@)
 am__v_CC_0 = @echo "  CC      " $@;
-am__v_CC_1 =
+am__v_CC_1 = 
 CCLD = $(CC)
 LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
@@ -331,23 +342,25 @@ LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 AM_V_CCLD = $(am__v_CCLD_@AM_V@)
 am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
 am__v_CCLD_0 = @echo "  CCLD    " $@;
-am__v_CCLD_1 =
+am__v_CCLD_1 = 
 SOURCES = $(test_blend_SOURCES) $(test_dash_SOURCES) \
 	$(test_egl_features_SOURCES) $(test_egl_gl_vg_SOURCES) \
 	$(test_font_SOURCES) $(test_image_SOURCES) \
 	$(test_interpolate_SOURCES) $(test_linear_SOURCES) \
 	$(test_masking_SOURCES) $(test_pattern_SOURCES) \
-	$(test_pbuffer_SOURCES) $(test_radial_SOURCES) \
-	$(test_tiger_SOURCES) $(test_tiger_shader_SOURCES) \
-	$(test_vgu_SOURCES) $(test_warp_SOURCES)
+	$(test_pbuffer_SOURCES) $(test_pixels_SOURCES) \
+	$(test_radial_SOURCES) $(test_tiger_SOURCES) \
+	$(test_tiger_shader_SOURCES) $(test_vgu_SOURCES) \
+	$(test_warp_SOURCES)
 DIST_SOURCES = $(test_blend_SOURCES) $(test_dash_SOURCES) \
 	$(test_egl_features_SOURCES) $(test_egl_gl_vg_SOURCES) \
 	$(test_font_SOURCES) $(test_image_SOURCES) \
 	$(test_interpolate_SOURCES) $(test_linear_SOURCES) \
 	$(test_masking_SOURCES) $(test_pattern_SOURCES) \
-	$(test_pbuffer_SOURCES) $(test_radial_SOURCES) \
-	$(test_tiger_SOURCES) $(test_tiger_shader_SOURCES) \
-	$(test_vgu_SOURCES) $(test_warp_SOURCES)
+	$(test_pbuffer_SOURCES) $(test_pixels_SOURCES) \
+	$(test_radial_SOURCES) $(test_tiger_SOURCES) \
+	$(test_tiger_shader_SOURCES) $(test_vgu_SOURCES) \
+	$(test_warp_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -563,6 +576,9 @@ test_egl_features_SOURCES = \
 test_masking_SOURCES = \
 	${EXAMPLE_SRCS} test_masking.c
 
+test_pixels_SOURCES = \
+	${EXAMPLE_SRCS} test_pixels.c
+
 test_font_SOURCES = \
 	${EXAMPLE_SRCS} test_font.c
 
@@ -611,6 +627,9 @@ test_egl_features_LDFLAGS = ${EXAMPLE_LF}
 test_masking_CFLAGS = ${EXAMPLE_CF}
 test_masking_LDADD = ${EXAMPLE_LA}
 test_masking_LDFLAGS = ${EXAMPLE_LF}
+test_pixels_CFLAGS = ${EXAMPLE_CF}
+test_pixels_LDADD = ${EXAMPLE_LA}
+test_pixels_LDFLAGS = ${EXAMPLE_LF}
 test_font_CFLAGS = ${EXAMPLE_CF}
 test_font_LDADD = ${EXAMPLE_LA}
 test_font_LDFLAGS = ${EXAMPLE_LF}
@@ -652,67 +671,71 @@ clean-noinstPROGRAMS:
 	$(am__rm_f) $(noinst_PROGRAMS)
 	test -z "$(EXEEXT)" || $(am__rm_f) $(noinst_PROGRAMS:$(EXEEXT)=)
 
-test_blend$(EXEEXT): $(test_blend_OBJECTS) $(test_blend_DEPENDENCIES) $(EXTRA_test_blend_DEPENDENCIES)
+test_blend$(EXEEXT): $(test_blend_OBJECTS) $(test_blend_DEPENDENCIES) $(EXTRA_test_blend_DEPENDENCIES) 
 	@rm -f test_blend$(EXEEXT)
 	$(AM_V_CCLD)$(test_blend_LINK) $(test_blend_OBJECTS) $(test_blend_LDADD) $(LIBS)
 
-test_dash$(EXEEXT): $(test_dash_OBJECTS) $(test_dash_DEPENDENCIES) $(EXTRA_test_dash_DEPENDENCIES)
+test_dash$(EXEEXT): $(test_dash_OBJECTS) $(test_dash_DEPENDENCIES) $(EXTRA_test_dash_DEPENDENCIES) 
 	@rm -f test_dash$(EXEEXT)
 	$(AM_V_CCLD)$(test_dash_LINK) $(test_dash_OBJECTS) $(test_dash_LDADD) $(LIBS)
 
-test_egl_features$(EXEEXT): $(test_egl_features_OBJECTS) $(test_egl_features_DEPENDENCIES) $(EXTRA_test_egl_features_DEPENDENCIES)
+test_egl_features$(EXEEXT): $(test_egl_features_OBJECTS) $(test_egl_features_DEPENDENCIES) $(EXTRA_test_egl_features_DEPENDENCIES) 
 	@rm -f test_egl_features$(EXEEXT)
 	$(AM_V_CCLD)$(test_egl_features_LINK) $(test_egl_features_OBJECTS) $(test_egl_features_LDADD) $(LIBS)
 
-test_egl_gl_vg$(EXEEXT): $(test_egl_gl_vg_OBJECTS) $(test_egl_gl_vg_DEPENDENCIES) $(EXTRA_test_egl_gl_vg_DEPENDENCIES)
+test_egl_gl_vg$(EXEEXT): $(test_egl_gl_vg_OBJECTS) $(test_egl_gl_vg_DEPENDENCIES) $(EXTRA_test_egl_gl_vg_DEPENDENCIES) 
 	@rm -f test_egl_gl_vg$(EXEEXT)
 	$(AM_V_CCLD)$(test_egl_gl_vg_LINK) $(test_egl_gl_vg_OBJECTS) $(test_egl_gl_vg_LDADD) $(LIBS)
 
-test_font$(EXEEXT): $(test_font_OBJECTS) $(test_font_DEPENDENCIES) $(EXTRA_test_font_DEPENDENCIES)
+test_font$(EXEEXT): $(test_font_OBJECTS) $(test_font_DEPENDENCIES) $(EXTRA_test_font_DEPENDENCIES) 
 	@rm -f test_font$(EXEEXT)
 	$(AM_V_CCLD)$(test_font_LINK) $(test_font_OBJECTS) $(test_font_LDADD) $(LIBS)
 
-test_image$(EXEEXT): $(test_image_OBJECTS) $(test_image_DEPENDENCIES) $(EXTRA_test_image_DEPENDENCIES)
+test_image$(EXEEXT): $(test_image_OBJECTS) $(test_image_DEPENDENCIES) $(EXTRA_test_image_DEPENDENCIES) 
 	@rm -f test_image$(EXEEXT)
 	$(AM_V_CCLD)$(test_image_LINK) $(test_image_OBJECTS) $(test_image_LDADD) $(LIBS)
 
-test_interpolate$(EXEEXT): $(test_interpolate_OBJECTS) $(test_interpolate_DEPENDENCIES) $(EXTRA_test_interpolate_DEPENDENCIES)
+test_interpolate$(EXEEXT): $(test_interpolate_OBJECTS) $(test_interpolate_DEPENDENCIES) $(EXTRA_test_interpolate_DEPENDENCIES) 
 	@rm -f test_interpolate$(EXEEXT)
 	$(AM_V_CCLD)$(test_interpolate_LINK) $(test_interpolate_OBJECTS) $(test_interpolate_LDADD) $(LIBS)
 
-test_linear$(EXEEXT): $(test_linear_OBJECTS) $(test_linear_DEPENDENCIES) $(EXTRA_test_linear_DEPENDENCIES)
+test_linear$(EXEEXT): $(test_linear_OBJECTS) $(test_linear_DEPENDENCIES) $(EXTRA_test_linear_DEPENDENCIES) 
 	@rm -f test_linear$(EXEEXT)
 	$(AM_V_CCLD)$(test_linear_LINK) $(test_linear_OBJECTS) $(test_linear_LDADD) $(LIBS)
 
-test_masking$(EXEEXT): $(test_masking_OBJECTS) $(test_masking_DEPENDENCIES) $(EXTRA_test_masking_DEPENDENCIES)
+test_masking$(EXEEXT): $(test_masking_OBJECTS) $(test_masking_DEPENDENCIES) $(EXTRA_test_masking_DEPENDENCIES) 
 	@rm -f test_masking$(EXEEXT)
 	$(AM_V_CCLD)$(test_masking_LINK) $(test_masking_OBJECTS) $(test_masking_LDADD) $(LIBS)
 
-test_pattern$(EXEEXT): $(test_pattern_OBJECTS) $(test_pattern_DEPENDENCIES) $(EXTRA_test_pattern_DEPENDENCIES)
+test_pattern$(EXEEXT): $(test_pattern_OBJECTS) $(test_pattern_DEPENDENCIES) $(EXTRA_test_pattern_DEPENDENCIES) 
 	@rm -f test_pattern$(EXEEXT)
 	$(AM_V_CCLD)$(test_pattern_LINK) $(test_pattern_OBJECTS) $(test_pattern_LDADD) $(LIBS)
 
-test_pbuffer$(EXEEXT): $(test_pbuffer_OBJECTS) $(test_pbuffer_DEPENDENCIES) $(EXTRA_test_pbuffer_DEPENDENCIES)
+test_pbuffer$(EXEEXT): $(test_pbuffer_OBJECTS) $(test_pbuffer_DEPENDENCIES) $(EXTRA_test_pbuffer_DEPENDENCIES) 
 	@rm -f test_pbuffer$(EXEEXT)
 	$(AM_V_CCLD)$(test_pbuffer_LINK) $(test_pbuffer_OBJECTS) $(test_pbuffer_LDADD) $(LIBS)
 
-test_radial$(EXEEXT): $(test_radial_OBJECTS) $(test_radial_DEPENDENCIES) $(EXTRA_test_radial_DEPENDENCIES)
+test_pixels$(EXEEXT): $(test_pixels_OBJECTS) $(test_pixels_DEPENDENCIES) $(EXTRA_test_pixels_DEPENDENCIES) 
+	@rm -f test_pixels$(EXEEXT)
+	$(AM_V_CCLD)$(test_pixels_LINK) $(test_pixels_OBJECTS) $(test_pixels_LDADD) $(LIBS)
+
+test_radial$(EXEEXT): $(test_radial_OBJECTS) $(test_radial_DEPENDENCIES) $(EXTRA_test_radial_DEPENDENCIES) 
 	@rm -f test_radial$(EXEEXT)
 	$(AM_V_CCLD)$(test_radial_LINK) $(test_radial_OBJECTS) $(test_radial_LDADD) $(LIBS)
 
-test_tiger$(EXEEXT): $(test_tiger_OBJECTS) $(test_tiger_DEPENDENCIES) $(EXTRA_test_tiger_DEPENDENCIES)
+test_tiger$(EXEEXT): $(test_tiger_OBJECTS) $(test_tiger_DEPENDENCIES) $(EXTRA_test_tiger_DEPENDENCIES) 
 	@rm -f test_tiger$(EXEEXT)
 	$(AM_V_CCLD)$(test_tiger_LINK) $(test_tiger_OBJECTS) $(test_tiger_LDADD) $(LIBS)
 
-test_tiger_shader$(EXEEXT): $(test_tiger_shader_OBJECTS) $(test_tiger_shader_DEPENDENCIES) $(EXTRA_test_tiger_shader_DEPENDENCIES)
+test_tiger_shader$(EXEEXT): $(test_tiger_shader_OBJECTS) $(test_tiger_shader_DEPENDENCIES) $(EXTRA_test_tiger_shader_DEPENDENCIES) 
 	@rm -f test_tiger_shader$(EXEEXT)
 	$(AM_V_CCLD)$(test_tiger_shader_LINK) $(test_tiger_shader_OBJECTS) $(test_tiger_shader_LDADD) $(LIBS)
 
-test_vgu$(EXEEXT): $(test_vgu_OBJECTS) $(test_vgu_DEPENDENCIES) $(EXTRA_test_vgu_DEPENDENCIES)
+test_vgu$(EXEEXT): $(test_vgu_OBJECTS) $(test_vgu_DEPENDENCIES) $(EXTRA_test_vgu_DEPENDENCIES) 
 	@rm -f test_vgu$(EXEEXT)
 	$(AM_V_CCLD)$(test_vgu_LINK) $(test_vgu_OBJECTS) $(test_vgu_LDADD) $(LIBS)
 
-test_warp$(EXEEXT): $(test_warp_OBJECTS) $(test_warp_DEPENDENCIES) $(EXTRA_test_warp_DEPENDENCIES)
+test_warp$(EXEEXT): $(test_warp_OBJECTS) $(test_warp_DEPENDENCIES) $(EXTRA_test_warp_DEPENDENCIES) 
 	@rm -f test_warp$(EXEEXT)
 	$(AM_V_CCLD)$(test_warp_LINK) $(test_warp_OBJECTS) $(test_warp_LDADD) $(LIBS)
 
@@ -743,6 +766,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_pattern-test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_pattern-test_pattern.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_pbuffer-test_pbuffer.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_pixels-test.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_pixels-test_pixels.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_radial-test.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_radial-test_radial.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/test_tiger-test.Po@am__quote@ # am--include-marker
@@ -1078,6 +1103,34 @@ test_pbuffer-test_pbuffer.obj: test_pbuffer.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pbuffer_CFLAGS) $(CFLAGS) -c -o test_pbuffer-test_pbuffer.obj `if test -f 'test_pbuffer.c'; then $(CYGPATH_W) 'test_pbuffer.c'; else $(CYGPATH_W) '$(srcdir)/test_pbuffer.c'; fi`
 
+test_pixels-test.o: test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pixels_CFLAGS) $(CFLAGS) -MT test_pixels-test.o -MD -MP -MF $(DEPDIR)/test_pixels-test.Tpo -c -o test_pixels-test.o `test -f 'test.c' || echo '$(srcdir)/'`test.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_pixels-test.Tpo $(DEPDIR)/test_pixels-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test.c' object='test_pixels-test.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pixels_CFLAGS) $(CFLAGS) -c -o test_pixels-test.o `test -f 'test.c' || echo '$(srcdir)/'`test.c
+
+test_pixels-test.obj: test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pixels_CFLAGS) $(CFLAGS) -MT test_pixels-test.obj -MD -MP -MF $(DEPDIR)/test_pixels-test.Tpo -c -o test_pixels-test.obj `if test -f 'test.c'; then $(CYGPATH_W) 'test.c'; else $(CYGPATH_W) '$(srcdir)/test.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_pixels-test.Tpo $(DEPDIR)/test_pixels-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test.c' object='test_pixels-test.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pixels_CFLAGS) $(CFLAGS) -c -o test_pixels-test.obj `if test -f 'test.c'; then $(CYGPATH_W) 'test.c'; else $(CYGPATH_W) '$(srcdir)/test.c'; fi`
+
+test_pixels-test_pixels.o: test_pixels.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pixels_CFLAGS) $(CFLAGS) -MT test_pixels-test_pixels.o -MD -MP -MF $(DEPDIR)/test_pixels-test_pixels.Tpo -c -o test_pixels-test_pixels.o `test -f 'test_pixels.c' || echo '$(srcdir)/'`test_pixels.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_pixels-test_pixels.Tpo $(DEPDIR)/test_pixels-test_pixels.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test_pixels.c' object='test_pixels-test_pixels.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pixels_CFLAGS) $(CFLAGS) -c -o test_pixels-test_pixels.o `test -f 'test_pixels.c' || echo '$(srcdir)/'`test_pixels.c
+
+test_pixels-test_pixels.obj: test_pixels.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pixels_CFLAGS) $(CFLAGS) -MT test_pixels-test_pixels.obj -MD -MP -MF $(DEPDIR)/test_pixels-test_pixels.Tpo -c -o test_pixels-test_pixels.obj `if test -f 'test_pixels.c'; then $(CYGPATH_W) 'test_pixels.c'; else $(CYGPATH_W) '$(srcdir)/test_pixels.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_pixels-test_pixels.Tpo $(DEPDIR)/test_pixels-test_pixels.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='test_pixels.c' object='test_pixels-test_pixels.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_pixels_CFLAGS) $(CFLAGS) -c -o test_pixels-test_pixels.obj `if test -f 'test_pixels.c'; then $(CYGPATH_W) 'test_pixels.c'; else $(CYGPATH_W) '$(srcdir)/test_pixels.c'; fi`
+
 test_radial-test.o: test.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(test_radial_CFLAGS) $(CFLAGS) -MT test_radial-test.o -MD -MP -MF $(DEPDIR)/test_radial-test.Tpo -c -o test_radial-test.o `test -f 'test.c' || echo '$(srcdir)/'`test.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/test_radial-test.Tpo $(DEPDIR)/test_radial-test.Po
@@ -1412,6 +1465,8 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/test_pattern-test.Po
 	-rm -f ./$(DEPDIR)/test_pattern-test_pattern.Po
 	-rm -f ./$(DEPDIR)/test_pbuffer-test_pbuffer.Po
+	-rm -f ./$(DEPDIR)/test_pixels-test.Po
+	-rm -f ./$(DEPDIR)/test_pixels-test_pixels.Po
 	-rm -f ./$(DEPDIR)/test_radial-test.Po
 	-rm -f ./$(DEPDIR)/test_radial-test_radial.Po
 	-rm -f ./$(DEPDIR)/test_tiger-test.Po
@@ -1491,6 +1546,8 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/test_pattern-test.Po
 	-rm -f ./$(DEPDIR)/test_pattern-test_pattern.Po
 	-rm -f ./$(DEPDIR)/test_pbuffer-test_pbuffer.Po
+	-rm -f ./$(DEPDIR)/test_pixels-test.Po
+	-rm -f ./$(DEPDIR)/test_pixels-test_pixels.Po
 	-rm -f ./$(DEPDIR)/test_radial-test.Po
 	-rm -f ./$(DEPDIR)/test_radial-test_radial.Po
 	-rm -f ./$(DEPDIR)/test_tiger-test.Po

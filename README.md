@@ -101,6 +101,10 @@ $ ./test_tiger_shader
   Demonstrates image masks, mask layers, `vgRenderToMask`, and saving/restoring
   surface mask state with `vgCopyMask`.
 
+#### test_pixels
+  Exercises image upload, image clear/copy/readback, drawing-surface pixel
+  writes, reads, and overlapping surface copies using synthetic pixel data.
+
 #### test_font
   Draws vector glyphs through the OpenVG font API, including glyphs whose
   source paths have already been destroyed by the application.
@@ -201,11 +205,11 @@ vgChildImage            | NOT implemented
 vgGetParent             | NOT implemented          
 vgCopyImage             | FULLY implemented        
 vgDrawImage             | PARTIALLY implemented    
-vgSetPixels             | NOT implemented yet      
-vgWritePixels           | NOT implemented yet      
+vgSetPixels             | FULLY implemented        
+vgWritePixels           | FULLY implemented        
 vgGetPixels             | FULLY implemented        
 vgReadPixels            | FULLY implemented        
-vgCopyPixels            | NOT implemented yet      
+vgCopyPixels            | FULLY implemented        
 
 #### Text
 API                     | status

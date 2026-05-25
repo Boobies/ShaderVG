@@ -899,6 +899,377 @@ void shCopyPixels(SHuint8 *dst, VGImageFormat dstFormat, SHint dstStride,
   }
 }
 
+typedef struct
+{
+  GLint viewport[4];
+  GLint program;
+  GLint vertexArray;
+  GLint arrayBuffer;
+  GLint activeTexture;
+  GLint textureBinding;
+  GLint scissorBox[4];
+  GLint blendSrcRgb;
+  GLint blendDstRgb;
+  GLint blendSrcAlpha;
+  GLint blendDstAlpha;
+  GLint blendEquationRgb;
+  GLint blendEquationAlpha;
+  GLboolean blend;
+  GLboolean scissor;
+  GLboolean depth;
+  GLboolean stencil;
+  GLboolean colorMask[4];
+} SHSurfacePixelGLState;
+
+static void shSaveSurfacePixelGLState(SHSurfacePixelGLState *state)
+{
+  glGetIntegerv(GL_VIEWPORT, state->viewport);
+  glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
+  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
+  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
+  glGetIntegerv(GL_BLEND_SRC_RGB, &state->blendSrcRgb);
+  glGetIntegerv(GL_BLEND_DST_RGB, &state->blendDstRgb);
+  glGetIntegerv(GL_BLEND_SRC_ALPHA, &state->blendSrcAlpha);
+  glGetIntegerv(GL_BLEND_DST_ALPHA, &state->blendDstAlpha);
+  glGetIntegerv(GL_BLEND_EQUATION_RGB, &state->blendEquationRgb);
+  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &state->blendEquationAlpha);
+  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
+  state->blend = glIsEnabled(GL_BLEND);
+  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
+  state->depth = glIsEnabled(GL_DEPTH_TEST);
+  state->stencil = glIsEnabled(GL_STENCIL_TEST);
+  glActiveTexture(GL_TEXTURE0);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->textureBinding);
+}
+
+static void shRestoreSurfacePixelGLState(const SHSurfacePixelGLState *state)
+{
+  if (state->blend) glEnable(GL_BLEND);
+  else glDisable(GL_BLEND);
+
+  if (state->scissor) glEnable(GL_SCISSOR_TEST);
+  else glDisable(GL_SCISSOR_TEST);
+
+  if (state->depth) glEnable(GL_DEPTH_TEST);
+  else glDisable(GL_DEPTH_TEST);
+
+  if (state->stencil) glEnable(GL_STENCIL_TEST);
+  else glDisable(GL_STENCIL_TEST);
+
+  glBlendFuncSeparate(state->blendSrcRgb, state->blendDstRgb,
+                      state->blendSrcAlpha, state->blendDstAlpha);
+  glBlendEquationSeparate(state->blendEquationRgb,
+                          state->blendEquationAlpha);
+  glScissor(state->scissorBox[0], state->scissorBox[1],
+            state->scissorBox[2], state->scissorBox[3]);
+  glColorMask(state->colorMask[0], state->colorMask[1],
+              state->colorMask[2], state->colorMask[3]);
+  glUseProgram(state->program);
+  if (state->vertexArray == 0 ||
+      glIsVertexArray((GLuint)state->vertexArray))
+    glBindVertexArray((GLuint)state->vertexArray);
+  else
+    glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
+  glViewport(state->viewport[0], state->viewport[1],
+             state->viewport[2], state->viewport[3]);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, state->textureBinding);
+  glActiveTexture(state->activeTexture);
+}
+
+static VGboolean shClipSurfaceTransfer(VGContext *context,
+                                       SHint *dx, SHint *dy,
+                                       SHint *sx, SHint *sy,
+                                       SHint *width, SHint *height,
+                                       SHint sourceWidth,
+                                       SHint sourceHeight)
+{
+  SHint delta;
+
+  if (!context ||
+      context->surfaceWidth <= 0 ||
+      context->surfaceHeight <= 0 ||
+      sourceWidth <= 0 ||
+      sourceHeight <= 0 ||
+      *width <= 0 ||
+      *height <= 0)
+    return VG_FALSE;
+
+  if (*sx < 0) {
+    delta = -*sx;
+    *sx = 0;
+    *dx += delta;
+    *width -= delta;
+  }
+  if (*sy < 0) {
+    delta = -*sy;
+    *sy = 0;
+    *dy += delta;
+    *height -= delta;
+  }
+  if (*sx >= sourceWidth || *sy >= sourceHeight)
+    return VG_FALSE;
+  if (*sx + *width > sourceWidth)
+    *width = sourceWidth - *sx;
+  if (*sy + *height > sourceHeight)
+    *height = sourceHeight - *sy;
+
+  if (*dx < 0) {
+    delta = -*dx;
+    *dx = 0;
+    *sx += delta;
+    *width -= delta;
+  }
+  if (*dy < 0) {
+    delta = -*dy;
+    *dy = 0;
+    *sy += delta;
+    *height -= delta;
+  }
+  if (*dx >= context->surfaceWidth || *dy >= context->surfaceHeight)
+    return VG_FALSE;
+  if (*dx + *width > context->surfaceWidth)
+    *width = context->surfaceWidth - *dx;
+  if (*dy + *height > context->surfaceHeight)
+    *height = context->surfaceHeight - *dy;
+
+  return (*width > 0 && *height > 0) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shClipSurfaceRead(VGContext *context,
+                                   SHint *dx, SHint *dy,
+                                   SHint *sx, SHint *sy,
+                                   SHint *width, SHint *height,
+                                   SHint destWidth,
+                                   SHint destHeight)
+{
+  SHint delta;
+
+  if (!context ||
+      context->surfaceWidth <= 0 ||
+      context->surfaceHeight <= 0 ||
+      destWidth <= 0 ||
+      destHeight <= 0 ||
+      *width <= 0 ||
+      *height <= 0)
+    return VG_FALSE;
+
+  if (*sx < 0) {
+    delta = -*sx;
+    *sx = 0;
+    *dx += delta;
+    *width -= delta;
+  }
+  if (*sy < 0) {
+    delta = -*sy;
+    *sy = 0;
+    *dy += delta;
+    *height -= delta;
+  }
+  if (*sx >= context->surfaceWidth || *sy >= context->surfaceHeight)
+    return VG_FALSE;
+  if (*sx + *width > context->surfaceWidth)
+    *width = context->surfaceWidth - *sx;
+  if (*sy + *height > context->surfaceHeight)
+    *height = context->surfaceHeight - *sy;
+
+  if (*dx < 0) {
+    delta = -*dx;
+    *dx = 0;
+    *sx += delta;
+    *width -= delta;
+  }
+  if (*dy < 0) {
+    delta = -*dy;
+    *dy = 0;
+    *sy += delta;
+    *height -= delta;
+  }
+  if (*dx >= destWidth || *dy >= destHeight)
+    return VG_FALSE;
+  if (*dx + *width > destWidth)
+    *width = destWidth - *dx;
+  if (*dy + *height > destHeight)
+    *height = destHeight - *dy;
+
+  return (*width > 0 && *height > 0) ? VG_TRUE : VG_FALSE;
+}
+
+static void shCopyPixelsToRGBA(SHuint8 *dst,
+                               const SHuint8 *src,
+                               VGImageFormat srcFormat,
+                               SHint srcStride,
+                               SHint srcWidth,
+                               SHint sx, SHint sy,
+                               SHint width, SHint height)
+{
+  SHImageFormatDesc sfd;
+  SHint x, y;
+
+  shSetupImageFormat(srcFormat, &sfd);
+  if (srcStride == -1)
+    srcStride = srcWidth * sfd.bytes;
+
+  for (y=0; y<height; ++y) {
+    const SHuint8 *srcRow = src + (sy + y) * srcStride + sx * sfd.bytes;
+    SHuint8 *dstRow = dst + y * width * 4;
+    for (x=0; x<width; ++x) {
+      SHColor color;
+      shLoadColor(&color, srcRow + x * sfd.bytes, &sfd);
+      dstRow[x * 4 + 0] = (SHuint8)(color.r * 255.0f + 0.5f);
+      dstRow[x * 4 + 1] = (SHuint8)(color.g * 255.0f + 0.5f);
+      dstRow[x * 4 + 2] = (SHuint8)(color.b * 255.0f + 0.5f);
+      dstRow[x * 4 + 3] = (SHuint8)(color.a * 255.0f + 0.5f);
+    }
+  }
+}
+
+static void shCopyRGBAToPixels(SHuint8 *dst,
+                               VGImageFormat dstFormat,
+                               SHint dstStride,
+                               SHint dstWidth,
+                               SHint dx, SHint dy,
+                               const SHuint8 *src,
+                               SHint width, SHint height)
+{
+  SHImageFormatDesc dfd;
+  SHint x, y;
+
+  shSetupImageFormat(dstFormat, &dfd);
+  if (dstStride == -1)
+    dstStride = dstWidth * dfd.bytes;
+
+  for (y=0; y<height; ++y) {
+    SHuint8 *dstRow = dst + (dy + y) * dstStride + dx * dfd.bytes;
+    const SHuint8 *srcRow = src + y * width * 4;
+    for (x=0; x<width; ++x) {
+      SHColor color;
+      color.r = (SHfloat)srcRow[x * 4 + 0] / 255.0f;
+      color.g = (SHfloat)srcRow[x * 4 + 1] / 255.0f;
+      color.b = (SHfloat)srcRow[x * 4 + 2] / 255.0f;
+      color.a = (SHfloat)srcRow[x * 4 + 3] / 255.0f;
+      shStoreColor(&color, dstRow + x * dfd.bytes, &dfd);
+    }
+  }
+}
+
+static VGboolean shDrawSurfacePixels(VGContext *context,
+                                     const SHuint8 *pixels,
+                                     SHint dx, SHint dy,
+                                     SHint width, SHint height)
+{
+  typedef struct
+  {
+    GLfloat x;
+    GLfloat y;
+    GLfloat u;
+    GLfloat v;
+  } SHSurfacePixelVertex;
+
+  static const GLfloat identity4[16] = {
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f
+  };
+
+  GLuint texture = 0;
+  SHSurfacePixelVertex vertices[4];
+  SHVertexState vertexState;
+  SHSurfacePixelGLState glState;
+  SHint i;
+
+  if (!context || !pixels || width <= 0 || height <= 0)
+    return VG_TRUE;
+
+  vertices[0].x = (GLfloat)dx;
+  vertices[0].y = (GLfloat)dy;
+  vertices[0].u = 0.0f;
+  vertices[0].v = 0.0f;
+  vertices[1].x = (GLfloat)(dx + width);
+  vertices[1].y = (GLfloat)dy;
+  vertices[1].u = 1.0f;
+  vertices[1].v = 0.0f;
+  vertices[2].x = (GLfloat)dx;
+  vertices[2].y = (GLfloat)(dy + height);
+  vertices[2].u = 0.0f;
+  vertices[2].v = 1.0f;
+  vertices[3].x = (GLfloat)(dx + width);
+  vertices[3].y = (GLfloat)(dy + height);
+  vertices[3].u = 1.0f;
+  vertices[3].v = 1.0f;
+
+  shSaveSurfacePixelGLState(&glState);
+
+  glGenTextures(1, &texture);
+  if (texture == 0) {
+    shRestoreSurfacePixelGLState(&glState);
+    return VG_FALSE;
+  }
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+               width, height, 0,
+               GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+
+  glViewport(0, 0, context->surfaceWidth, context->surfaceHeight);
+  glDisable(GL_BLEND);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_STENCIL_TEST);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glUseProgram(context->progDraw);
+  glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, identity4);
+  glUniform1i(context->locationDraw.drawMode, 1);
+  glUniform1i(context->locationDraw.imageMode, VG_DRAW_IMAGE_NORMAL);
+  glUniform1i(context->locationDraw.imageSampler, 0);
+  glUniform1i(context->locationDraw.maskEnabled, 0);
+  shLoadOneColorMesh(&context->defaultPaint);
+
+  shBindContextVertexState(context, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(context->locationDraw.pos);
+  glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE,
+                        sizeof(SHSurfacePixelVertex), (const GLvoid*)0);
+  glEnableVertexAttribArray(context->locationDraw.textureUV);
+  glVertexAttribPointer(context->locationDraw.textureUV, 2, GL_FLOAT, GL_FALSE,
+                        sizeof(SHSurfacePixelVertex),
+                        (const GLvoid*)(2 * sizeof(GLfloat)));
+
+  if (context->scissoring == VG_TRUE) {
+    glEnable(GL_SCISSOR_TEST);
+    for (i=0; i<context->scissor.size; ++i) {
+      SHRectangle *rect = &context->scissor.items[i];
+      if (rect->w <= 0.0f || rect->h <= 0.0f)
+        continue;
+      glScissor((GLint)rect->x, (GLint)rect->y,
+                (GLint)rect->w, (GLint)rect->h);
+      glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+  } else {
+    glDisable(GL_SCISSOR_TEST);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  }
+
+  glDisableVertexAttribArray(context->locationDraw.textureUV);
+  glDisableVertexAttribArray(context->locationDraw.pos);
+  shRestoreVertexState(&vertexState);
+  glDeleteTextures(1, &texture);
+  shRestoreSurfacePixelGLState(&glState);
+  GL_CHECK_ERROR;
+
+  shMarkRenderTargetDirty(context);
+  return VG_TRUE;
+}
+
 /*---------------------------------------------------------
  * Copies a rectangle area of pixels of size (width,height)
  * from given data buffer to image surface at destination
@@ -988,7 +1359,7 @@ VG_API_CALL void vgGetImageSubData(VGImage image,
   shCopyPixels(data, dataFormat, dataStride,
                i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
                width, height, i->width, i->height,
-               0,0,x,x,width,height);
+               0, 0, x, y, width, height);
   
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -1035,13 +1406,13 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
   pixels = (SHuint8*)malloc(width * height * s->fd.bytes);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
 
-  shCopyPixels(pixels, s->fd.vgformat, s->texwidth * s->fd.bytes,
+  shCopyPixels(pixels, s->fd.vgformat, width * s->fd.bytes,
                s->data, s->fd.vgformat, s->texwidth * s->fd.bytes,
                width, height, s->width, s->height,
                0, 0, sx, sy, width, height);
 
   shCopyPixels(d->data, d->fd.vgformat, d->texwidth * d->fd.bytes,
-               pixels, s->fd.vgformat, s->texwidth * s->fd.bytes,
+               pixels, s->fd.vgformat, width * s->fd.bytes,
                d->width, d->height, width, height,
                dx, dy, 0, 0, width, height);
   
@@ -1063,7 +1434,12 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
 {
   SHImage *i;
   SHuint8 *pixels;
-  SHImageFormatDesc winfd;
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   
@@ -1076,34 +1452,30 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
+  if (!shClipSurfaceTransfer(context,
+                             &copyDx, &copyDy,
+                             &copySx, &copySy,
+                             &copyWidth, &copyHeight,
+                             i->width, i->height))
+    VG_RETURN(VG_NO_RETVAL);
+
   VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
-  /* Setup window image format descriptor */
-  /* TODO: this actually depends on the target framebuffer type
-     if we really want the copy to be optimized */
-  shSetupImageFormat(VG_sRGBA_8888, &winfd);
-
-  /* OpenGL doesn't allow us to use random stride. We have to
-     manually copy the image data and write from a copy with
-     normal row length (without power-of-two roundup pixels) */
-
-  pixels = (SHuint8*)malloc(width * height * winfd.bytes);
+  pixels = (SHuint8*)malloc(copyWidth * copyHeight * 4);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
 
-  shCopyPixels(pixels, winfd.vgformat, -1,
-               i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
-               width, height, i->width, i->height,
-               0,0,sx,sy, width, height);
+  shCopyPixelsToRGBA(pixels,
+                     i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
+                     i->width, copySx, copySy,
+                     copyWidth, copyHeight);
 
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-#if 0
-  glRasterPos2i(dx, dy);
-  glDrawPixels(width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-  glRasterPos2i(0,0);
-#else
-  /* Not supported yet */
-#endif
+  if (!shDrawSurfacePixels(context, pixels,
+                           copyDx, copyDy,
+                           copyWidth, copyHeight)) {
+    free(pixels);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
   
   free(pixels);
 
@@ -1122,7 +1494,12 @@ VG_API_CALL void vgWritePixels(const void * data, VGint dataStride,
                                VGint width, VGint height)
 {
   SHuint8 *pixels;
-  SHImageFormatDesc winfd;
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = 0;
+  SHint copySy = 0;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
 
@@ -1141,31 +1518,27 @@ VG_API_CALL void vgWritePixels(const void * data, VGint dataStride,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0 || !data,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  /* Setup window image format descriptor */
-  /* TODO: this actually depends on the target framebuffer type
-     if we really want the copy to be optimized */
-  shSetupImageFormat(VG_sRGBA_8888, &winfd);
+  if (!shClipSurfaceTransfer(context,
+                             &copyDx, &copyDy,
+                             &copySx, &copySy,
+                             &copyWidth, &copyHeight,
+                             width, height))
+    VG_RETURN(VG_NO_RETVAL);
 
-  /* OpenGL doesn't allow us to use random stride. We have to
-     manually copy the image data and write from a copy with
-     normal row length */
-
-  pixels = (SHuint8*)malloc(width * height * winfd.bytes);
+  pixels = (SHuint8*)malloc(copyWidth * copyHeight * 4);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
   
-  shCopyPixels(pixels, winfd.vgformat, -1,
-               (SHuint8*)data, dataFormat, dataStride,
-               width, height, width, height,
-               0,0,0,0, width, height);
-  
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-#if 0
-  glRasterPos2i(dx, dy);
-  glDrawPixels(width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-  glRasterPos2i(0,0);
-#else
-  /* Not supported yet */
-#endif
+  shCopyPixelsToRGBA(pixels,
+                     (const SHuint8*)data, dataFormat, dataStride,
+                     width, copySx, copySy,
+                     copyWidth, copyHeight);
+
+  if (!shDrawSurfacePixels(context, pixels,
+                           copyDx, copyDy,
+                           copyWidth, copyHeight)) {
+    free(pixels);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
   
   free(pixels);
 
@@ -1184,7 +1557,12 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
 {
   SHImage *i;
   SHuint8 *pixels;
-  SHImageFormatDesc winfd;
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!shIsValidImage(context, dst),
@@ -1196,28 +1574,26 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
+  if (!shClipSurfaceRead(context,
+                         &copyDx, &copyDy,
+                         &copySx, &copySy,
+                         &copyWidth, &copyHeight,
+                         i->width, i->height))
+    VG_RETURN(VG_NO_RETVAL);
+
   VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
-  /* Setup window image format descriptor */
-  /* TODO: this actually depends on the target framebuffer type
-     if we really want the copy to be optimized */
-  shSetupImageFormat(VG_sRGBA_8888, &winfd);
-  
-  /* OpenGL doesn't allow us to read to random destination
-     coordinates nor using random stride. We have to
-     read first and then manually copy to the image data */
-
-  pixels = (SHuint8*)malloc(width * height * winfd.bytes);
+  pixels = (SHuint8*)malloc(copyWidth * copyHeight * 4);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
 
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glReadPixels(sx, sy, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  glReadPixels(copySx, copySy, copyWidth, copyHeight,
+               GL_RGBA, GL_UNSIGNED_BYTE, pixels);
   
-  shCopyPixels(i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
-               pixels, winfd.vgformat, -1,
-               i->width, i->height, width, height,
-               dx, dy, 0, 0, width, height);
+  shCopyRGBAToPixels(i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
+                     i->width, copyDx, copyDy,
+                     pixels, copyWidth, copyHeight);
 
   free(pixels);
   
@@ -1238,6 +1614,12 @@ VG_API_CALL void vgReadPixels(void * data, VGint dataStride,
 {
   SHuint8 *pixels;
   SHImageFormatDesc winfd;
+  SHint copyDx = 0;
+  SHint copyDy = 0;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   /* Reject invalid formats */
@@ -1255,24 +1637,29 @@ VG_API_CALL void vgReadPixels(void * data, VGint dataStride,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0 || !data,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
+  if (!shClipSurfaceRead(context,
+                         &copyDx, &copyDy,
+                         &copySx, &copySy,
+                         &copyWidth, &copyHeight,
+                         width, height))
+    VG_RETURN(VG_NO_RETVAL);
+
   /* Setup window image format descriptor */
   /* TODO: this actually depends on the target framebuffer type
      if we really want the copy to be optimized */
   shSetupImageFormat(VG_sRGBA_8888, &winfd);
 
-  /* OpenGL doesn't allow random data stride. We have to
-     read first and then manually copy to the output buffer */
-
-  pixels = (SHuint8*)malloc(width * height * winfd.bytes);
+  pixels = (SHuint8*)malloc(copyWidth * copyHeight * winfd.bytes);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
 
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glReadPixels(sx, sy, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  glReadPixels(copySx, copySy, copyWidth, copyHeight,
+               GL_RGBA, GL_UNSIGNED_BYTE, pixels);
   
   shCopyPixels(data, dataFormat, dataStride,
                pixels, winfd.vgformat, -1,
-               width, height, width, height,
-               0, 0, 0, 0, width, height);
+               width, height, copyWidth, copyHeight,
+               copyDx, copyDy, 0, 0, copyWidth, copyHeight);
 
   free(pixels);
   
@@ -1289,20 +1676,41 @@ VG_API_CALL void vgCopyPixels(VGint dx, VGint dy,
                               VGint sx, VGint sy,
                               VGint width, VGint height)
 {
+  SHuint8 *pixels;
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  
+
+  if (!shClipSurfaceTransfer(context,
+                             &copyDx, &copyDy,
+                             &copySx, &copySy,
+                             &copyWidth, &copyHeight,
+                             context->surfaceWidth,
+                             context->surfaceHeight))
+    VG_RETURN(VG_NO_RETVAL);
+
+  pixels = (SHuint8*)malloc(copyWidth * copyHeight * 4);
+  SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
+
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-#if 0
-  glRasterPos2i(dx, dy);
-  glCopyPixels(sx, sy, width, height, GL_COLOR);
-  glRasterPos2i(0, 0);
-#else
-  /* Not supported yet */
-#endif
+  glReadPixels(copySx, copySy, copyWidth, copyHeight,
+               GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+
+  if (!shDrawSurfacePixels(context, pixels,
+                           copyDx, copyDy,
+                           copyWidth, copyHeight)) {
+    free(pixels);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+
+  free(pixels);
   
   VG_RETURN(VG_NO_RETVAL);
 }
