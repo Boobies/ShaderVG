@@ -86,3 +86,4 @@ void testRun();
 
 VGint testWidth();
 VGint testHeight();
+EGLConfig testEGLConfig();

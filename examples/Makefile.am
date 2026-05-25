@@ -14,7 +14,7 @@ EXAMPLE_LF = @CONFIG_LDFLAGS@ -L${prefix}/lib
 
 EXTRA_DIST = *.jpg *.png
 
-noinst_PROGRAMS = test_pbuffer test_egl_gl_vg test_masking
+noinst_PROGRAMS = test_pbuffer test_egl_gl_vg test_egl_features test_masking
 
 if BUILD_VGU
 noinst_PROGRAMS += test_vgu
@@ -103,6 +103,9 @@ test_pbuffer_SOURCES =\
 test_egl_gl_vg_SOURCES =\
 	${EXAMPLE_SRCS} test_egl_gl_vg.c
 
+test_egl_features_SOURCES =\
+	${EXAMPLE_SRCS} test_egl_features.c
+
 test_masking_SOURCES =\
 	${EXAMPLE_SRCS} test_masking.c
 
@@ -160,6 +163,10 @@ test_pbuffer_LDFLAGS = ${EXAMPLE_LF}
 test_egl_gl_vg_CFLAGS = ${EXAMPLE_CF}
 test_egl_gl_vg_LDADD = ${EXAMPLE_LA}
 test_egl_gl_vg_LDFLAGS = ${EXAMPLE_LF}
+
+test_egl_features_CFLAGS = ${EXAMPLE_CF}
+test_egl_features_LDADD = ${EXAMPLE_LA}
+test_egl_features_LDFLAGS = ${EXAMPLE_LF}
 
 test_masking_CFLAGS = ${EXAMPLE_CF}
 test_masking_LDADD = ${EXAMPLE_LA}

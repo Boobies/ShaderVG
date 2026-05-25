@@ -31,6 +31,7 @@ static Atom xWmDelete = 0;
 static EGLDisplay eglDisplay = EGL_NO_DISPLAY;
 static EGLSurface eglSurface = EGL_NO_SURFACE;
 static EGLContext eglContext = EGL_NO_CONTEXT;
+static EGLConfig eglConfig = NULL;
 static int testRunning = 1;
 static int testRedisplay = 1;
 
@@ -347,12 +348,16 @@ VGint testHeight()
   return testH;
 }
 
+EGLConfig testEGLConfig()
+{
+  return eglConfig;
+}
+
 void testInit(int argc, char **argv,
               int w, int h, const char *title)
 {
   int i;
   EGLint major, minor, numConfigs, nativeVisual;
-  EGLConfig config;
   EGLint configAttribs[] = {
     EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
     EGL_RENDERABLE_TYPE, EGL_OPENVG_BIT,
@@ -382,7 +387,7 @@ void testInit(int argc, char **argv,
   if (eglDisplay == EGL_NO_DISPLAY ||
       !eglInitialize(eglDisplay, &major, &minor) ||
       !eglBindAPI(EGL_OPENVG_API) ||
-      !eglChooseConfig(eglDisplay, configAttribs, &config, 1, &numConfigs) ||
+      !eglChooseConfig(eglDisplay, configAttribs, &eglConfig, 1, &numConfigs) ||
       numConfigs < 1) {
     fprintf(stderr, "Failed to initialize EGL/OpenVG path (EGL error 0x%x)\n", eglGetError());
     exit(EXIT_FAILURE);
@@ -397,7 +402,7 @@ void testInit(int argc, char **argv,
     int visualCount = 0;
     int screen = DefaultScreen(xDisplay);
 
-    eglGetConfigAttrib(eglDisplay, config, EGL_NATIVE_VISUAL_ID, &nativeVisual);
+    eglGetConfigAttrib(eglDisplay, eglConfig, EGL_NATIVE_VISUAL_ID, &nativeVisual);
     if (nativeVisual) {
       templateInfo.visualid = nativeVisual;
       visualInfo = XGetVisualInfo(xDisplay, VisualIDMask, &templateInfo, &visualCount);
@@ -432,14 +437,14 @@ void testInit(int argc, char **argv,
     XFree(visualInfo);
   }
 
-  eglSurface = eglCreateWindowSurface(eglDisplay, config,
+  eglSurface = eglCreateWindowSurface(eglDisplay, eglConfig,
                                       (EGLNativeWindowType)xWindow, NULL);
 #else
   fprintf(stderr, "This example harness currently requires X11 EGL\n");
   exit(EXIT_FAILURE);
 #endif
 
-  eglContext = eglCreateContext(eglDisplay, config, EGL_NO_CONTEXT, NULL);
+  eglContext = eglCreateContext(eglDisplay, eglConfig, EGL_NO_CONTEXT, NULL);
   if (eglSurface == EGL_NO_SURFACE ||
       eglContext == EGL_NO_CONTEXT ||
       !eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {

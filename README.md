@@ -93,6 +93,10 @@ $ ./test_tiger_shader
 #### test_egl_gl_vg
   Interleaves raw OpenGL and OpenVG drawing on the same EGL surface.
 
+#### test_egl_features
+  Demonstrates OpenVG EGL context sharing, rendering into a `VGImage` pbuffer,
+  and using the shared surface mask from a second OpenVG context.
+
 #### test_masking
   Demonstrates image masks, mask layers, `vgRenderToMask`, and saving/restoring
   surface mask state with `vgCopyMask`.
