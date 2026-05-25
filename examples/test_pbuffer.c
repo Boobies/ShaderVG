@@ -502,6 +502,7 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   VGImage dstImage = VG_INVALID_HANDLE;
   VGubyte writeData[8 * 5 * 4];
   VGubyte imageData[5 * 5 * 4];
+  VGubyte stridedImageData[7 * 4 * 4];
   VGubyte imageRead[6 * 6 * 4];
   VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGfloat blue[] = {0.0f, 0.0f, 1.0f, 1.0f};
@@ -511,6 +512,7 @@ static int run_pixel_transfer_test(unsigned char *pixels,
 
   memset(writeData, 0, sizeof(writeData));
   memset(imageData, 0, sizeof(imageData));
+  memset(stridedImageData, 0, sizeof(stridedImageData));
   memset(imageRead, 0, sizeof(imageRead));
 
   for (i=0; i<6 * 5; ++i) {
@@ -524,6 +526,9 @@ static int run_pixel_transfer_test(unsigned char *pixels,
 
   for (i=0; i<5 * 5; ++i)
     set_rgba(imageData, 5 * 4, i % 5, i / 5, 255, 0, 0, 255);
+  for (i=0; i<4 * 4; ++i)
+    set_rgba(stridedImageData, 7 * 4, i % 4, i / 4, 255, 0, 0, 255);
+  set_rgba(stridedImageData, 7 * 4, 1, 1, 0, 255, 0, 255);
 
   image = vgCreateImage(VG_lABGR_8888, 5, 5, VG_IMAGE_QUALITY_BETTER);
   dstImage = vgCreateImage(VG_lABGR_8888, 5, 5, VG_IMAGE_QUALITY_BETTER);
@@ -533,6 +538,17 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   }
 
   vgImageSubData(image, imageData, 5 * 4, VG_lABGR_8888, 0, 0, 5, 5);
+  vgImageSubData(image, stridedImageData, 7 * 4,
+                 VG_lABGR_8888, -1, -1, 4, 4);
+  vgGetImageSubData(image, imageRead, 6 * 4,
+                    VG_lABGR_8888, 0, 0, 1, 1);
+  if (expect_no_vg_error("OpenVG strided image upload/readback failed") ||
+      expect_rgba_at(imageRead, 6 * 4, 0, 0, 0, 255, 0, 255,
+                     "OpenVG vgImageSubData did not honor clipped strided source pixels")) {
+    result = 1;
+    goto cleanup;
+  }
+
   vgSetfv(VG_CLEAR_COLOR, 4, blue);
   vgClearImage(image, 2, 1, 2, 3);
   vgGetImageSubData(image, imageRead, 6 * 4,
@@ -615,8 +631,20 @@ static int run_pixel_transfer_test(unsigned char *pixels,
     goto cleanup;
   }
 
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSetPixels(40, 8, dstImage, 1, 2, 1, 1);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG dirty image sync after vgGetPixels failed") ||
+      expect_rgba_at(pixels, width * 4, 40, 8, 0, 255, 0, 255,
+                     "OpenVG did not sync a GPU-updated image before vgSetPixels")) {
+    result = 1;
+    goto cleanup;
+  }
+
   memset(imageRead, 0, sizeof(imageRead));
-  vgReadPixels(imageRead, 5 * 4, VG_sRGBA_8888, 32, 10, 1, 1);
+  vgReadPixels(imageRead, 5 * 4, VG_sRGBA_8888, 40, 8, 1, 1);
   if (expect_no_vg_error("OpenVG vgReadPixels failed") ||
       expect_rgba_at(imageRead, 5 * 4, 0, 0, 0, 255, 0, 255,
                      "OpenVG vgReadPixels did not copy the requested surface pixel")) {

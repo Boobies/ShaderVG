@@ -895,8 +895,458 @@ void shCopyPixels(SHuint8 *dst, VGImageFormat dstFormat, SHint dstStride,
         shLoadColor(&c, SD, &sfd);
         shStoreColor(&c, DD, &dfd);
         SD += sfd.bytes; DD += dfd.bytes;
-      }}
+    }}
   }
+}
+
+static VGboolean shClipSurfaceRead(VGContext *context,
+                                   SHint *dx, SHint *dy,
+                                   SHint *sx, SHint *sy,
+                                   SHint *width, SHint *height,
+                                   SHint destWidth,
+                                   SHint destHeight);
+
+static VGboolean shClipImageTransfer(SHint targetWidth,
+                                     SHint targetHeight,
+                                     SHint sourceWidth,
+                                     SHint sourceHeight,
+                                     SHint *dx,
+                                     SHint *dy,
+                                     SHint *sx,
+                                     SHint *sy,
+                                     SHint *width,
+                                     SHint *height)
+{
+  SHint delta;
+
+  if (targetWidth <= 0 ||
+      targetHeight <= 0 ||
+      sourceWidth <= 0 ||
+      sourceHeight <= 0 ||
+      *width <= 0 ||
+      *height <= 0)
+    return VG_FALSE;
+
+  if (*sx < 0) {
+    delta = -*sx;
+    *sx = 0;
+    *dx += delta;
+    *width -= delta;
+  }
+  if (*sy < 0) {
+    delta = -*sy;
+    *sy = 0;
+    *dy += delta;
+    *height -= delta;
+  }
+  if (*sx >= sourceWidth || *sy >= sourceHeight)
+    return VG_FALSE;
+  if (*sx + *width > sourceWidth)
+    *width = sourceWidth - *sx;
+  if (*sy + *height > sourceHeight)
+    *height = sourceHeight - *sy;
+
+  if (*dx < 0) {
+    delta = -*dx;
+    *dx = 0;
+    *sx += delta;
+    *width -= delta;
+  }
+  if (*dy < 0) {
+    delta = -*dy;
+    *dy = 0;
+    *sy += delta;
+    *height -= delta;
+  }
+  if (*dx >= targetWidth || *dy >= targetHeight)
+    return VG_FALSE;
+  if (*dx + *width > targetWidth)
+    *width = targetWidth - *dx;
+  if (*dy + *height > targetHeight)
+    *height = targetHeight - *dy;
+
+  return (*width > 0 && *height > 0) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shFormatHasDirectGLStorage(const SHImageFormatDesc *format)
+{
+  return (format &&
+          format->glintformat != 0 &&
+          format->glformat != 0 &&
+          format->gltype != 0) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shCanDirectImageFormat(const SHImage *image,
+                                        VGImageFormat dataFormat)
+{
+  return (image &&
+          image->texture != 0 &&
+          image->texwidth == image->width &&
+          image->texheight == image->height &&
+          image->fd.vgformat == dataFormat &&
+          shFormatHasDirectGLStorage(&image->fd)) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shResolveTransferStride(VGint dataStride,
+                                         SHint logicalWidth,
+                                         SHint bytesPerPixel,
+                                         SHint *resolvedStride,
+                                         GLint *rowLength)
+{
+  if (logicalWidth <= 0 || bytesPerPixel <= 0)
+    return VG_FALSE;
+
+  if (dataStride == -1)
+    dataStride = logicalWidth * bytesPerPixel;
+
+  if (dataStride < logicalWidth * bytesPerPixel ||
+      dataStride % bytesPerPixel != 0)
+    return VG_FALSE;
+
+  if (resolvedStride)
+    *resolvedStride = dataStride;
+  if (rowLength)
+    *rowLength = dataStride / bytesPerPixel;
+  return VG_TRUE;
+}
+
+typedef struct
+{
+  GLint activeTexture;
+  GLint textureBinding;
+  GLint unpackAlignment;
+  GLint unpackRowLength;
+  GLint unpackSkipPixels;
+  GLint unpackSkipRows;
+} SHImageUploadGLState;
+
+static void shSaveImageUploadGLState(SHImageUploadGLState *state)
+{
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
+  glActiveTexture(GL_TEXTURE0);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->textureBinding);
+  glGetIntegerv(GL_UNPACK_ALIGNMENT, &state->unpackAlignment);
+  glGetIntegerv(GL_UNPACK_ROW_LENGTH, &state->unpackRowLength);
+  glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &state->unpackSkipPixels);
+  glGetIntegerv(GL_UNPACK_SKIP_ROWS, &state->unpackSkipRows);
+}
+
+static void shRestoreImageUploadGLState(const SHImageUploadGLState *state)
+{
+  glPixelStorei(GL_UNPACK_ALIGNMENT, state->unpackAlignment);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, state->unpackRowLength);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, state->unpackSkipPixels);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, state->unpackSkipRows);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, state->textureBinding);
+  glActiveTexture(state->activeTexture);
+}
+
+typedef struct
+{
+  GLint framebuffer;
+  GLint renderbuffer;
+  GLint drawBuffer;
+  GLint readBuffer;
+  GLint packAlignment;
+  GLint packRowLength;
+  GLint packSkipPixels;
+  GLint packSkipRows;
+} SHImageReadGLState;
+
+static void shSaveImageReadGLState(SHImageReadGLState *state)
+{
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
+  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
+  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
+  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
+  glGetIntegerv(GL_PACK_ALIGNMENT, &state->packAlignment);
+  glGetIntegerv(GL_PACK_ROW_LENGTH, &state->packRowLength);
+  glGetIntegerv(GL_PACK_SKIP_PIXELS, &state->packSkipPixels);
+  glGetIntegerv(GL_PACK_SKIP_ROWS, &state->packSkipRows);
+}
+
+static void shRestoreImageReadGLState(const SHImageReadGLState *state)
+{
+  glPixelStorei(GL_PACK_ALIGNMENT, state->packAlignment);
+  glPixelStorei(GL_PACK_ROW_LENGTH, state->packRowLength);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, state->packSkipPixels);
+  glPixelStorei(GL_PACK_SKIP_ROWS, state->packSkipRows);
+  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
+  glDrawBuffer(state->drawBuffer);
+  glReadBuffer(state->readBuffer);
+}
+
+static VGboolean shTryDirectImageSubData(SHImage *image,
+                                         const void *data,
+                                         VGint dataStride,
+                                         VGImageFormat dataFormat,
+                                         VGint x,
+                                         VGint y,
+                                         VGint width,
+                                         VGint height)
+{
+  SHint copyDx = x;
+  SHint copyDy = y;
+  SHint copySx = 0;
+  SHint copySy = 0;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  SHint resolvedStride;
+  GLint rowLength;
+  const SHuint8 *source;
+  SHImageUploadGLState state;
+
+  if (!data)
+    return VG_FALSE;
+
+  if (!shClipImageTransfer(image->width, image->height,
+                           width, height,
+                           &copyDx, &copyDy,
+                           &copySx, &copySy,
+                           &copyWidth, &copyHeight))
+    return VG_TRUE;
+
+  if (!shCanDirectImageFormat(image, dataFormat) ||
+      !shResolveTransferStride(dataStride, width, image->fd.bytes,
+                               &resolvedStride, &rowLength))
+    return VG_FALSE;
+
+  source = (const SHuint8*)data +
+           (size_t)copySy * (size_t)resolvedStride +
+           (size_t)copySx * (size_t)image->fd.bytes;
+
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, image->texture);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, rowLength);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+  glTexSubImage2D(GL_TEXTURE_2D, 0,
+                  copyDx, copyDy, copyWidth, copyHeight,
+                  image->fd.glformat, image->fd.gltype, source);
+  shRestoreImageUploadGLState(&state);
+
+  if (glGetError() != GL_NO_ERROR)
+    return VG_FALSE;
+
+  image->gpuDataDirty = VG_TRUE;
+  return VG_TRUE;
+}
+
+static VGboolean shBindTextureReadFramebuffer(GLuint texture,
+                                              GLuint *framebuffer)
+{
+  GLenum status;
+
+  glGenFramebuffers(1, framebuffer);
+  if (*framebuffer == 0)
+    return VG_FALSE;
+
+  glBindFramebuffer(GL_FRAMEBUFFER, *framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D, texture, 0);
+  glDrawBuffer(GL_COLOR_ATTACHMENT0);
+  glReadBuffer(GL_COLOR_ATTACHMENT0);
+
+  status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  return status == GL_FRAMEBUFFER_COMPLETE ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shTryDirectGetImageSubData(SHImage *image,
+                                            void *data,
+                                            VGint dataStride,
+                                            VGImageFormat dataFormat,
+                                            VGint x,
+                                            VGint y,
+                                            VGint width,
+                                            VGint height)
+{
+  SHint copyDx = 0;
+  SHint copyDy = 0;
+  SHint copySx = x;
+  SHint copySy = y;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  SHint resolvedStride;
+  GLint rowLength;
+  SHuint8 *dest;
+  GLuint framebuffer = 0;
+  VGboolean success = VG_FALSE;
+  SHImageReadGLState state;
+
+  if (!data)
+    return VG_FALSE;
+
+  if (!shClipImageTransfer(width, height,
+                           image->width, image->height,
+                           &copyDx, &copyDy,
+                           &copySx, &copySy,
+                           &copyWidth, &copyHeight))
+    return VG_TRUE;
+
+  if (!shCanDirectImageFormat(image, dataFormat) ||
+      !shResolveTransferStride(dataStride, width, image->fd.bytes,
+                               &resolvedStride, &rowLength))
+    return VG_FALSE;
+
+  dest = (SHuint8*)data +
+         (size_t)copyDy * (size_t)resolvedStride +
+         (size_t)copyDx * (size_t)image->fd.bytes;
+
+  shSaveImageReadGLState(&state);
+  if (!shBindTextureReadFramebuffer(image->texture, &framebuffer))
+    goto cleanup;
+
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glPixelStorei(GL_PACK_ROW_LENGTH, rowLength);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+  glReadPixels(copySx, copySy, copyWidth, copyHeight,
+               image->fd.glformat, image->fd.gltype, dest);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+
+cleanup:
+  shRestoreImageReadGLState(&state);
+  if (framebuffer != 0)
+    glDeleteFramebuffers(1, &framebuffer);
+  return success;
+}
+
+typedef struct
+{
+  GLint packAlignment;
+  GLint packRowLength;
+  GLint packSkipPixels;
+  GLint packSkipRows;
+} SHSurfaceReadGLState;
+
+static void shSaveSurfaceReadGLState(SHSurfaceReadGLState *state)
+{
+  glGetIntegerv(GL_PACK_ALIGNMENT, &state->packAlignment);
+  glGetIntegerv(GL_PACK_ROW_LENGTH, &state->packRowLength);
+  glGetIntegerv(GL_PACK_SKIP_PIXELS, &state->packSkipPixels);
+  glGetIntegerv(GL_PACK_SKIP_ROWS, &state->packSkipRows);
+}
+
+static void shRestoreSurfaceReadGLState(const SHSurfaceReadGLState *state)
+{
+  glPixelStorei(GL_PACK_ALIGNMENT, state->packAlignment);
+  glPixelStorei(GL_PACK_ROW_LENGTH, state->packRowLength);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, state->packSkipPixels);
+  glPixelStorei(GL_PACK_SKIP_ROWS, state->packSkipRows);
+}
+
+static VGboolean shTryDirectReadPixels(VGContext *context,
+                                       void *data,
+                                       VGint dataStride,
+                                       VGImageFormat dataFormat,
+                                       VGint sx,
+                                       VGint sy,
+                                       VGint width,
+                                       VGint height)
+{
+  SHint copyDx = 0;
+  SHint copyDy = 0;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  SHint resolvedStride;
+  GLint rowLength;
+  SHuint8 *dest;
+  SHSurfaceReadGLState state;
+
+  if (!data || dataFormat != VG_sRGBA_8888)
+    return VG_FALSE;
+
+  if (!shClipSurfaceRead(context,
+                         &copyDx, &copyDy,
+                         &copySx, &copySy,
+                         &copyWidth, &copyHeight,
+                         width, height))
+    return VG_TRUE;
+
+  if (!shResolveTransferStride(dataStride, width, 4,
+                               &resolvedStride, &rowLength))
+    return VG_FALSE;
+
+  dest = (SHuint8*)data +
+         (size_t)copyDy * (size_t)resolvedStride +
+         (size_t)copyDx * 4u;
+
+  shSaveSurfaceReadGLState(&state);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glPixelStorei(GL_PACK_ROW_LENGTH, rowLength);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+  glReadPixels(copySx, copySy, copyWidth, copyHeight,
+               GL_RGBA, GL_UNSIGNED_BYTE, dest);
+  shRestoreSurfaceReadGLState(&state);
+
+  return glGetError() == GL_NO_ERROR ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shCanDirectCopyToImage(const SHImage *image)
+{
+  GLenum internalFormat;
+
+  if (!image ||
+      image->texture == 0 ||
+      image->texwidth != image->width ||
+      image->texheight != image->height ||
+      !shFormatHasDirectGLStorage(&image->fd))
+    return VG_FALSE;
+
+  internalFormat = image->fd.glintformat;
+  if (internalFormat == GL_RGBA)
+    return image->fd.amask != 0 ? VG_TRUE : VG_FALSE;
+  return internalFormat == GL_RGB ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shTryDirectGetPixels(VGContext *context,
+                                      SHImage *image,
+                                      VGint dx,
+                                      VGint dy,
+                                      VGint sx,
+                                      VGint sy,
+                                      VGint width,
+                                      VGint height)
+{
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  SHImageUploadGLState state;
+
+  if (!shCanDirectCopyToImage(image))
+    return VG_FALSE;
+
+  if (!shClipSurfaceRead(context,
+                         &copyDx, &copyDy,
+                         &copySx, &copySy,
+                         &copyWidth, &copyHeight,
+                         image->width, image->height))
+    return VG_TRUE;
+
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, image->texture);
+  glCopyTexSubImage2D(GL_TEXTURE_2D, 0,
+                      copyDx, copyDy,
+                      copySx, copySy,
+                      copyWidth, copyHeight);
+  shRestoreImageUploadGLState(&state);
+
+  if (glGetError() != GL_NO_ERROR)
+    return VG_FALSE;
+
+  image->gpuDataDirty = VG_TRUE;
+  return VG_TRUE;
 }
 
 typedef struct
@@ -1305,6 +1755,10 @@ VG_API_CALL void vgImageSubData(VGImage image,
   
   /* TODO: check data array alignment */
 
+  if (shTryDirectImageSubData(i, data, dataStride, dataFormat,
+                              x, y, width, height))
+    VG_RETURN(VG_NO_RETVAL);
+
   VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   
@@ -1352,6 +1806,10 @@ VG_API_CALL void vgGetImageSubData(VGImage image,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* TODO: check data array alignment */
+
+  if (shTryDirectGetImageSubData(i, data, dataStride, dataFormat,
+                                 x, y, width, height))
+    VG_RETURN(VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
@@ -1581,6 +2039,9 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
                          i->width, i->height))
     VG_RETURN(VG_NO_RETVAL);
 
+  if (shTryDirectGetPixels(context, i, dx, dy, sx, sy, width, height))
+    VG_RETURN(VG_NO_RETVAL);
+
   VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
@@ -1636,6 +2097,10 @@ VG_API_CALL void vgReadPixels(void * data, VGint dataStride,
   
   VG_RETURN_ERR_IF(width <= 0 || height <= 0 || !data,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  if (shTryDirectReadPixels(context, data, dataStride, dataFormat,
+                            sx, sy, width, height))
+    VG_RETURN(VG_NO_RETVAL);
 
   if (!shClipSurfaceRead(context,
                          &copyDx, &copyDy,
