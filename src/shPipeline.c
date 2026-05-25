@@ -133,7 +133,7 @@ static void shDrawStroke(SHPath *p)
   glDrawArrays(GL_TRIANGLES, 0, p->stroke.size);
   glDisableVertexAttribArray(context->locationDraw.pos);
   shRestoreVertexState(&vertexState);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 }
 
 /*-----------------------------------------------------------
@@ -168,7 +168,7 @@ static void shDrawVertices(SHPath *p, GLenum mode)
   
   glDisableVertexAttribArray(context->locationDraw.pos);
   shRestoreVertexState(&vertexState);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 }
 
 /*--------------------------------------------------------------
@@ -239,7 +239,7 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glDisableVertexAttribArray(c->locationDraw.pos);
   shRestoreVertexState(&vertexState);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 }
 
 static void shDrawCoverageMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
@@ -276,7 +276,7 @@ static void shDrawCoverageMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
   glDisableVertexAttribArray(c->locationDraw.pos);
   shRestoreVertexState(&vertexState);
   SHPaint_dtor(&coveragePaint);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 }
 
 VGboolean shIsTessCacheValid (VGContext *c, SHPath *p)
@@ -493,7 +493,7 @@ static VGboolean shEnsureRenderToMaskTarget(VGContext *context)
 
   context->renderToMaskWidth = context->surfaceWidth;
   context->renderToMaskHeight = context->surfaceHeight;
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 
   return VG_TRUE;
 }
@@ -627,7 +627,7 @@ static VGboolean shRenderPathPassToMask(VGContext *context,
   glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, mgl);
   glUniform1i(context->locationDraw.drawMode, 0);
   glUniform1i(context->locationDraw.maskEnabled, 0);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 
   if (renderCoverage) {
     if (mode == VG_FILL_PATH)
@@ -721,7 +721,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   glUseProgram(context->progDraw);
   glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, mgl);
   glUniform1i(context->locationDraw.drawMode, 0); /* drawMode: path */
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
   
   if (paintModes & VG_FILL_PATH) {
     
@@ -914,7 +914,7 @@ void shDrawImage(VGContext *context, SHImage *i)
   glUseProgram(context->progDraw);
   glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, mgl);
   glUniform1i(context->locationDraw.drawMode, 1); /* drawMode: image */
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
   
   /* Clamp to edge for proper filtering, modulate for multiply mode */
   glActiveTexture(GL_TEXTURE0);
@@ -955,7 +955,7 @@ void shDrawImage(VGContext *context, SHImage *i)
                         sizeof(SHImageVertex),
                         (const GLvoid*)(2 * sizeof(GLfloat)));
   glUniform1i(context->locationDraw.imageSampler, 0);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
   
   /* Pick fill paint */
   fill = (context->fillPaint ? context->fillPaint : &context->defaultPaint);
@@ -998,7 +998,7 @@ void shDrawImage(VGContext *context, SHImage *i)
   shRestoreVertexState(&vertexState);
     
   glDisable(GL_TEXTURE_2D);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 
   if (context->scissoring == VG_TRUE)
     glDisable( GL_SCISSOR_TEST );

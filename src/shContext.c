@@ -275,7 +275,7 @@ static VGboolean shConfigureMaskTarget(GLuint *texture,
   glActiveTexture(SH_TEXTURE_MASK);
   glBindTexture(GL_TEXTURE_2D, previousMaskTextureBinding);
   glActiveTexture(previousActiveTexture);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 
   return VG_TRUE;
 }
@@ -332,7 +332,7 @@ void shEnsureMaskTexture(VGContext *context)
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 }
 
 static VGboolean shInitMaskProgram(VGContext *context)
@@ -341,19 +341,19 @@ static VGboolean shInitMaskProgram(VGContext *context)
   glShaderSource(context->maskVs, 1, &shMaskVertexShaderSource, NULL);
   glCompileShader(context->maskVs);
   SH_CHECK_SHADER_COMPILE(context->maskVs, "mask vertex");
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 
   context->maskFs = glCreateShader(GL_FRAGMENT_SHADER);
   glShaderSource(context->maskFs, 1, &shMaskFragmentShaderSource, NULL);
   glCompileShader(context->maskFs);
   SH_CHECK_SHADER_COMPILE(context->maskFs, "mask fragment");
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 
   context->progMask = glCreateProgram();
   glAttachShader(context->progMask, context->maskVs);
   glAttachShader(context->progMask, context->maskFs);
   glLinkProgram(context->progMask);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 
   context->locationMask.pos =
     glGetAttribLocation(context->progMask, "pos");
@@ -367,11 +367,11 @@ static VGboolean shInitMaskProgram(VGContext *context)
     glGetUniformLocation(context->progMask, "sourceMode");
   context->locationMask.maskValue =
     glGetUniformLocation(context->progMask, "maskValue");
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 
   glUseProgram(context->progMask);
   glUniform1i(context->locationMask.sourceSampler, SH_TEXTURE_MASK_INDEX);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 
   return VG_TRUE;
 }
@@ -420,7 +420,7 @@ static void shResizeSurface(VGContext *context, VGint width, VGint height)
     glUniformMatrix4fv(context->locationDraw.projection, 1, GL_FALSE, mat);
     glUniform2f(context->locationDraw.maskSurfaceSize,
                 (GLfloat)width, (GLfloat)height);
-    GL_CEHCK_ERROR;
+    GL_CHECK_ERROR;
   }
 }
 
@@ -1046,7 +1046,7 @@ static void shDrawMaskRect(VGContext *context,
   glDisableVertexAttribArray(context->locationMask.texCoord);
   glDisableVertexAttribArray(context->locationMask.pos);
   shRestoreVertexState(&vertexState);
-  GL_CEHCK_ERROR;
+  GL_CHECK_ERROR;
 }
 
 static VGint shMaskSourceModeForImage(SHImage *image)
