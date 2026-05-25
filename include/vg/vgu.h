@@ -17,8 +17,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef _VGU_H
-#define _VGU_H
+#ifndef SH_VGU_H
+#define SH_VGU_H
 
 #include "openvg.h"
 
@@ -101,4 +101,4 @@ VGU_API_CALL VGUErrorCode vguComputeWarpQuadToQuad(VGfloat dx0, VGfloat dy0,
 } /* extern "C" */
 #endif
 
-#endif /* #ifndef _VGU_H */
+#endif /* #ifndef SH_VGU_H */

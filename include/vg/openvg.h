@@ -18,8 +18,8 @@
  *
  */
 
-#ifndef _OPENVG_H
-#define _OPENVG_H
+#ifndef SH_OPENVG_H
+#define SH_OPENVG_H
 
 #define OPENVG_VERSION_1_0_1	1
 
@@ -714,4 +714,4 @@ VG_API_CALL void  vgGetUniformfvSH(VGint location, VGfloat *params);
 #if defined (__cplusplus)
 } /* extern "C" */
 #endif
-#endif /* _OPENVG_H */
+#endif /* SH_OPENVG_H */
