@@ -167,6 +167,88 @@ static int expect_green_visibility(const unsigned char *pixels,
   return 1;
 }
 
+static int expect_dominant_channel(const unsigned char *pixels,
+                                   EGLint width,
+                                   EGLint x,
+                                   EGLint y,
+                                   int channel,
+                                   const char *message)
+{
+  size_t sample = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+  unsigned char value = pixels[sample + channel];
+  unsigned char other1 = pixels[sample + ((channel + 1) % 3)];
+  unsigned char other2 = pixels[sample + ((channel + 2) % 3)];
+
+  if (value >= 160 && other1 <= 128 && other2 <= 128 &&
+      pixels[sample + 3] != 0)
+    return 0;
+
+  fprintf(stderr, "%s (got %u,%u,%u,%u)\n",
+          message,
+          pixels[sample + 0], pixels[sample + 1],
+          pixels[sample + 2], pixels[sample + 3]);
+  return 1;
+}
+
+static int run_gradient_ramp_test(unsigned char *pixels,
+                                  EGLint width, EGLint height)
+{
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGPath rect = VG_INVALID_HANDLE;
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat linearGradient[] = {
+    0.5f, 0.0f,
+    (VGfloat)width - 0.5f, 0.0f
+  };
+  VGfloat rampStops[] = {
+    0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+    0.5f, 0.0f, 1.0f, 0.0f, 1.0f,
+    1.0f, 0.0f, 0.0f, 1.0f, 1.0f
+  };
+  int result = 0;
+
+  paint = vgCreatePaint();
+  rect = create_rect_path((VGfloat)width, (VGfloat)height);
+  if (paint == VG_INVALID_HANDLE || rect == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG gradient ramp test setup failed");
+    goto cleanup;
+  }
+
+  vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_LINEAR_GRADIENT);
+  vgSetParameteri(paint, VG_PAINT_COLOR_RAMP_SPREAD_MODE,
+                  VG_COLOR_RAMP_SPREAD_PAD);
+  vgSetParameterfv(paint, VG_PAINT_LINEAR_GRADIENT, 4, linearGradient);
+  vgSetParameterfv(paint, VG_PAINT_COLOR_RAMP_STOPS, 15, rampStops);
+  vgSetPaint(paint, VG_FILL_PATH);
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgDrawPath(rect, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+
+  if (expect_no_vg_error("OpenVG gradient ramp rendering failed") ||
+      expect_dominant_channel(pixels, width, 2, height / 2, 0,
+                              "OpenVG gradient ramp lost the red stop") ||
+      expect_dominant_channel(pixels, width, width / 2, height / 2, 1,
+                              "OpenVG gradient ramp lost the green stop") ||
+      expect_dominant_channel(pixels, width, width - 3, height / 2, 2,
+                              "OpenVG gradient ramp lost the blue stop"))
+    result = 1;
+
+cleanup:
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  return result;
+}
+
 static int run_image_draw_test(unsigned char *pixels,
                                EGLint width, EGLint height)
 {
@@ -1739,6 +1821,8 @@ int main(void)
       result = 1;
     } else {
       result = run_image_draw_test(pixels, width, height);
+      if (result == 0)
+        result = run_gradient_ramp_test(pixels, width, height);
       if (result == 0)
         result = run_src_over_alpha_test(pixels, width, height);
       if (result == 0)

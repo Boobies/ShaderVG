@@ -165,25 +165,26 @@ static const char* vgShaderFragmentUserDefault =
 static const char* vgShaderVertexColorRamp =
 "#version 330\n"
 "\n"
-"in vec2 step;\n"
-"in vec4 stepColor;\n"
-"out vec4 interpolateColor;\n"
+"in vec2 pos;\n"
 "\n"
 "void main()\n"
 "{\n"
-"    gl_Position = vec4(step.xy, 0, 1);\n"
-"    interpolateColor = stepColor;\n"
+"    gl_Position = vec4(pos.xy, 0, 1);\n"
 "}\n";
 
 static const char* vgShaderFragmentColorRamp =
 "#version 330\n"
 "\n"
-"in vec4 interpolateColor;\n"
+"uniform vec4 startColor;\n"
+"uniform vec4 endColor;\n"
+"uniform float startPixel;\n"
+"uniform float pixelSpan;\n"
 "out vec4 fragColor;\n"
 "\n"
 "void main()\n"
 "{\n"
-"    fragColor = interpolateColor;\n"
+"    float k = (gl_FragCoord.x - 0.5 - startPixel) / pixelSpan;\n"
+"    fragColor = mix(startColor, endColor, clamp(k, 0.0, 1.0));\n"
 "}\n";
 
 void shInitPiplelineShaders(void) {
@@ -300,8 +301,11 @@ void shInitRampShaders(void) {
   glDeleteShader(fs);
   GL_CHECK_ERROR;
 
-  context->locationColorRamp.step = glGetAttribLocation(context->progColorRamp, "step");
-  context->locationColorRamp.stepColor = glGetAttribLocation(context->progColorRamp, "stepColor");
+  context->locationColorRamp.pos = glGetAttribLocation(context->progColorRamp, "pos");
+  context->locationColorRamp.startColor = glGetUniformLocation(context->progColorRamp, "startColor");
+  context->locationColorRamp.endColor = glGetUniformLocation(context->progColorRamp, "endColor");
+  context->locationColorRamp.startPixel = glGetUniformLocation(context->progColorRamp, "startPixel");
+  context->locationColorRamp.pixelSpan = glGetUniformLocation(context->progColorRamp, "pixelSpan");
   GL_CHECK_ERROR;
 }
 

@@ -180,8 +180,11 @@ typedef struct
   } locationMask;
 
   struct {
-      GLuint step;
-      GLuint stepColor;
+      GLint pos;
+      GLint startColor;
+      GLint endColor;
+      GLint startPixel;
+      GLint pixelSpan;
   } locationColorRamp;
 
   /* GL programs */

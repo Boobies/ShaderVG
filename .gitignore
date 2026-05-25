@@ -43,6 +43,7 @@ examples/test_egl_gl_vg
 examples/test_egl_features
 examples/test_font
 examples/test_warp
+examples/test_pixels
 *.libs
 *.la
 *.lo

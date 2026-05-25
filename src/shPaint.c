@@ -45,9 +45,136 @@ static void shEnsurePaintTexture(SHPaint *p)
   glGenTextures(1, &p->texture);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glBindTexture(GL_TEXTURE_2D, p->texture);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SH_GRADIENT_TEX_WIDTH, SH_GRADIENT_TEX_HEIGHT, 0,
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, SH_GRADIENT_TEX_WIDTH, SH_GRADIENT_TEX_HEIGHT, 0,
                GL_RGBA, GL_FLOAT, NULL);
   GL_CHECK_ERROR;
+}
+
+typedef struct
+{
+  GLint framebuffer;
+  GLint renderbuffer;
+  GLint viewport[4];
+  GLint program;
+  GLint vertexArray;
+  GLint arrayBuffer;
+  GLint activeTexture;
+  GLint texture1Binding;
+  GLint drawBuffer;
+  GLint readBuffer;
+  GLint scissorBox[4];
+  GLint unpackAlignment;
+  GLfloat clearColor[4];
+  GLboolean blend;
+  GLboolean scissor;
+  GLboolean depth;
+  GLboolean stencil;
+  GLboolean colorMask[4];
+} SHColorRampGLState;
+
+static void shSaveColorRampGLState(SHColorRampGLState *state)
+{
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
+  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
+  glGetIntegerv(GL_VIEWPORT, state->viewport);
+  glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
+  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
+  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
+  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
+  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
+  glGetIntegerv(GL_UNPACK_ALIGNMENT, &state->unpackAlignment);
+  glGetFloatv(GL_COLOR_CLEAR_VALUE, state->clearColor);
+  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
+  state->blend = glIsEnabled(GL_BLEND);
+  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
+  state->depth = glIsEnabled(GL_DEPTH_TEST);
+  state->stencil = glIsEnabled(GL_STENCIL_TEST);
+  glActiveTexture(GL_TEXTURE1);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->texture1Binding);
+  glActiveTexture(state->activeTexture);
+}
+
+static void shRestoreColorRampGLState(const SHColorRampGLState *state)
+{
+  if (state->blend) glEnable(GL_BLEND);
+  else glDisable(GL_BLEND);
+
+  if (state->scissor) glEnable(GL_SCISSOR_TEST);
+  else glDisable(GL_SCISSOR_TEST);
+
+  if (state->depth) glEnable(GL_DEPTH_TEST);
+  else glDisable(GL_DEPTH_TEST);
+
+  if (state->stencil) glEnable(GL_STENCIL_TEST);
+  else glDisable(GL_STENCIL_TEST);
+
+  glScissor(state->scissorBox[0], state->scissorBox[1],
+            state->scissorBox[2], state->scissorBox[3]);
+  glColorMask(state->colorMask[0], state->colorMask[1],
+              state->colorMask[2], state->colorMask[3]);
+  glClearColor(state->clearColor[0], state->clearColor[1],
+               state->clearColor[2], state->clearColor[3]);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, state->unpackAlignment);
+  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
+  glDrawBuffer(state->drawBuffer);
+  glReadBuffer(state->readBuffer);
+  glUseProgram(state->program);
+  if (state->vertexArray == 0 ||
+      glIsVertexArray((GLuint)state->vertexArray))
+    glBindVertexArray((GLuint)state->vertexArray);
+  else
+    glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
+  glViewport(state->viewport[0], state->viewport[1],
+             state->viewport[2], state->viewport[3]);
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, state->texture1Binding);
+  glActiveTexture(state->activeTexture);
+}
+
+static GLfloat shRampWindowXToClip(SHfloat x)
+{
+  return x / (SHfloat)SH_GRADIENT_TEX_WIDTH * 2.0f - 1.0f;
+}
+
+static void shDrawColorRampSegment(VGContext *context,
+                                   SHint x1,
+                                   SHint x2,
+                                   SHStop *stop1,
+                                   SHStop *stop2,
+                                   VGboolean includeStartPixel)
+{
+  SHint leftPixel = includeStartPixel ? x1 : x1 + 1;
+  GLfloat left;
+  GLfloat right;
+  GLfloat vertices[8];
+
+  if (leftPixel > x2)
+    return;
+
+  left = shRampWindowXToClip((SHfloat)leftPixel);
+  right = shRampWindowXToClip((SHfloat)(x2 + 1));
+
+  vertices[0] = left;  vertices[1] = -1.0f;
+  vertices[2] = right; vertices[3] = -1.0f;
+  vertices[4] = left;  vertices[5] =  1.0f;
+  vertices[6] = right; vertices[7] =  1.0f;
+
+  glUniform4f(context->locationColorRamp.startColor,
+              stop1->color.r, stop1->color.g,
+              stop1->color.b, stop1->color.a);
+  glUniform4f(context->locationColorRamp.endColor,
+              stop2->color.r, stop2->color.g,
+              stop2->color.b, stop2->color.a);
+  glUniform1f(context->locationColorRamp.startPixel, (GLfloat)x1);
+  glUniform1f(context->locationColorRamp.pixelSpan, (GLfloat)(x2 - x1));
+  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+  glVertexAttribPointer(context->locationColorRamp.pos, 2, GL_FLOAT, GL_FALSE,
+                        0, (const GLvoid*)0);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
 
@@ -175,14 +302,56 @@ void shUpdateColorRampTexture(SHPaint *p)
 {
   SHint s=0;
   SHStop *stop1, *stop2;
-  SHfloat rgba[SH_GRADIENT_TEX_COORDSIZE];
-  SHint x1=0, x2=0, dx, x;
-  SHColor dc, c;
-  SHfloat k;
-  
-  /* Write first pixel color */
+  SHint x1=0, x2=0, dx;
+  GLuint framebuffer = 0;
+  GLenum status;
+  SHColorRampGLState glState;
+  SHVertexState vertexState;
+  VGboolean vertexStateBound = VG_FALSE;
+  SH_GETCONTEXT(SH_NO_RETVAL);
+
+  if (!p || p->stops.size <= 0)
+    return;
+
+  shSaveColorRampGLState(&glState);
+
+  glActiveTexture(GL_TEXTURE1);
+  shEnsurePaintTexture(p);
+
+  glGenFramebuffers(1, &framebuffer);
+  if (framebuffer == 0) {
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    goto cleanup;
+  }
+
+  glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D, p->texture, 0);
+  glDrawBuffer(GL_COLOR_ATTACHMENT0);
+  glReadBuffer(GL_COLOR_ATTACHMENT0);
+
+  status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (status != GL_FRAMEBUFFER_COMPLETE) {
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    goto cleanup;
+  }
+
+  glViewport(0, 0, SH_GRADIENT_TEX_WIDTH, SH_GRADIENT_TEX_HEIGHT);
+  glDisable(GL_BLEND);
+  glDisable(GL_SCISSOR_TEST);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_STENCIL_TEST);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glUseProgram(context->progColorRamp);
+
   stop1 = &p->stops.items[0];
-  CSTORE_RGBA1D_F(stop1->color, rgba, x1);
+  glClearColor(stop1->color.r, stop1->color.g,
+               stop1->color.b, stop1->color.a);
+  glClear(GL_COLOR_BUFFER_BIT);
+
+  shBindContextVertexState(context, &vertexState);
+  vertexStateBound = VG_TRUE;
+  glEnableVertexAttribArray(context->locationColorRamp.pos);
   
   /* Walk stops */
   for (s=1; s<p->stops.size; ++s, x1=x2, stop1=stop2) {
@@ -196,26 +365,21 @@ void shUpdateColorRampTexture(SHPaint *p)
               x1 <= x2);
     
     dx = x2 - x1;
-    CSUBCTO(stop2->color, stop1->color, dc);
-    
-    /* Interpolate inbetween */
-    for (x=x1+1; x<=x2; ++x) {
-      
-      k = (SHfloat)(x-x1)/dx;
-      CSETC(c, stop1->color);
-      CADDCK(c, dc, k);
-      CSTORE_RGBA1D_F(c, rgba, x);
-    }
-  }
-  
-  /* Update texture image */
-  shEnsurePaintTexture(p);
-  glBindTexture(GL_TEXTURE_2D, p->texture);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  
-  for(int i = 0; i < SH_GRADIENT_TEX_HEIGHT ; i++)
-      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, i, SH_GRADIENT_TEX_WIDTH, 1, GL_RGBA, GL_FLOAT, rgba);
+    if (dx <= 0)
+      continue;
 
+    shDrawColorRampSegment(context, x1, x2, stop1, stop2,
+                           s == 1 ? VG_TRUE : VG_FALSE);
+  }
+
+cleanup:
+  if (vertexStateBound) {
+    glDisableVertexAttribArray(context->locationColorRamp.pos);
+    shRestoreVertexState(&vertexState);
+  }
+  shRestoreColorRampGLState(&glState);
+  if (framebuffer != 0)
+    glDeleteFramebuffers(1, &framebuffer);
   GL_CHECK_ERROR;
 }
 
