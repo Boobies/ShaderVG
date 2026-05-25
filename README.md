@@ -105,6 +105,9 @@ $ ./test_tiger_shader
   Exercises image upload, image clear/copy/readback, drawing-surface pixel
   writes, reads, and overlapping surface copies using synthetic pixel data.
 
+#### test_filters
+  Shows the OpenVG image filter APIs on synthetic image data.
+
 #### test_font
   Draws vector glyphs through the OpenVG font API, including glyphs whose
   source paths have already been destroyed by the application.
@@ -225,12 +228,12 @@ vgDrawGlyphs            | FULLY implemented
 #### Image Filters                                 
 API                     | status                   
 ----------------------- | ---------------------    
-vgColorMatrix           | NOT implemented          
-vgConvolve              | NOT implemented          
-vgSeparableConvolve     | NOT implemented          
-vgGaussianBlur          | NOT implemented          
-vgLookup                | NOT implemented          
-vgLookupSingle          | NOT implemented          
+vgColorMatrix           | FULLY implemented
+vgConvolve              | FULLY implemented
+vgSeparableConvolve     | FULLY implemented
+vgGaussianBlur          | FULLY implemented
+vgLookup                | FULLY implemented
+vgLookupSingle          | FULLY implemented
                                                    
 #### Queries                                       
 API                     | status                   

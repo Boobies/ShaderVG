@@ -44,6 +44,7 @@ examples/test_egl_features
 examples/test_font
 examples/test_warp
 examples/test_pixels
+examples/test_filters
 *.libs
 *.la
 *.lo

@@ -129,6 +129,9 @@ SHfloat getMaxFloat();
 #define SH_MAX_IMAGE_PIXELS              VG_MAXINT
 #define SH_MAX_IMAGE_BYTES               VG_MAXINT
 #define SH_MAX_COLOR_RAMP_STOPS          256
+#define SH_MAX_KERNEL_SIZE               256
+#define SH_MAX_SEPARABLE_KERNEL_SIZE     256
+#define SH_MAX_GAUSSIAN_STD_DEVIATION    16.0f
 
 #define SH_MAX_VERTICES 999999999
 #define SH_MAX_RECURSE_DEPTH 16

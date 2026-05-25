@@ -2742,9 +2742,417 @@ VG_API_CALL VGImage vgGetParent(VGImage image)
   return VG_INVALID_HANDLE;
 }
 
+static VGboolean shImageFilterImagesOverlap(const SHImage *dst,
+                                            const SHImage *src)
+{
+  return (dst == src || (dst && src && dst->data == src->data)) ?
+    VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shImageFilterValidTilingMode(VGTilingMode tilingMode)
+{
+  return (tilingMode == VG_TILE_FILL ||
+          tilingMode == VG_TILE_PAD ||
+          tilingMode == VG_TILE_REPEAT ||
+          tilingMode == VG_TILE_REFLECT) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shImageFilterAligned(const void *ptr, size_t alignment)
+{
+  uintptr_t value;
+
+  if (!ptr || alignment == 0)
+    return VG_FALSE;
+
+  value = (uintptr_t)ptr;
+  return (value % alignment) == 0 ? VG_TRUE : VG_FALSE;
+}
+
+static SHint shImageFilterIntMod(SHint value, SHint modulus)
+{
+  SHint result;
+
+  if (modulus <= 0)
+    return 0;
+
+  result = value % modulus;
+  if (result < 0)
+    result += modulus;
+  return result;
+}
+
+static VGboolean shImageFilterIsLuminanceFormat(VGImageFormat format)
+{
+  SHuint32 base = (SHuint32)format & 0x1Fu;
+
+  return (base == VG_sL_8 || base == VG_lL_8) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shImageFilterFormatIsLinear(VGImageFormat format)
+{
+  SHuint32 base = (SHuint32)format & 0x1Fu;
+
+  return (base == VG_lRGBX_8888 ||
+          base == VG_lRGBA_8888 ||
+          base == VG_lRGBA_8888_PRE ||
+          base == VG_lL_8) ? VG_TRUE : VG_FALSE;
+}
+
+static SHfloat shImageFilterSRGBToLinear(SHfloat value)
+{
+  if (value <= 0.0f)
+    return 0.0f;
+  if (value >= 1.0f)
+    return 1.0f;
+  if (value <= 0.04045f)
+    return value / 12.92f;
+  return (SHfloat)powf((value + 0.055f) / 1.055f, 2.4f);
+}
+
+static SHfloat shImageFilterLinearToSRGB(SHfloat value)
+{
+  if (value <= 0.0f)
+    return 0.0f;
+  if (value >= 1.0f)
+    return 1.0f;
+  if (value <= 0.0031308f)
+    return value * 12.92f;
+  return 1.055f * (SHfloat)powf(value, 1.0f / 2.4f) - 0.055f;
+}
+
+static void shImageFilterConvertColorSpace(SHColor *color,
+                                           VGboolean fromLinear,
+                                           VGboolean toLinear)
+{
+  if (fromLinear == toLinear)
+    return;
+
+  if (toLinear) {
+    color->r = shImageFilterSRGBToLinear(color->r);
+    color->g = shImageFilterSRGBToLinear(color->g);
+    color->b = shImageFilterSRGBToLinear(color->b);
+  } else {
+    color->r = shImageFilterLinearToSRGB(color->r);
+    color->g = shImageFilterLinearToSRGB(color->g);
+    color->b = shImageFilterLinearToSRGB(color->b);
+  }
+}
+
+static void shImageFilterClampColor(SHColor *color)
+{
+  if (color->r < 0.0f) color->r = 0.0f;
+  if (color->g < 0.0f) color->g = 0.0f;
+  if (color->b < 0.0f) color->b = 0.0f;
+  if (color->a < 0.0f) color->a = 0.0f;
+  if (color->r > 1.0f) color->r = 1.0f;
+  if (color->g > 1.0f) color->g = 1.0f;
+  if (color->b > 1.0f) color->b = 1.0f;
+  if (color->a > 1.0f) color->a = 1.0f;
+}
+
+static SHuint8 shImageFilterColorToByte(SHfloat value)
+{
+  SHint rounded;
+
+  if (value < 0.0f)
+    value = 0.0f;
+  else if (value > 1.0f)
+    value = 1.0f;
+
+  rounded = (SHint)SH_FLOOR(value * 255.0f + 0.5f);
+  if (rounded < 0)
+    rounded = 0;
+  else if (rounded > 255)
+    rounded = 255;
+  return (SHuint8)rounded;
+}
+
+static SHfloat shImageFilterByteToColor(SHuint32 value)
+{
+  return (SHfloat)(value & 0xffu) / 255.0f;
+}
+
+static void shImageFilterPremultiply(SHColor *color)
+{
+  color->r *= color->a;
+  color->g *= color->a;
+  color->b *= color->a;
+}
+
+static void shImageFilterUnpremultiply(SHColor *color)
+{
+  if (color->a <= 0.0f) {
+    color->r = 0.0f;
+    color->g = 0.0f;
+    color->b = 0.0f;
+    color->a = 0.0f;
+    return;
+  }
+
+  if (color->r > color->a) color->r = color->a;
+  if (color->g > color->a) color->g = color->a;
+  if (color->b > color->a) color->b = color->a;
+  color->r /= color->a;
+  color->g /= color->a;
+  color->b /= color->a;
+}
+
+static void shImageFilterFinishColor(SHColor *color,
+                                     VGboolean premultiplied)
+{
+  shImageFilterClampColor(color);
+  if (premultiplied)
+    shImageFilterUnpremultiply(color);
+  shImageFilterClampColor(color);
+}
+
+static void shImageFilterAddScaled(SHColor *sum,
+                                   const SHColor *color,
+                                   SHfloat scale)
+{
+  sum->r += color->r * scale;
+  sum->g += color->g * scale;
+  sum->b += color->b * scale;
+  sum->a += color->a * scale;
+}
+
+static void shImageFilterScaleColor(SHColor *color, SHfloat scale)
+{
+  color->r *= scale;
+  color->g *= scale;
+  color->b *= scale;
+  color->a *= scale;
+}
+
+static void shImageFilterBiasColor(SHColor *color, SHfloat bias)
+{
+  color->r += bias;
+  color->g += bias;
+  color->b += bias;
+  color->a += bias;
+}
+
+static SHuint8 *shImageFilterPixel(SHImage *image, SHint x, SHint y)
+{
+  return image->data +
+         ((size_t)y * (size_t)image->texwidth + (size_t)x) *
+         (size_t)image->fd.bytes;
+}
+
+static const SHuint8 *shImageFilterConstPixel(const SHImage *image,
+                                              SHint x,
+                                              SHint y)
+{
+  return image->data +
+         ((size_t)y * (size_t)image->texwidth + (size_t)x) *
+         (size_t)image->fd.bytes;
+}
+
+static void shImageFilterLoadImageColor(const SHImage *image,
+                                        SHint x,
+                                        SHint y,
+                                        VGboolean targetLinear,
+                                        VGboolean premultiply,
+                                        SHColor *color)
+{
+  shLoadColor(color, shImageFilterConstPixel(image, x, y),
+              (SHImageFormatDesc*)&image->fd);
+  shImageFilterConvertColorSpace(
+    color, shImageFilterFormatIsLinear(image->fd.vgformat), targetLinear);
+  if (premultiply)
+    shImageFilterPremultiply(color);
+}
+
+static void shImageFilterStoreImageColor(SHImage *image,
+                                         SHint x,
+                                         SHint y,
+                                         const SHColor *color)
+{
+  SHColor stored = *color;
+
+  shImageFilterClampColor(&stored);
+  shStoreColor(&stored, shImageFilterPixel(image, x, y), &image->fd);
+}
+
+static SHColor *shImageFilterAllocColors(SHint width, SHint height)
+{
+  size_t count;
+  size_t maxSize = (size_t)-1;
+
+  if (width <= 0 || height <= 0)
+    return NULL;
+
+  if ((size_t)width > maxSize / (size_t)height)
+    return NULL;
+  count = (size_t)width * (size_t)height;
+  if (count > maxSize / sizeof(SHColor))
+    return NULL;
+
+  return (SHColor*)malloc(count * sizeof(SHColor));
+}
+
+static VGboolean shImageFilterLoadSource(SHImage *src,
+                                         VGboolean targetLinear,
+                                         VGboolean premultiply,
+                                         SHColor **outColors)
+{
+  SHColor *colors;
+  SHint x, y;
+
+  colors = shImageFilterAllocColors(src->width, src->height);
+  if (!colors)
+    return VG_FALSE;
+
+  for (y=0; y<src->height; ++y) {
+    for (x=0; x<src->width; ++x) {
+      shImageFilterLoadImageColor(src, x, y, targetLinear, premultiply,
+                                  &colors[y * src->width + x]);
+    }
+  }
+
+  *outColors = colors;
+  return VG_TRUE;
+}
+
+static const SHColor *shImageFilterTiledColor(const SHColor *colors,
+                                             SHint width,
+                                             SHint height,
+                                             SHint x,
+                                             SHint y,
+                                             VGTilingMode tilingMode,
+                                             const SHColor *edge)
+{
+  if (x >= 0 && x < width && y >= 0 && y < height)
+    return &colors[y * width + x];
+
+  switch (tilingMode) {
+  case VG_TILE_FILL:
+    return edge;
+
+  case VG_TILE_PAD:
+    if (x < 0) x = 0;
+    else if (x >= width) x = width - 1;
+    if (y < 0) y = 0;
+    else if (y >= height) y = height - 1;
+    return &colors[y * width + x];
+
+  case VG_TILE_REPEAT:
+    x = shImageFilterIntMod(x, width);
+    y = shImageFilterIntMod(y, height);
+    return &colors[y * width + x];
+
+  case VG_TILE_REFLECT:
+  default:
+    x = shImageFilterIntMod(x, width * 2);
+    y = shImageFilterIntMod(y, height * 2);
+    if (x >= width)
+      x = width * 2 - 1 - x;
+    if (y >= height)
+      y = height * 2 - 1 - y;
+    return &colors[y * width + x];
+  }
+}
+
+static SHColor shImageFilterMergeColor(const SHImage *dst,
+                                       const SHColor *filtered,
+                                       const SHColor *oldColor,
+                                       VGbitfield channelMask)
+{
+  SHColor result = *oldColor;
+
+  if (shImageFilterIsLuminanceFormat(dst->fd.vgformat))
+    return *filtered;
+
+  channelMask &= VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA;
+  if (channelMask & VG_RED)
+    result.r = filtered->r;
+  if (channelMask & VG_GREEN)
+    result.g = filtered->g;
+  if (channelMask & VG_BLUE)
+    result.b = filtered->b;
+  if ((channelMask & VG_ALPHA) && dst->fd.amask != 0)
+    result.a = filtered->a;
+
+  return result;
+}
+
+static void shImageFilterStoreMergedColor(SHImage *dst,
+                                          SHint x,
+                                          SHint y,
+                                          const SHColor *filtered,
+                                          VGbitfield channelMask,
+                                          VGboolean filteredLinear)
+{
+  SHColor oldColor;
+  SHColor dstColor = *filtered;
+  SHColor merged;
+  VGboolean dstLinear = shImageFilterFormatIsLinear(dst->fd.vgformat);
+
+  shImageFilterConvertColorSpace(&dstColor, filteredLinear, dstLinear);
+  shImageFilterLoadImageColor(dst, x, y, dstLinear, VG_FALSE, &oldColor);
+  merged = shImageFilterMergeColor(dst, &dstColor, &oldColor, channelMask);
+  shImageFilterStoreImageColor(dst, x, y, &merged);
+}
+
 VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,
                                const VGfloat * matrix)
 {
+  SHImage *s, *d;
+  SHint width, height;
+  SHint x, y;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
+                   !shIsValidImage(context, dst),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!matrix ||
+                   !shImageFilterAligned(matrix, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  s = (SHImage*)src;
+  d = (SHImage*)dst;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
+                   shImageIsRenderTarget(d),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
+                   !shImageSyncDataFromTexture(d),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  width = SH_MIN(d->width, s->width);
+  height = SH_MIN(d->height, s->height);
+  for (y=0; y<height; ++y) {
+    for (x=0; x<width; ++x) {
+      SHColor source;
+      SHColor filtered;
+
+      shImageFilterLoadImageColor(s, x, y,
+                                  context->filterFormatLinear,
+                                  context->filterFormatPremultiplied,
+                                  &source);
+      filtered.r = matrix[0]  * source.r + matrix[4]  * source.g +
+                   matrix[8]  * source.b + matrix[12] * source.a +
+                   matrix[16];
+      filtered.g = matrix[1]  * source.r + matrix[5]  * source.g +
+                   matrix[9]  * source.b + matrix[13] * source.a +
+                   matrix[17];
+      filtered.b = matrix[2]  * source.r + matrix[6]  * source.g +
+                   matrix[10] * source.b + matrix[14] * source.a +
+                   matrix[18];
+      filtered.a = matrix[3]  * source.r + matrix[7]  * source.g +
+                   matrix[11] * source.b + matrix[15] * source.a +
+                   matrix[19];
+      shImageFilterFinishColor(&filtered,
+                               context->filterFormatPremultiplied);
+      shImageFilterStoreMergedColor(d, x, y, &filtered,
+                                    context->filterChannelMask,
+                                    context->filterFormatLinear);
+    }
+  }
+
+  shUpdateImageTexture(d, context);
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
@@ -2755,6 +3163,79 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
                             VGfloat bias,
                             VGTilingMode tilingMode)
 {
+  SHImage *s, *d;
+  SHColor *source = NULL;
+  SHColor edge;
+  SHint width, height;
+  SHint x, y, kx, ky;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
+                   !shIsValidImage(context, dst),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!kernel ||
+                   !shImageFilterAligned(kernel, sizeof(VGshort)) ||
+                   kernelWidth <= 0 ||
+                   kernelHeight <= 0 ||
+                   kernelWidth > SH_MAX_KERNEL_SIZE ||
+                   kernelHeight > SH_MAX_KERNEL_SIZE,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  s = (SHImage*)src;
+  d = (SHImage*)dst;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
+                   shImageIsRenderTarget(d),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
+                   !shImageSyncDataFromTexture(d),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  if (!shImageFilterLoadSource(s, context->filterFormatLinear,
+                               context->filterFormatPremultiplied,
+                               &source))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  edge = context->tileFillColor;
+  if (context->filterFormatPremultiplied)
+    shImageFilterPremultiply(&edge);
+  width = SH_MIN(d->width, s->width);
+  height = SH_MIN(d->height, s->height);
+
+  for (y=0; y<height; ++y) {
+    for (x=0; x<width; ++x) {
+      SHColor filtered;
+
+      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
+      for (ky=0; ky<kernelHeight; ++ky) {
+        for (kx=0; kx<kernelWidth; ++kx) {
+          const SHColor *sample = shImageFilterTiledColor(
+            source, s->width, s->height,
+            x + kx - shiftX, y + ky - shiftY, tilingMode, &edge);
+          SHint reversedX = kernelWidth - kx - 1;
+          SHint reversedY = kernelHeight - ky - 1;
+          SHfloat weight =
+            (SHfloat)kernel[reversedX * kernelHeight + reversedY];
+
+          shImageFilterAddScaled(&filtered, sample, weight);
+        }
+      }
+      shImageFilterScaleColor(&filtered, scale);
+      shImageFilterBiasColor(&filtered, bias);
+      shImageFilterFinishColor(&filtered,
+                               context->filterFormatPremultiplied);
+      shImageFilterStoreMergedColor(d, x, y, &filtered,
+                                    context->filterChannelMask,
+                                    context->filterFormatLinear);
+    }
+  }
+
+  free(source);
+  shUpdateImageTexture(d, context);
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
@@ -2767,6 +3248,108 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
                                      VGfloat bias,
                                      VGTilingMode tilingMode)
 {
+  SHImage *s, *d;
+  SHColor *source = NULL;
+  SHColor *horizontal = NULL;
+  SHColor edge;
+  SHColor horizontalEdge;
+  SHfloat kernelXSum = 0.0f;
+  SHint width, height;
+  SHint x, y, k;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
+                   !shIsValidImage(context, dst),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!kernelX ||
+                   !kernelY ||
+                   !shImageFilterAligned(kernelX, sizeof(VGshort)) ||
+                   !shImageFilterAligned(kernelY, sizeof(VGshort)) ||
+                   kernelWidth <= 0 ||
+                   kernelHeight <= 0 ||
+                   kernelWidth > SH_MAX_SEPARABLE_KERNEL_SIZE ||
+                   kernelHeight > SH_MAX_SEPARABLE_KERNEL_SIZE,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  s = (SHImage*)src;
+  d = (SHImage*)dst;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
+                   shImageIsRenderTarget(d),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
+                   !shImageSyncDataFromTexture(d),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  if (!shImageFilterLoadSource(s, context->filterFormatLinear,
+                               context->filterFormatPremultiplied,
+                               &source))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  horizontal = shImageFilterAllocColors(s->width, s->height);
+  if (!horizontal) {
+    free(source);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+
+  edge = context->tileFillColor;
+  if (context->filterFormatPremultiplied)
+    shImageFilterPremultiply(&edge);
+
+  for (k=0; k<kernelWidth; ++k)
+    kernelXSum += (SHfloat)kernelX[k];
+  horizontalEdge = edge;
+  shImageFilterScaleColor(&horizontalEdge, kernelXSum);
+
+  for (y=0; y<s->height; ++y) {
+    for (x=0; x<s->width; ++x) {
+      SHColor filtered;
+
+      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
+      for (k=0; k<kernelWidth; ++k) {
+        const SHColor *sample = shImageFilterTiledColor(
+          source, s->width, s->height,
+          x + k - shiftX, y, tilingMode, &edge);
+        SHfloat weight = (SHfloat)kernelX[kernelWidth - k - 1];
+
+        shImageFilterAddScaled(&filtered, sample, weight);
+      }
+      horizontal[y * s->width + x] = filtered;
+    }
+  }
+
+  width = SH_MIN(d->width, s->width);
+  height = SH_MIN(d->height, s->height);
+  for (y=0; y<height; ++y) {
+    for (x=0; x<width; ++x) {
+      SHColor filtered;
+
+      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
+      for (k=0; k<kernelHeight; ++k) {
+        const SHColor *sample = shImageFilterTiledColor(
+          horizontal, s->width, s->height,
+          x, y + k - shiftY, tilingMode, &horizontalEdge);
+        SHfloat weight = (SHfloat)kernelY[kernelHeight - k - 1];
+
+        shImageFilterAddScaled(&filtered, sample, weight);
+      }
+      shImageFilterScaleColor(&filtered, scale);
+      shImageFilterBiasColor(&filtered, bias);
+      shImageFilterFinishColor(&filtered,
+                               context->filterFormatPremultiplied);
+      shImageFilterStoreMergedColor(d, x, y, &filtered,
+                                    context->filterChannelMask,
+                                    context->filterFormatLinear);
+    }
+  }
+
+  free(horizontal);
+  free(source);
+  shUpdateImageTexture(d, context);
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
@@ -2774,6 +3357,136 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
                                 VGfloat stdDeviationY,
                                 VGTilingMode tilingMode)
 {
+  SHImage *s, *d;
+  SHColor *source = NULL;
+  SHColor *horizontal = NULL;
+  SHColor edge;
+  SHfloat *kernelX = NULL;
+  SHfloat *kernelY = NULL;
+  SHint radiusX, radiusY;
+  SHint sizeX, sizeY;
+  SHint width, height;
+  SHint x, y, k;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
+                   !shIsValidImage(context, dst),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode) ||
+                   stdDeviationX <= 0.0f ||
+                   stdDeviationY <= 0.0f ||
+                   stdDeviationX > SH_MAX_GAUSSIAN_STD_DEVIATION ||
+                   stdDeviationY > SH_MAX_GAUSSIAN_STD_DEVIATION,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  s = (SHImage*)src;
+  d = (SHImage*)dst;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
+                   shImageIsRenderTarget(d),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
+                   !shImageSyncDataFromTexture(d),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  radiusX = (SHint)SH_CEIL(stdDeviationX * 3.0f);
+  radiusY = (SHint)SH_CEIL(stdDeviationY * 3.0f);
+  sizeX = radiusX * 2 + 1;
+  sizeY = radiusY * 2 + 1;
+
+  kernelX = (SHfloat*)malloc((size_t)sizeX * sizeof(SHfloat));
+  kernelY = (SHfloat*)malloc((size_t)sizeY * sizeof(SHfloat));
+  if (!kernelX || !kernelY)
+    goto gaussian_out_of_memory;
+
+  {
+    SHfloat sumX = 0.0f;
+    SHfloat sumY = 0.0f;
+    SHfloat factorX = -1.0f / (2.0f * stdDeviationX * stdDeviationX);
+    SHfloat factorY = -1.0f / (2.0f * stdDeviationY * stdDeviationY);
+
+    for (k=0; k<sizeX; ++k) {
+      SHfloat distance = (SHfloat)(k - radiusX);
+      kernelX[k] = (SHfloat)expf(distance * distance * factorX);
+      sumX += kernelX[k];
+    }
+    for (k=0; k<sizeX; ++k)
+      kernelX[k] /= sumX;
+
+    for (k=0; k<sizeY; ++k) {
+      SHfloat distance = (SHfloat)(k - radiusY);
+      kernelY[k] = (SHfloat)expf(distance * distance * factorY);
+      sumY += kernelY[k];
+    }
+    for (k=0; k<sizeY; ++k)
+      kernelY[k] /= sumY;
+  }
+
+  if (!shImageFilterLoadSource(s, context->filterFormatLinear,
+                               context->filterFormatPremultiplied,
+                               &source))
+    goto gaussian_out_of_memory;
+
+  horizontal = shImageFilterAllocColors(s->width, s->height);
+  if (!horizontal)
+    goto gaussian_out_of_memory;
+
+  edge = context->tileFillColor;
+  if (context->filterFormatPremultiplied)
+    shImageFilterPremultiply(&edge);
+
+  for (y=0; y<s->height; ++y) {
+    for (x=0; x<s->width; ++x) {
+      SHColor filtered;
+
+      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
+      for (k=0; k<sizeX; ++k) {
+        const SHColor *sample = shImageFilterTiledColor(
+          source, s->width, s->height,
+          x + k - radiusX, y, tilingMode, &edge);
+
+        shImageFilterAddScaled(&filtered, sample, kernelX[k]);
+      }
+      horizontal[y * s->width + x] = filtered;
+    }
+  }
+
+  width = SH_MIN(d->width, s->width);
+  height = SH_MIN(d->height, s->height);
+  for (y=0; y<height; ++y) {
+    for (x=0; x<width; ++x) {
+      SHColor filtered;
+
+      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
+      for (k=0; k<sizeY; ++k) {
+        const SHColor *sample = shImageFilterTiledColor(
+          horizontal, s->width, s->height,
+          x, y + k - radiusY, tilingMode, &edge);
+
+        shImageFilterAddScaled(&filtered, sample, kernelY[k]);
+      }
+      shImageFilterFinishColor(&filtered,
+                               context->filterFormatPremultiplied);
+      shImageFilterStoreMergedColor(d, x, y, &filtered,
+                                    context->filterChannelMask,
+                                    context->filterFormatLinear);
+    }
+  }
+
+  free(horizontal);
+  free(source);
+  free(kernelY);
+  free(kernelX);
+  shUpdateImageTexture(d, context);
+  VG_RETURN(VG_NO_RETVAL);
+
+gaussian_out_of_memory:
+  free(horizontal);
+  free(source);
+  free(kernelY);
+  free(kernelX);
+  VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgLookup(VGImage dst, VGImage src,
@@ -2784,6 +3497,60 @@ VG_API_CALL void vgLookup(VGImage dst, VGImage src,
                           VGboolean outputLinear,
                           VGboolean outputPremultiplied)
 {
+  SHImage *s, *d;
+  SHint width, height;
+  SHint x, y;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  (void)outputLinear;
+  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
+                   !shIsValidImage(context, dst),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!redLUT ||
+                   !greenLUT ||
+                   !blueLUT ||
+                   !alphaLUT,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  s = (SHImage*)src;
+  d = (SHImage*)dst;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
+                   shImageIsRenderTarget(d),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
+                   !shImageSyncDataFromTexture(d),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  width = SH_MIN(d->width, s->width);
+  height = SH_MIN(d->height, s->height);
+  for (y=0; y<height; ++y) {
+    for (x=0; x<width; ++x) {
+      SHColor source;
+      SHColor filtered;
+
+      shImageFilterLoadImageColor(s, x, y,
+                                  context->filterFormatLinear,
+                                  context->filterFormatPremultiplied,
+                                  &source);
+      filtered.r = shImageFilterByteToColor(
+        redLUT[shImageFilterColorToByte(source.r)]);
+      filtered.g = shImageFilterByteToColor(
+        greenLUT[shImageFilterColorToByte(source.g)]);
+      filtered.b = shImageFilterByteToColor(
+        blueLUT[shImageFilterColorToByte(source.b)]);
+      filtered.a = shImageFilterByteToColor(
+        alphaLUT[shImageFilterColorToByte(source.a)]);
+      shImageFilterFinishColor(&filtered, outputPremultiplied);
+      shImageFilterStoreMergedColor(d, x, y, &filtered,
+                                    context->filterChannelMask,
+                                    outputLinear);
+    }
+  }
+
+  shUpdateImageTexture(d, context);
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
@@ -2792,6 +3559,83 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
                                 VGboolean outputLinear,
                                 VGboolean outputPremultiplied)
 {
+  SHImage *s, *d;
+  SHint width, height;
+  SHint x, y;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  (void)outputLinear;
+  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
+                   !shIsValidImage(context, dst),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!lookupTable ||
+                   !shImageFilterAligned(lookupTable, sizeof(VGuint)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(sourceChannel != VG_RED &&
+                   sourceChannel != VG_GREEN &&
+                   sourceChannel != VG_BLUE &&
+                   sourceChannel != VG_ALPHA,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  s = (SHImage*)src;
+  d = (SHImage*)dst;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
+                   shImageIsRenderTarget(d),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
+                   !shImageSyncDataFromTexture(d),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  if (shImageFilterIsLuminanceFormat(s->fd.vgformat))
+    sourceChannel = VG_RED;
+  else if (((SHuint32)s->fd.vgformat & 0x1Fu) == VG_A_8)
+    sourceChannel = VG_ALPHA;
+
+  width = SH_MIN(d->width, s->width);
+  height = SH_MIN(d->height, s->height);
+  for (y=0; y<height; ++y) {
+    for (x=0; x<width; ++x) {
+      SHColor source;
+      SHColor filtered;
+      SHuint8 index;
+      VGuint packed;
+
+      shImageFilterLoadImageColor(s, x, y,
+                                  context->filterFormatLinear,
+                                  context->filterFormatPremultiplied,
+                                  &source);
+      switch (sourceChannel) {
+      case VG_GREEN:
+        index = shImageFilterColorToByte(source.g);
+        break;
+      case VG_BLUE:
+        index = shImageFilterColorToByte(source.b);
+        break;
+      case VG_ALPHA:
+        index = shImageFilterColorToByte(source.a);
+        break;
+      case VG_RED:
+      default:
+        index = shImageFilterColorToByte(source.r);
+        break;
+      }
+
+      packed = lookupTable[index];
+      filtered.r = shImageFilterByteToColor(packed >> 24);
+      filtered.g = shImageFilterByteToColor(packed >> 16);
+      filtered.b = shImageFilterByteToColor(packed >> 8);
+      filtered.a = shImageFilterByteToColor(packed);
+      shImageFilterFinishColor(&filtered, outputPremultiplied);
+      shImageFilterStoreMergedColor(d, x, y, &filtered,
+                                    context->filterChannelMask,
+                                    outputLinear);
+    }
+  }
+
+  shUpdateImageTexture(d, context);
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgBindImageSH(VGImage image, VGImageUnitSH unit){

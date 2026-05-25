@@ -494,6 +494,187 @@ static int expect_rgba_at(const VGubyte *data,
   return 1;
 }
 
+static int run_image_filter_test(void)
+{
+  VGImage source = VG_INVALID_HANDLE;
+  VGImage dest = VG_INVALID_HANDLE;
+  VGubyte sourceData[4 * 4 * 4];
+  VGubyte destData[4 * 4 * 4];
+  VGubyte readData[4 * 4 * 4];
+  VGubyte redLut[256];
+  VGubyte greenLut[256];
+  VGubyte blueLut[256];
+  VGubyte alphaLut[256];
+  VGuint singleLut[256];
+  VGfloat matrix[20] = {
+    0.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f,
+    0.0f, 0.0f, 0.0f, 0.0f
+  };
+  VGshort convolveKernel[] = {1, 0, 0, 0};
+  VGshort separableKernelX[] = {1, 0};
+  VGshort separableKernelY[] = {1};
+  VGfloat tileFill[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGint maxKernelSize;
+  size_t center;
+  size_t adjacent;
+  int i;
+  int result = 0;
+
+  memset(sourceData, 0, sizeof(sourceData));
+  memset(destData, 0, sizeof(destData));
+  memset(readData, 0, sizeof(readData));
+
+  for (i=0; i<16; ++i) {
+    set_rgba(sourceData, 4 * 4, i % 4, i / 4, 0, 0, 0, 255);
+    set_rgba(destData, 4 * 4, i % 4, i / 4, 1, 2, 3, 200);
+  }
+  set_rgba(sourceData, 4 * 4, 0, 0, 10, 20, 30, 255);
+  set_rgba(sourceData, 4 * 4, 1, 0, 100, 0, 0, 255);
+  set_rgba(sourceData, 4 * 4, 1, 1, 255, 0, 0, 255);
+
+  for (i=0; i<256; ++i) {
+    redLut[i] = (VGubyte)(255 - i);
+    greenLut[i] = (VGubyte)i;
+    blueLut[i] = 0;
+    alphaLut[i] = 255;
+    singleLut[i] = ((VGuint)i << 24) |
+                   ((VGuint)(255 - i) << 16) |
+                   ((VGuint)51 << 8) |
+                   (VGuint)255;
+  }
+
+  source = vgCreateImage(VG_lABGR_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  dest = vgCreateImage(VG_lABGR_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  if (source == VG_INVALID_HANDLE || dest == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG image filter test setup failed");
+    goto cleanup;
+  }
+
+  maxKernelSize = vgGeti(VG_MAX_KERNEL_SIZE);
+  if (expect_no_vg_error("OpenVG image filter limit query failed") ||
+      maxKernelSize < 2) {
+    fprintf(stderr, "OpenVG reported an unusable convolution kernel limit\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgImageSubData(source, sourceData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 4);
+  vgImageSubData(dest, destData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 4);
+  vgSeti(VG_FILTER_FORMAT_LINEAR, VG_TRUE);
+  vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_BLUE);
+  vgColorMatrix(dest, source, matrix);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgColorMatrix failed") ||
+      expect_rgba_at(readData, 4 * 4, 0, 0, 30, 2, 10, 200,
+                     "OpenVG vgColorMatrix did not honor channel masking")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
+  vgLookup(dest, source, redLut, greenLut, blueLut, alphaLut,
+           VG_TRUE, VG_FALSE);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgLookup failed") ||
+      expect_rgba_at(readData, 4 * 4, 0, 0, 245, 20, 0, 255,
+                     "OpenVG vgLookup produced the wrong mapped pixel")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgLookupSingle(dest, source, singleLut, VG_GREEN, VG_TRUE, VG_FALSE);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgLookupSingle failed") ||
+      expect_rgba_at(readData, 4 * 4, 0, 0, 20, 235, 51, 255,
+                     "OpenVG vgLookupSingle used the wrong source channel")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_TILE_FILL_COLOR, 4, tileFill);
+  vgConvolve(dest, source, 2, 2, 0, 0,
+             convolveKernel, 1.0f, 0.0f, VG_TILE_PAD);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgConvolve failed") ||
+      expect_rgba_at(readData, 4 * 4, 0, 0, 255, 0, 0, 255,
+                     "OpenVG vgConvolve did not apply the flipped column-major kernel")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeparableConvolve(dest, source, 2, 1, 0, 0,
+                      separableKernelX, separableKernelY,
+                      1.0f, 0.0f, VG_TILE_PAD);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgSeparableConvolve failed") ||
+      expect_rgba_at(readData, 4 * 4, 0, 0, 100, 0, 0, 255,
+                     "OpenVG vgSeparableConvolve did not apply the flipped kernel")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgGaussianBlur(dest, source, 1.0f, 1.0f, VG_TILE_PAD);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgGaussianBlur failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  center = ((size_t)1 * 4u + 1u) * 4u;
+  adjacent = ((size_t)1 * 4u + 2u) * 4u;
+  if (readData[center] <= readData[adjacent] ||
+      readData[adjacent] == 0 ||
+      readData[center + 3] == 0) {
+    fprintf(stderr,
+            "OpenVG vgGaussianBlur did not spread the source impulse as expected\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgColorMatrix(source, source, matrix);
+  if (expect_vg_error("OpenVG accepted overlapping image filter operands",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgConvolve(dest, source, 0, 1, 0, 0,
+             convolveKernel, 1.0f, 0.0f, VG_TILE_PAD);
+  if (expect_vg_error("OpenVG accepted an invalid convolution kernel size",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgLookup(dest, source, NULL, greenLut, blueLut, alphaLut,
+           VG_TRUE, VG_FALSE);
+  if (expect_vg_error("OpenVG accepted a null lookup table",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
+  vgSeti(VG_FILTER_FORMAT_LINEAR, VG_FALSE);
+  if (dest != VG_INVALID_HANDLE)
+    vgDestroyImage(dest);
+  if (source != VG_INVALID_HANDLE)
+    vgDestroyImage(source);
+  return result;
+}
+
 static int run_standard_blend_mode_test(unsigned char *pixels,
                                         EGLint width,
                                         EGLint height)
@@ -2027,6 +2208,8 @@ int main(void)
                                                 context, pixels, width, height);
       if (result == 0)
         result = run_pixel_transfer_test(pixels, width, height);
+      if (result == 0)
+        result = run_image_filter_test();
       if (result == 0)
         result = run_mask_test(pixels, width, height);
       if (result == 0)
