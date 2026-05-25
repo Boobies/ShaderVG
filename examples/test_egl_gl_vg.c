@@ -5,8 +5,80 @@ static VGPaint vgFill;
 static VGPaint vgStroke;
 static float angle = 0.0f;
 
+static EGLDisplay eglDisplayHandle = EGL_NO_DISPLAY;
+static EGLSurface windowSurface = EGL_NO_SURFACE;
+static EGLConfig windowConfig = NULL;
+static EGLContext openVGContext = EGL_NO_CONTEXT;
+static EGLContext openGLContext = EGL_NO_CONTEXT;
+
 static PFNGLUSEPROGRAMPROC useProgramProc = NULL;
 static PFNGLACTIVETEXTUREPROC activeTextureProc = NULL;
+
+static void failEGL(const char *message)
+{
+  fprintf(stderr, "%s (EGL error 0x%04x)\n", message, eglGetError());
+  exit(EXIT_FAILURE);
+}
+
+static const EGLint *openGLContextAttribs(void)
+{
+#if defined(EGL_CONTEXT_OPENGL_PROFILE_MASK) && defined(EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT)
+  static const EGLint attribs[] = {
+    EGL_CONTEXT_MAJOR_VERSION, 3,
+    EGL_CONTEXT_MINOR_VERSION, 3,
+    EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT,
+    EGL_NONE
+  };
+
+  return attribs;
+#else
+  return NULL;
+#endif
+}
+
+static void makeOpenGLCurrent(void)
+{
+  if (!eglBindAPI(EGL_OPENGL_API) ||
+      !eglMakeCurrent(eglDisplayHandle,
+                      windowSurface, windowSurface,
+                      openGLContext))
+    failEGL("Could not bind the OpenGL EGL context");
+}
+
+static void makeOpenVGCurrent(void)
+{
+  if (!eglBindAPI(EGL_OPENVG_API) ||
+      !eglMakeCurrent(eglDisplayHandle,
+                      windowSurface, windowSurface,
+                      openVGContext))
+    failEGL("Could not bind the OpenVG EGL context");
+}
+
+static void createOpenGLContext(void)
+{
+  eglDisplayHandle = eglGetCurrentDisplay();
+  windowSurface = eglGetCurrentSurface(EGL_DRAW);
+  openVGContext = eglGetCurrentContext();
+  windowConfig = testEGLConfig();
+
+  if (eglDisplayHandle == EGL_NO_DISPLAY ||
+      windowSurface == EGL_NO_SURFACE ||
+      openVGContext == EGL_NO_CONTEXT ||
+      !windowConfig)
+    failEGL("The example harness did not create an EGL OpenVG context");
+
+  if (!eglBindAPI(EGL_OPENGL_API))
+    failEGL("Could not bind the OpenGL EGL API");
+
+  openGLContext = eglCreateContext(eglDisplayHandle,
+                                   windowConfig,
+                                   EGL_NO_CONTEXT,
+                                   openGLContextAttribs());
+  if (openGLContext == EGL_NO_CONTEXT)
+    failEGL("Could not create the OpenGL EGL context");
+
+  makeOpenVGCurrent();
+}
 
 static void loadGLFunctions(void)
 {
@@ -142,16 +214,37 @@ static void display(float interval)
   if (angle > 360.0f)
     angle -= 360.0f;
 
+  makeOpenGLCurrent();
   drawOpenGLBackground();
+  glFlush();
+
+  makeOpenVGCurrent();
   drawOpenVGPanel();
+  vgFinish();
+
+  makeOpenGLCurrent();
   drawOpenGLForeground();
+  glFlush();
+
+  makeOpenVGCurrent();
 }
 
 static void cleanup(void)
 {
+  if (eglDisplayHandle != EGL_NO_DISPLAY &&
+      windowSurface != EGL_NO_SURFACE &&
+      openVGContext != EGL_NO_CONTEXT)
+    makeOpenVGCurrent();
+
   vgDestroyPath(vgPanel);
   vgDestroyPaint(vgFill);
   vgDestroyPaint(vgStroke);
+
+  if (eglDisplayHandle != EGL_NO_DISPLAY &&
+      openGLContext != EGL_NO_CONTEXT) {
+    eglDestroyContext(eglDisplayHandle, openGLContext);
+    openGLContext = EGL_NO_CONTEXT;
+  }
 }
 
 static void createOpenVGContent(void)
@@ -169,6 +262,7 @@ int main(int argc, char **argv)
   testCallback(TEST_CALLBACK_DISPLAY, (CallbackFunc)display);
   testCallback(TEST_CALLBACK_CLEANUP, (CallbackFunc)cleanup);
 
+  createOpenGLContext();
   createOpenVGContent();
   testRun();
 
