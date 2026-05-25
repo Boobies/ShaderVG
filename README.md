@@ -82,7 +82,7 @@ $ ./test_tiger_shader
   paint.
 
 #### test_blend
-  Loads PNG source and destination images and draws them with several
+  Loads PNG source and destination images and draws them with the standard
   OpenVG blend modes.
 
 #### test_pbuffer

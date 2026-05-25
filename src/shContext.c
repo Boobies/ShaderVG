@@ -420,6 +420,8 @@ static void shResizeSurface(VGContext *context, VGint width, VGint height)
     glUniformMatrix4fv(context->locationDraw.projection, 1, GL_FALSE, mat);
     glUniform2f(context->locationDraw.maskSurfaceSize,
                 (GLfloat)width, (GLfloat)height);
+    glUniform2f(context->locationDraw.blendSurfaceSize,
+                (GLfloat)width, (GLfloat)height);
     GL_CHECK_ERROR;
   }
 }
@@ -479,6 +481,13 @@ static void shDeinitContextGL(VGContext *context)
   if (context->renderToMaskStencil != 0) {
     glDeleteRenderbuffers(1, &context->renderToMaskStencil);
     context->renderToMaskStencil = 0;
+  }
+
+  if (context->blendTexture != 0) {
+    glDeleteTextures(1, &context->blendTexture);
+    context->blendTexture = 0;
+    context->blendTextureWidth = 0;
+    context->blendTextureHeight = 0;
   }
 
   shDeinitContextVertexState(context);
@@ -681,6 +690,9 @@ void VGContext_ctor(VGContext *c)
   /* Error */
   c->error = VG_NO_ERROR;
   c->renderTargetImage = NULL;
+  c->blendTexture = 0;
+  c->blendTextureWidth = 0;
+  c->blendTextureHeight = 0;
   
   /* Shared resources */
   c->resources = NULL;

@@ -40,12 +40,107 @@ void shUnpremultiplyFramebuffer()
   /* TODO: hmmmm..... any idea? */
 }
 
-void updateBlendingStateGL(VGContext *c, int alphaIsOne)
+static VGboolean shUsesShaderBlendMode(VGBlendMode mode)
+{
+  return (mode == VG_BLEND_MULTIPLY ||
+          mode == VG_BLEND_SCREEN ||
+          mode == VG_BLEND_DARKEN ||
+          mode == VG_BLEND_LIGHTEN ||
+          mode == VG_BLEND_ADDITIVE) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shEnsureBlendTexture(VGContext *c)
+{
+  GLint previousActiveTexture;
+  GLint previousTexture;
+
+  if (!c || c->surfaceWidth <= 0 || c->surfaceHeight <= 0)
+    return VG_FALSE;
+
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &previousActiveTexture);
+  glActiveTexture(SH_TEXTURE_BLEND);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+
+  if (c->blendTexture == 0)
+    glGenTextures(1, &c->blendTexture);
+  if (c->blendTexture == 0) {
+    glBindTexture(GL_TEXTURE_2D, (GLuint)previousTexture);
+    glActiveTexture(previousActiveTexture);
+    return VG_FALSE;
+  }
+
+  glBindTexture(GL_TEXTURE_2D, c->blendTexture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+  if (c->blendTextureWidth != c->surfaceWidth ||
+      c->blendTextureHeight != c->surfaceHeight) {
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                 c->surfaceWidth, c->surfaceHeight, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    if (glGetError() != GL_NO_ERROR) {
+      glBindTexture(GL_TEXTURE_2D, (GLuint)previousTexture);
+      glActiveTexture(previousActiveTexture);
+      return VG_FALSE;
+    }
+
+    c->blendTextureWidth = c->surfaceWidth;
+    c->blendTextureHeight = c->surfaceHeight;
+  }
+
+  glBindTexture(GL_TEXTURE_2D, (GLuint)previousTexture);
+  glActiveTexture(previousActiveTexture);
+  return VG_TRUE;
+}
+
+static VGboolean shPrepareShaderBlend(VGContext *c)
+{
+  GLint previousActiveTexture;
+
+  if (!shEnsureBlendTexture(c))
+    return VG_FALSE;
+
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &previousActiveTexture);
+  glActiveTexture(SH_TEXTURE_BLEND);
+  glBindTexture(GL_TEXTURE_2D, c->blendTexture);
+  glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                      c->surfaceWidth, c->surfaceHeight);
+  glActiveTexture(previousActiveTexture);
+
+  if (glGetError() != GL_NO_ERROR)
+    return VG_FALSE;
+
+  glUniform1i(c->locationDraw.blendMode, (GLint)c->blendMode);
+  glUniform1i(c->locationDraw.blendSampler, SH_TEXTURE_BLEND_INDEX);
+  glUniform2f(c->locationDraw.blendSurfaceSize,
+              (GLfloat)c->surfaceWidth,
+              (GLfloat)c->surfaceHeight);
+  glDisable(GL_BLEND);
+  return VG_TRUE;
+}
+
+static void shDisableShaderBlend(VGContext *c)
+{
+  glUniform1i(c->locationDraw.blendMode, 0);
+}
+
+static VGboolean updateBlendingStateGL(VGContext *c, int alphaIsOne)
 {
   /* Most common drawing mode (SRC_OVER with alpha=1)
      as well as SRC is optimized by turning OpenGL
      blending off. In other cases its turned on. */
-  
+
+  if (shUsesShaderBlendMode(c->blendMode)) {
+    if (!shPrepareShaderBlend(c))
+      return VG_FALSE;
+    return VG_TRUE;
+  }
+
+  shDisableShaderBlend(c);
+  glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+
   switch (c->blendMode)
   {
   case VG_BLEND_SRC:
@@ -92,6 +187,8 @@ void updateBlendingStateGL(VGContext *c, int alphaIsOne)
     if (alphaIsOne && c->masking == VG_FALSE) glDisable(GL_BLEND);
     else glEnable(GL_BLEND); break;
   };
+
+  return VG_TRUE;
 }
 
 static void shApplyMaskState(VGContext *context)
@@ -261,6 +358,7 @@ static void shDrawCoverageMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
   CSET(coveragePaint.color, 1.0f, 1.0f, 1.0f, 1.0f);
   shLoadOneColorMesh(&coveragePaint);
   glUniform1i(c->locationDraw.maskEnabled, 0);
+  shDisableShaderBlend(c);
 
   v[0] = pmin.x; v[1] = pmin.y;
   v[2] = pmax.x; v[3] = pmin.y;
@@ -733,9 +831,17 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
     shDrawVertices(p, GL_TRIANGLE_FAN);
     
     /* Setup blending */
-    updateBlendingStateGL(context,
-                          fill->type == VG_PAINT_TYPE_COLOR &&
-                          fill->color.a == 1.0f);
+    if (!updateBlendingStateGL(context,
+                               fill->type == VG_PAINT_TYPE_COLOR &&
+                               fill->color.a == 1.0f)) {
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+      glDisable(GL_STENCIL_TEST);
+      glDisable(GL_BLEND);
+      if (context->scissoring == VG_TRUE)
+        glDisable(GL_SCISSOR_TEST);
+      shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+      VG_RETURN(VG_NO_RETVAL);
+    }
     
     /* Draw paint where stencil odd */
     glStencilFunc(GL_EQUAL, 1, 1);
@@ -769,9 +875,17 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
       shDrawStroke(p);
 
       /* Setup blending */
-      updateBlendingStateGL(context,
-                            stroke->type == VG_PAINT_TYPE_COLOR &&
-                            stroke->color.a == 1.0f);
+      if (!updateBlendingStateGL(context,
+                                 stroke->type == VG_PAINT_TYPE_COLOR &&
+                                 stroke->color.a == 1.0f)) {
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDisable(GL_STENCIL_TEST);
+        glDisable(GL_BLEND);
+        if (context->scissoring == VG_TRUE)
+          glDisable(GL_SCISSOR_TEST);
+        shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+        VG_RETURN(VG_NO_RETVAL);
+      }
 
       /* Draw paint where stencil odd */
       glStencilFunc(GL_EQUAL, 1, 1);
@@ -961,7 +1075,15 @@ void shDrawImage(VGContext *context, SHImage *i)
   fill = (context->fillPaint ? context->fillPaint : &context->defaultPaint);
   
   /* Setup blending */
-  updateBlendingStateGL(context, 0);
+  if (!updateBlendingStateGL(context, 0)) {
+    glDisableVertexAttribArray(context->locationDraw.textureUV);
+    glDisable(GL_BLEND);
+    if (context->scissoring == VG_TRUE)
+      glDisable(GL_SCISSOR_TEST);
+    shRestoreVertexState(&vertexState);
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    VG_RETURN(VG_NO_RETVAL);
+  }
 
   /* Draw textured quad */
   glEnable(GL_TEXTURE_2D);

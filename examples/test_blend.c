@@ -6,7 +6,9 @@
 #  define IMAGE_DIR "./"
 #endif
 
-#define BLEND_COUNT 5
+#define BLEND_COUNT 10
+#define BLEND_COLUMNS 5
+#define BLEND_ROWS ((BLEND_COUNT + BLEND_COLUMNS - 1) / BLEND_COLUMNS)
 
 typedef struct
 {
@@ -29,7 +31,12 @@ static BlendPanel blendPanels[BLEND_COUNT] = {
   { VG_BLEND_SRC_OVER, { 0.34f, 0.44f, 0.62f, 1.0f } },
   { VG_BLEND_DST_OVER, { 0.35f, 0.54f, 0.48f, 1.0f } },
   { VG_BLEND_SRC_IN,   { 0.56f, 0.45f, 0.62f, 1.0f } },
-  { VG_BLEND_DST_IN,   { 0.58f, 0.50f, 0.34f, 1.0f } }
+  { VG_BLEND_DST_IN,   { 0.58f, 0.50f, 0.34f, 1.0f } },
+  { VG_BLEND_MULTIPLY, { 0.36f, 0.43f, 0.38f, 1.0f } },
+  { VG_BLEND_SCREEN,   { 0.48f, 0.40f, 0.54f, 1.0f } },
+  { VG_BLEND_DARKEN,   { 0.42f, 0.46f, 0.52f, 1.0f } },
+  { VG_BLEND_LIGHTEN,  { 0.50f, 0.48f, 0.37f, 1.0f } },
+  { VG_BLEND_ADDITIVE, { 0.54f, 0.40f, 0.35f, 1.0f } }
 };
 
 static void setPaintColor(VGPaint paint,
@@ -221,9 +228,12 @@ static void display(float interval)
   VGfloat panelWidth = 116.0f;
   VGfloat panelHeight = 138.0f;
   VGfloat gap = 18.0f;
-  VGfloat x0 = (testWidth() - (panelWidth * BLEND_COUNT +
-                               gap * (BLEND_COUNT - 1))) * 0.5f;
-  VGfloat y = (testHeight() - panelHeight) * 0.5f;
+  VGfloat gridWidth = panelWidth * BLEND_COLUMNS +
+                      gap * (BLEND_COLUMNS - 1);
+  VGfloat gridHeight = panelHeight * BLEND_ROWS +
+                       gap * (BLEND_ROWS - 1);
+  VGfloat x0 = (testWidth() - gridWidth) * 0.5f;
+  VGfloat y0 = (testHeight() - gridHeight) * 0.5f;
   VGfloat imageW = srcWidth > dstWidth ? srcWidth : dstWidth;
   VGfloat imageH = srcHeight > dstHeight ? srcHeight : dstHeight;
   VGfloat imageXOffset = (panelWidth - imageW * scale) * 0.5f;
@@ -237,7 +247,10 @@ static void display(float interval)
   vgSeti(VG_IMAGE_MODE, VG_DRAW_IMAGE_NORMAL);
 
   for (i=0; i<BLEND_COUNT; ++i) {
-    VGfloat x = x0 + i * (panelWidth + gap);
+    VGint column = i % BLEND_COLUMNS;
+    VGint row = i / BLEND_COLUMNS;
+    VGfloat x = x0 + column * (panelWidth + gap);
+    VGfloat y = y0 + (BLEND_ROWS - 1 - row) * (panelHeight + gap);
 
     vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
     drawImage(dstImage, x + imageXOffset, y + imageYOffset, scale);
@@ -247,7 +260,10 @@ static void display(float interval)
   }
 
   for (i=0; i<BLEND_COUNT; ++i) {
-    VGfloat x = x0 + i * (panelWidth + gap);
+    VGint column = i % BLEND_COLUMNS;
+    VGint row = i / BLEND_COLUMNS;
+    VGfloat x = x0 + column * (panelWidth + gap);
+    VGfloat y = y0 + (BLEND_ROWS - 1 - row) * (panelHeight + gap);
     drawPanelBackground(x, y, panelWidth, panelHeight, &blendPanels[i]);
   }
 }
@@ -283,7 +299,7 @@ static void createOperands(void)
 
 int main(int argc, char **argv)
 {
-  testInit(argc, argv, 720, 220, "ShaderVG: Blending Test");
+  testInit(argc, argv, 720, 380, "ShaderVG: Blending Test");
   testCallback(TEST_CALLBACK_DISPLAY, (CallbackFunc)display);
   testCallback(TEST_CALLBACK_CLEANUP, (CallbackFunc)cleanup);
 

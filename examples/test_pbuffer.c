@@ -494,6 +494,74 @@ static int expect_rgba_at(const VGubyte *data,
   return 1;
 }
 
+static int run_standard_blend_mode_test(unsigned char *pixels,
+                                        EGLint width,
+                                        EGLint height)
+{
+  struct {
+    VGBlendMode mode;
+    VGubyte r;
+    VGubyte g;
+    VGubyte b;
+  } cases[] = {
+    { VG_BLEND_MULTIPLY, 32, 32, 143 },
+    { VG_BLEND_SCREEN, 159, 159, 239 },
+    { VG_BLEND_DARKEN, 64, 64, 191 },
+    { VG_BLEND_LIGHTEN, 128, 128, 191 },
+    { VG_BLEND_ADDITIVE, 191, 191, 255 }
+  };
+  VGPath rect = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGfloat dstColor[] = {0.25f, 0.50f, 0.75f, 1.0f};
+  VGfloat srcColor[] = {0.50f, 0.25f, 0.75f, 1.0f};
+  int i;
+  int result = 0;
+
+  rect = create_rect_path((VGfloat)width, (VGfloat)height);
+  paint = vgCreatePaint();
+  if (rect == VG_INVALID_HANDLE || paint == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG blend mode test setup failed");
+    goto cleanup;
+  }
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, srcColor);
+
+  for (i=0; i<(int)(sizeof(cases) / sizeof(cases[0])); ++i) {
+    vgSetfv(VG_CLEAR_COLOR, 4, dstColor);
+    vgClear(0, 0, width, height);
+    vgSeti(VG_BLEND_MODE, cases[i].mode);
+    vgDrawPath(rect, VG_FILL_PATH);
+    vgFinish();
+    vgReadPixels(pixels, width * 4, VG_sRGBA_8888,
+                 0, 0, width, height);
+
+    if (expect_no_vg_error("OpenVG standard blend mode test failed")) {
+      result = 1;
+      goto cleanup;
+    }
+
+    if (expect_rgba_at(pixels, width * 4, width / 2, height / 2,
+                       cases[i].r, cases[i].g, cases[i].b, 255,
+                       "OpenVG standard blend mode produced an unexpected pixel")) {
+      result = 1;
+      goto cleanup;
+    }
+  }
+
+cleanup:
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+  return result;
+}
+
 static int run_pixel_transfer_test(unsigned char *pixels,
                                    EGLint width,
                                    EGLint height)
@@ -1949,6 +2017,8 @@ int main(void)
         result = run_gradient_ramp_test(pixels, width, height);
       if (result == 0)
         result = run_src_over_alpha_test(pixels, width, height);
+      if (result == 0)
+        result = run_standard_blend_mode_test(pixels, width, height);
       if (result == 0)
         result = run_shared_context_test(display, config, surface,
                                          context, pixels, width, height);

@@ -65,6 +65,13 @@ static const char* vgShaderFragmentPipeline =
 "#define DRAW_MODE_PATH             0\n"
 "#define DRAW_MODE_IMAGE            1\n"
 "\n"
+"#define BLEND_MODE_NONE            0\n"
+"#define BLEND_MULTIPLY             0x2005\n"
+"#define BLEND_SCREEN               0x2006\n"
+"#define BLEND_DARKEN               0x2007\n"
+"#define BLEND_LIGHTEN              0x2008\n"
+"#define BLEND_ADDITIVE             0x2009\n"
+"\n"
 "in vec2 texImageCoord;\n"
 "in vec2 paintCoord;\n"
 "\n"
@@ -80,6 +87,9 @@ static const char* vgShaderFragmentPipeline =
 "uniform int maskEnabled;\n"
 "uniform sampler2D maskSampler;\n"
 "uniform vec2 maskSurfaceSize;\n"
+"uniform int blendMode;\n"
+"uniform sampler2D blendSampler;\n"
+"uniform vec2 blendSurfaceSize;\n"
 "\n"
 "out vec4 fragColor;\n"
 "vec4 sh_Color;\n"
@@ -111,6 +121,7 @@ static const char* vgShaderFragmentPipeline =
 "         / ( r*r - (dfx*dfx + dfy*dfy) );\n"
 "}\n"
 "\n"
+"vec4 applyBlendMode(vec4 src);\n"
 "void shMain(void);\n"
 "\n"
 "void main()\n"
@@ -157,6 +168,49 @@ static const char* vgShaderFragmentPipeline =
 "        float maskValue = texture(maskSampler, gl_FragCoord.xy / maskSurfaceSize).r;\n"
 "        fragColor.a *= maskValue;\n"
 "    }\n"
+"    fragColor = applyBlendMode(fragColor);\n"
+"}\n";
+
+static const char* vgShaderFragmentBlendPipeline =
+"vec4 applyBlendMode(vec4 src)\n"
+"{\n"
+"    if (blendMode == BLEND_MODE_NONE)\n"
+"        return src;\n"
+"\n"
+"    vec4 dst = texture(blendSampler, gl_FragCoord.xy / blendSurfaceSize);\n"
+"    vec3 sp = clamp(src.rgb * src.a, 0.0, 1.0);\n"
+"    vec3 dp = clamp(dst.rgb, 0.0, 1.0);\n"
+"    float sa = clamp(src.a, 0.0, 1.0);\n"
+"    float da = clamp(dst.a, 0.0, 1.0);\n"
+"    vec3 outRgb = sp;\n"
+"    float outA = sa;\n"
+"\n"
+"    switch (blendMode) {\n"
+"    case BLEND_MULTIPLY:\n"
+"        outRgb = sp * (1.0 - da) + dp * (1.0 - sa) + sp * dp;\n"
+"        outA = sa + da * (1.0 - sa);\n"
+"        break;\n"
+"    case BLEND_SCREEN:\n"
+"        outRgb = sp + dp - sp * dp;\n"
+"        outA = sa + da * (1.0 - sa);\n"
+"        break;\n"
+"    case BLEND_DARKEN:\n"
+"        outRgb = min(sp + dp * (1.0 - sa), dp + sp * (1.0 - da));\n"
+"        outA = sa + da * (1.0 - sa);\n"
+"        break;\n"
+"    case BLEND_LIGHTEN:\n"
+"        outRgb = max(sp + dp * (1.0 - sa), dp + sp * (1.0 - da));\n"
+"        outA = sa + da * (1.0 - sa);\n"
+"        break;\n"
+"    case BLEND_ADDITIVE:\n"
+"        outRgb = min(sp + dp, vec3(1.0));\n"
+"        outA = min(sa + da, 1.0);\n"
+"        break;\n"
+"    default:\n"
+"        return src;\n"
+"    }\n"
+"\n"
+"    return vec4(clamp(outRgb, 0.0, 1.0), clamp(outA, 0.0, 1.0));\n"
 "}\n";
 
 static const char* vgShaderFragmentUserDefault =
@@ -191,8 +245,8 @@ void shInitPiplelineShaders(void) {
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   const char* extendedStage;
-  const char* buf[2];
-  GLint size[2];
+  const char* buf[3];
+  GLint size[3];
 
   context->vs = glCreateShader(GL_VERTEX_SHADER);
   if(context->userShaderVertex){
@@ -216,10 +270,12 @@ void shInitPiplelineShaders(void) {
     extendedStage = vgShaderFragmentUserDefault;
   }
   buf[0] = vgShaderFragmentPipeline;
-  buf[1] = extendedStage;
+  buf[1] = vgShaderFragmentBlendPipeline;
+  buf[2] = extendedStage;
   size[0] = strlen(vgShaderFragmentPipeline);
-  size[1] = strlen(extendedStage);
-  glShaderSource(context->fs, 2, buf, size);
+  size[1] = strlen(vgShaderFragmentBlendPipeline);
+  size[2] = strlen(extendedStage);
+  glShaderSource(context->fs, 3, buf, size);
   glCompileShader(context->fs);
   SH_CHECK_SHADER_COMPILE(context->fs, "pipeline fragment");
   GL_CHECK_ERROR;
@@ -247,6 +303,9 @@ void shInitPiplelineShaders(void) {
   context->locationDraw.maskEnabled    = glGetUniformLocation(context->progDraw, "maskEnabled");
   context->locationDraw.maskSampler    = glGetUniformLocation(context->progDraw, "maskSampler");
   context->locationDraw.maskSurfaceSize= glGetUniformLocation(context->progDraw, "maskSurfaceSize");
+  context->locationDraw.blendMode      = glGetUniformLocation(context->progDraw, "blendMode");
+  context->locationDraw.blendSampler   = glGetUniformLocation(context->progDraw, "blendSampler");
+  context->locationDraw.blendSurfaceSize= glGetUniformLocation(context->progDraw, "blendSurfaceSize");
   GL_CHECK_ERROR;
 
   // TODO: Support color transform to remove this from here
@@ -255,6 +314,8 @@ void shInitPiplelineShaders(void) {
   glUniform4fv(context->locationDraw.scaleFactorBias, 2, factor_bias);
   glUniform1i(context->locationDraw.maskEnabled, 0);
   glUniform1i(context->locationDraw.maskSampler, SH_TEXTURE_MASK_INDEX);
+  glUniform1i(context->locationDraw.blendMode, 0);
+  glUniform1i(context->locationDraw.blendSampler, SH_TEXTURE_BLEND_INDEX);
   GL_CHECK_ERROR;
 
   /* Initialize uniform variables */
@@ -263,6 +324,9 @@ void shInitPiplelineShaders(void) {
   shCalcOrtho2D(mat, 0, context->surfaceWidth , 0, context->surfaceHeight, -volume, volume);
   glUniformMatrix4fv(context->locationDraw.projection, 1, GL_FALSE, mat);
   glUniform2f(context->locationDraw.maskSurfaceSize,
+              (GLfloat)context->surfaceWidth,
+              (GLfloat)context->surfaceHeight);
+  glUniform2f(context->locationDraw.blendSurfaceSize,
               (GLfloat)context->surfaceWidth,
               (GLfloat)context->surfaceHeight);
   GL_CHECK_ERROR;

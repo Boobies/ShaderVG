@@ -142,6 +142,9 @@ typedef struct
   
   VGErrorCode       error;
   SHImage*          renderTargetImage;
+  GLuint            blendTexture;
+  SHint             blendTextureWidth;
+  SHint             blendTextureHeight;
   
   /* Shared resources */
   SHResourceGroup  *resources;
@@ -168,6 +171,9 @@ typedef struct
       GLint maskEnabled    ;
       GLint maskSampler    ;
       GLint maskSurfaceSize;
+      GLint blendMode      ;
+      GLint blendSampler   ;
+      GLint blendSurfaceSize;
   } locationDraw;
 
   struct {
