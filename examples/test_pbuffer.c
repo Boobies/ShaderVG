@@ -501,11 +501,14 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   VGImage image = VG_INVALID_HANDLE;
   VGImage dstImage = VG_INVALID_HANDLE;
   VGImage alphaImage = VG_INVALID_HANDLE;
+  VGImage lumaImage = VG_INVALID_HANDLE;
   VGubyte writeData[8 * 5 * 4];
   VGubyte imageData[5 * 5 * 4];
   VGubyte stridedImageData[7 * 4 * 4];
   VGubyte imageRead[6 * 6 * 4];
   VGubyte alphaRead[4 * 4];
+  VGubyte lumaRead[4 * 4];
+  VGubyte lumaWrite[3 * 3];
   VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGfloat blue[] = {0.0f, 0.0f, 1.0f, 1.0f};
   VGfloat transparent[] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -519,6 +522,9 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   memset(stridedImageData, 0, sizeof(stridedImageData));
   memset(imageRead, 0, sizeof(imageRead));
   memset(alphaRead, 0, sizeof(alphaRead));
+  memset(lumaRead, 0, sizeof(lumaRead));
+  memset(lumaWrite, 0, sizeof(lumaWrite));
+  lumaWrite[1 * 3 + 1] = 96;
 
   for (i=0; i<6 * 5; ++i) {
     VGint x = i % 6;
@@ -539,10 +545,19 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   image = vgCreateImage(VG_lABGR_8888, 5, 5, VG_IMAGE_QUALITY_BETTER);
   dstImage = vgCreateImage(VG_lABGR_8888, 5, 5, VG_IMAGE_QUALITY_BETTER);
   alphaImage = vgCreateImage(VG_A_8, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  lumaImage = vgCreateImage(VG_sL_8, 4, 4, VG_IMAGE_QUALITY_BETTER);
   if (image == VG_INVALID_HANDLE ||
       dstImage == VG_INVALID_HANDLE ||
-      alphaImage == VG_INVALID_HANDLE) {
+      alphaImage == VG_INVALID_HANDLE ||
+      lumaImage == VG_INVALID_HANDLE) {
     result = fail_vg("OpenVG pixel transfer test setup failed");
+    goto cleanup;
+  }
+
+  vgDestroyImage(VG_INVALID_HANDLE);
+  if (expect_vg_error("OpenVG destroy image reported the wrong invalid handle error",
+                      VG_BAD_HANDLE_ERROR)) {
+    result = 1;
     goto cleanup;
   }
 
@@ -586,6 +601,18 @@ static int run_pixel_transfer_test(unsigned char *pixels,
       alphaRead[1 * 4 + 1] < 250 ||
       alphaRead[0] > 5) {
     fprintf(stderr, "OpenVG vgClearImage did not clear VG_A_8 alpha coverage\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, blue);
+  vgClearImage(lumaImage, 0, 0, 4, 4);
+  vgGetImageSubData(lumaImage, lumaRead, 4, VG_sL_8, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG luminance image clear/readback failed") ||
+      lumaRead[0] < 15 ||
+      lumaRead[0] > 22) {
+    fprintf(stderr, "OpenVG luminance clear used the wrong conversion value (%u)\n",
+            lumaRead[0]);
     result = 1;
     goto cleanup;
   }
@@ -636,6 +663,18 @@ static int run_pixel_transfer_test(unsigned char *pixels,
                      "OpenVG clipped vgWritePixels used the wrong source offset") ||
       expect_rgba_at(pixels, width * 4, 2, 2, 0, 0, 0, 255,
                      "OpenVG clipped vgWritePixels wrote outside the clipped rectangle")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgWritePixels(lumaWrite, 3, VG_sL_8, 50, 8, 3, 3);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG luminance vgWritePixels failed") ||
+      expect_rgba_at(pixels, width * 4, 51, 9, 96, 96, 96, 255,
+                     "OpenVG luminance vgWritePixels did not expand to grayscale")) {
     result = 1;
     goto cleanup;
   }
@@ -724,6 +763,8 @@ cleanup:
   vgSeti(VG_SCISSORING, VG_FALSE);
   vgSeti(VG_MASKING, VG_FALSE);
   vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  if (lumaImage != VG_INVALID_HANDLE)
+    vgDestroyImage(lumaImage);
   if (alphaImage != VG_INVALID_HANDLE)
     vgDestroyImage(alphaImage);
   if (dstImage != VG_INVALID_HANDLE)

@@ -307,13 +307,8 @@ void shSetupImageFormat(VGImageFormat vg, SHImageFormatDesc *f)
     break;
   case VG_sL_8:
   case VG_lL_8:
-
-#if 0
-    f->glintformat = GL_LUMINANCE;
-    f->glformat = GL_LUMINANCE;
-#else
-    /* Not supported yet */
-#endif
+    f->glintformat = GL_R8;
+    f->glformat = GL_RED;
     f->gltype = GL_UNSIGNED_BYTE;
 
     break;
@@ -373,6 +368,19 @@ int shIsSupportedImageFormat(VGImageFormat format)
   return 1;
 }
 
+static void shApplyImageTextureSwizzle(VGImageFormat format)
+{
+  SHuint32 baseFormat = format & 0x1F;
+
+  if (baseFormat == VG_A_8) {
+    GLint swizzle[4] = {GL_ONE, GL_ONE, GL_ONE, GL_RED};
+    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+  } else if (baseFormat == VG_sL_8 || baseFormat == VG_lL_8) {
+    GLint swizzle[4] = {GL_RED, GL_RED, GL_RED, GL_ONE};
+    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+  }
+}
+
 /*--------------------------------------------------------
  * Packs the pixel color components into memory at given
  * address according to given format
@@ -392,7 +400,7 @@ void shStoreColor(SHColor *c, void *data, SHImageFormatDesc *f)
   if (f->vgformat == VG_lL_8 || f->vgformat == VG_sL_8) {
 
     /* Grayscale (luminosity) conversion as defined by the spec */
-    l = 0.2126f * c->r + 0.7152f * c->g + 0.0722f * c->r;
+    l = 0.2126f * c->r + 0.7152f * c->g + 0.0722f * c->b;
     out = (SHuint32)(l * (SHfloat)f->rmax + 0.5f);
 
   }else{
@@ -582,7 +590,13 @@ void shImageMarkGpuDataDirty(SHImage *i)
 
 VGboolean shImageSyncDataFromTexture(SHImage *i)
 {
+  GLint activeTexture;
   GLint previousTexture;
+  GLint packAlignment;
+  GLint packRowLength;
+  GLint packSkipPixels;
+  GLint packSkipRows;
+  GLenum error;
 
   if (!i || !i->gpuDataDirty)
     return VG_TRUE;
@@ -590,13 +604,31 @@ VGboolean shImageSyncDataFromTexture(SHImage *i)
   if (i->texture == 0 || !i->data)
     return VG_FALSE;
 
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+  glActiveTexture(GL_TEXTURE0);
   glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+  glGetIntegerv(GL_PACK_ALIGNMENT, &packAlignment);
+  glGetIntegerv(GL_PACK_ROW_LENGTH, &packRowLength);
+  glGetIntegerv(GL_PACK_SKIP_PIXELS, &packSkipPixels);
+  glGetIntegerv(GL_PACK_SKIP_ROWS, &packSkipRows);
+
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
   glBindTexture(GL_TEXTURE_2D, i->texture);
   glGetTexImage(GL_TEXTURE_2D, 0, i->fd.glformat, i->fd.gltype, i->data);
-  glBindTexture(GL_TEXTURE_2D, previousTexture);
 
-  if (glGetError() != GL_NO_ERROR)
+  error = glGetError();
+
+  glPixelStorei(GL_PACK_ALIGNMENT, packAlignment);
+  glPixelStorei(GL_PACK_ROW_LENGTH, packRowLength);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, packSkipPixels);
+  glPixelStorei(GL_PACK_SKIP_ROWS, packSkipRows);
+  glBindTexture(GL_TEXTURE_2D, previousTexture);
+  glActiveTexture(activeTexture);
+
+  if (error != GL_NO_ERROR)
     return VG_FALSE;
 
   i->gpuDataDirty = VG_FALSE;
@@ -637,20 +669,41 @@ void shUpdateImageTextureSize(SHImage *i)
 
 void shUpdateImageTexture(SHImage *i, VGContext *c)
 {
+  GLint activeTexture;
+  GLint previousTexture;
+  GLint unpackAlignment;
+  GLint unpackRowLength;
+  GLint unpackSkipPixels;
+  GLint unpackSkipRows;
+
   /* Store pixels to texture */
   if (i->texture == 0)
     glGenTextures(1, &i->texture);
 
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+  glActiveTexture(GL_TEXTURE0);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+  glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpackAlignment);
+  glGetIntegerv(GL_UNPACK_ROW_LENGTH, &unpackRowLength);
+  glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &unpackSkipPixels);
+  glGetIntegerv(GL_UNPACK_SKIP_ROWS, &unpackSkipRows);
+
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
   glBindTexture(GL_TEXTURE_2D, i->texture);
   glTexImage2D(GL_TEXTURE_2D, 0, i->fd.glintformat,
                i->texwidth, i->texheight, 0,
                i->fd.glformat, i->fd.gltype, i->data);
+  shApplyImageTextureSwizzle(i->fd.vgformat);
 
-  if ((i->fd.vgformat & 0x1F) == VG_A_8) {
-    GLint swizzle[4] = {GL_ONE, GL_ONE, GL_ONE, GL_RED};
-    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
-  }
+  glPixelStorei(GL_UNPACK_ALIGNMENT, unpackAlignment);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, unpackRowLength);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, unpackSkipPixels);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, unpackSkipRows);
+  glBindTexture(GL_TEXTURE_2D, previousTexture);
+  glActiveTexture(activeTexture);
 
   i->gpuDataDirty = VG_FALSE;
 }
@@ -726,7 +779,7 @@ VG_API_CALL void vgDestroyImage(VGImage image)
   
   /* Check if valid resource */
   index = shImageArrayFind(&context->resources->images, (SHImage*)image);
-  VG_RETURN_ERR_IF(index == -1, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Remove the public handle; retained font glyphs may keep the object alive. */
   shImageArrayRemoveAt(&context->resources->images, index);
@@ -992,6 +1045,8 @@ static VGboolean shFormatHasDirectGLStorage(const SHImageFormatDesc *format)
           baseFormat == VG_sRGB_565 ||
           baseFormat == VG_sRGBA_5551 ||
           baseFormat == VG_sRGBA_4444 ||
+          baseFormat == VG_sL_8 ||
+          baseFormat == VG_lL_8 ||
           baseFormat == VG_A_8) ? VG_TRUE : VG_FALSE;
 }
 
@@ -1249,11 +1304,20 @@ static void shGetImageClearColor(const SHImage *image,
                                  const SHColor *clear,
                                  GLfloat out[4])
 {
-  if ((image->fd.vgformat & 0x1F) == VG_A_8) {
+  SHuint32 baseFormat = image->fd.vgformat & 0x1F;
+
+  if (baseFormat == VG_A_8) {
     out[0] = clear->a;
     out[1] = 0.0f;
     out[2] = 0.0f;
     out[3] = 0.0f;
+  } else if (baseFormat == VG_sL_8 || baseFormat == VG_lL_8) {
+    out[0] = 0.2126f * clear->r +
+             0.7152f * clear->g +
+             0.0722f * clear->b;
+    out[1] = 0.0f;
+    out[2] = 0.0f;
+    out[3] = 1.0f;
   } else {
     out[0] = clear->r;
     out[1] = clear->g;
@@ -1865,14 +1929,6 @@ static VGboolean shCanDrawSurfaceImageTexture(const SHImage *image)
           shCanDrawSurfaceTextureFormat(&image->fd)) ? VG_TRUE : VG_FALSE;
 }
 
-static void shApplyAlphaTextureSwizzle(VGImageFormat format)
-{
-  if ((format & 0x1F) == VG_A_8) {
-    GLint swizzle[4] = {GL_ONE, GL_ONE, GL_ONE, GL_RED};
-    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
-  }
-}
-
 static VGboolean shDrawSurfaceTexture(VGContext *context,
                                       GLuint texture,
                                       SHint dx, SHint dy,
@@ -2122,7 +2178,7 @@ static VGboolean shTryDirectWritePixels(VGContext *context,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  shApplyAlphaTextureSwizzle(dataFormat);
+  shApplyImageTextureSwizzle(dataFormat);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, rowLength);
   glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
