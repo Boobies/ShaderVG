@@ -2,7 +2,7 @@
 
 <img src="/examples/test_tiger_shader.gif?raw=true" width="400px">
 
-_**Note:** This project is based on https://github.com/ileben/ShivaVG_
+_**Note:** This project is based on https://github.com/ileben/ShivaVG and https://github.com/tqm-dev/ShaderVG_
 
 ## Main Features
 
@@ -22,7 +22,7 @@ _**Note:** This project is based on https://github.com/ileben/ShivaVG_
 
 Clone and enter the repository:
 ```
-$ git clone https://github.com/tqm-dev/ShaderVG
+$ git clone https://github.com/Boobies/ShaderVG
 $ cd ShaderVG
 ```
 
@@ -284,4 +284,4 @@ texture surfaces.
 
 ## License
 
-This project is licensed under the GNU Lesser General Public License v2.1 - see the [LICENSE](https://github.com/tqm-dev/ShaderVG/blob/master/COPYING) file for details
+This project is licensed under the GNU Lesser General Public License v2.1 - see the [LICENSE](https://github.com/Boobies/ShaderVG/blob/master/COPYING) file for details
