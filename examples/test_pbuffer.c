@@ -528,6 +528,7 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   set_rgba(writeData, 8 * 4, 2, 2, 0, 255, 0, 255);
   set_rgba(writeData, 8 * 4, 3, 2, 255, 255, 0, 255);
   set_rgba(writeData, 8 * 4, 0, 0, 0, 255, 0, 255);
+  set_rgba(writeData, 8 * 4, 1, 1, 0, 255, 0, 255);
 
   for (i=0; i<5 * 5; ++i)
     set_rgba(imageData, 5 * 4, i % 5, i / 5, 255, 0, 0, 255);
@@ -621,6 +622,20 @@ static int run_pixel_transfer_test(unsigned char *pixels,
                      "OpenVG vgWritePixels did not write inside the scissor") ||
       expect_rgba_at(pixels, width * 4, 10, 8, 0, 0, 0, 255,
                      "OpenVG vgWritePixels ignored scissoring")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgWritePixels(writeData, 8 * 4, VG_lABGR_8888, -1, -1, 3, 3);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG clipped vgWritePixels failed") ||
+      expect_rgba_at(pixels, width * 4, 0, 0, 0, 255, 0, 255,
+                     "OpenVG clipped vgWritePixels used the wrong source offset") ||
+      expect_rgba_at(pixels, width * 4, 2, 2, 0, 0, 0, 255,
+                     "OpenVG clipped vgWritePixels wrote outside the clipped rectangle")) {
     result = 1;
     goto cleanup;
   }

@@ -1842,10 +1842,44 @@ static void shCopyRGBAToPixels(SHuint8 *dst,
   }
 }
 
-static VGboolean shDrawSurfacePixels(VGContext *context,
-                                     const SHuint8 *pixels,
-                                     SHint dx, SHint dy,
-                                     SHint width, SHint height)
+static VGboolean shCanDrawSurfaceTextureFormat(const SHImageFormatDesc *format)
+{
+  GLenum internalFormat;
+
+  if (!format || !shFormatHasDirectGLStorage(format))
+    return VG_FALSE;
+
+  internalFormat = format->glintformat;
+  if (internalFormat == GL_RGBA)
+    return format->amask != 0 ? VG_TRUE : VG_FALSE;
+  return (internalFormat == GL_RGB ||
+          internalFormat == GL_R8) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shCanDrawSurfaceImageTexture(const SHImage *image)
+{
+  return (image &&
+          image->texture != 0 &&
+          image->texwidth == image->width &&
+          image->texheight == image->height &&
+          shCanDrawSurfaceTextureFormat(&image->fd)) ? VG_TRUE : VG_FALSE;
+}
+
+static void shApplyAlphaTextureSwizzle(VGImageFormat format)
+{
+  if ((format & 0x1F) == VG_A_8) {
+    GLint swizzle[4] = {GL_ONE, GL_ONE, GL_ONE, GL_RED};
+    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+  }
+}
+
+static VGboolean shDrawSurfaceTexture(VGContext *context,
+                                      GLuint texture,
+                                      SHint dx, SHint dy,
+                                      SHint width, SHint height,
+                                      SHint textureWidth,
+                                      SHint textureHeight,
+                                      SHint sx, SHint sy)
 {
   typedef struct
   {
@@ -1862,39 +1896,44 @@ static VGboolean shDrawSurfacePixels(VGContext *context,
     0.0f, 0.0f, 0.0f, 1.0f
   };
 
-  GLuint texture = 0;
   SHSurfacePixelVertex vertices[4];
   SHVertexState vertexState;
   SHSurfacePixelGLState glState;
+  VGboolean success;
+  GLfloat u0;
+  GLfloat u1;
+  GLfloat v0;
+  GLfloat v1;
   SHint i;
 
-  if (!context || !pixels || width <= 0 || height <= 0)
+  if (width <= 0 || height <= 0)
     return VG_TRUE;
+  if (!context || texture == 0 || textureWidth <= 0 || textureHeight <= 0)
+    return VG_FALSE;
+
+  u0 = (GLfloat)sx / (GLfloat)textureWidth;
+  u1 = (GLfloat)(sx + width) / (GLfloat)textureWidth;
+  v0 = (GLfloat)sy / (GLfloat)textureHeight;
+  v1 = (GLfloat)(sy + height) / (GLfloat)textureHeight;
 
   vertices[0].x = (GLfloat)dx;
   vertices[0].y = (GLfloat)dy;
-  vertices[0].u = 0.0f;
-  vertices[0].v = 0.0f;
+  vertices[0].u = u0;
+  vertices[0].v = v0;
   vertices[1].x = (GLfloat)(dx + width);
   vertices[1].y = (GLfloat)dy;
-  vertices[1].u = 1.0f;
-  vertices[1].v = 0.0f;
+  vertices[1].u = u1;
+  vertices[1].v = v0;
   vertices[2].x = (GLfloat)dx;
   vertices[2].y = (GLfloat)(dy + height);
-  vertices[2].u = 0.0f;
-  vertices[2].v = 1.0f;
+  vertices[2].u = u0;
+  vertices[2].v = v1;
   vertices[3].x = (GLfloat)(dx + width);
   vertices[3].y = (GLfloat)(dy + height);
-  vertices[3].u = 1.0f;
-  vertices[3].v = 1.0f;
+  vertices[3].u = u1;
+  vertices[3].v = v1;
 
   shSaveSurfacePixelGLState(&glState);
-
-  glGenTextures(1, &texture);
-  if (texture == 0) {
-    shRestoreSurfacePixelGLState(&glState);
-    return VG_FALSE;
-  }
 
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, texture);
@@ -1902,10 +1941,6 @@ static VGboolean shDrawSurfacePixels(VGContext *context,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-               width, height, 0,
-               GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 
   glViewport(0, 0, context->surfaceWidth, context->surfaceHeight);
   glDisable(GL_BLEND);
@@ -1948,12 +1983,223 @@ static VGboolean shDrawSurfacePixels(VGContext *context,
   glDisableVertexAttribArray(context->locationDraw.textureUV);
   glDisableVertexAttribArray(context->locationDraw.pos);
   shRestoreVertexState(&vertexState);
-  glDeleteTextures(1, &texture);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
   shRestoreSurfacePixelGLState(&glState);
-  GL_CHECK_ERROR;
 
-  shMarkRenderTargetDirty(context);
-  return VG_TRUE;
+  if (success)
+    shMarkRenderTargetDirty(context);
+  return success;
+}
+
+static VGboolean shDrawSurfacePixels(VGContext *context,
+                                     const SHuint8 *pixels,
+                                     SHint dx, SHint dy,
+                                     SHint width, SHint height)
+{
+  GLuint texture = 0;
+  VGboolean success = VG_FALSE;
+  SHImageUploadGLState state;
+
+  if (width <= 0 || height <= 0)
+    return VG_TRUE;
+  if (!context || !pixels)
+    return VG_FALSE;
+
+  glGenTextures(1, &texture);
+  if (texture == 0)
+    return VG_FALSE;
+
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+               width, height, 0,
+               GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+  shRestoreImageUploadGLState(&state);
+
+  if (success)
+    success = shDrawSurfaceTexture(context, texture,
+                                   dx, dy, width, height,
+                                   width, height, 0, 0);
+
+  glDeleteTextures(1, &texture);
+  return success;
+}
+
+static VGboolean shTryDirectSetPixels(VGContext *context,
+                                      SHImage *image,
+                                      VGint dx,
+                                      VGint dy,
+                                      VGint sx,
+                                      VGint sy,
+                                      VGint width,
+                                      VGint height)
+{
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+
+  if (!shClipSurfaceTransfer(context,
+                             &copyDx, &copyDy,
+                             &copySx, &copySy,
+                             &copyWidth, &copyHeight,
+                             image->width, image->height))
+    return VG_TRUE;
+
+  if (!shCanDrawSurfaceImageTexture(image))
+    return VG_FALSE;
+
+  return shDrawSurfaceTexture(context, image->texture,
+                              copyDx, copyDy,
+                              copyWidth, copyHeight,
+                              image->width, image->height,
+                              copySx, copySy);
+}
+
+static VGboolean shTryDirectWritePixels(VGContext *context,
+                                        const void *data,
+                                        VGint dataStride,
+                                        VGImageFormat dataFormat,
+                                        VGint dx,
+                                        VGint dy,
+                                        VGint width,
+                                        VGint height)
+{
+  SHImageFormatDesc fd;
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = 0;
+  SHint copySy = 0;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  SHint resolvedStride;
+  GLint rowLength;
+  const SHuint8 *source;
+  GLuint texture = 0;
+  VGboolean success = VG_FALSE;
+  SHImageUploadGLState state;
+
+  if (!data)
+    return VG_FALSE;
+
+  if (!shClipSurfaceTransfer(context,
+                             &copyDx, &copyDy,
+                             &copySx, &copySy,
+                             &copyWidth, &copyHeight,
+                             width, height))
+    return VG_TRUE;
+
+  shSetupImageFormat(dataFormat, &fd);
+  if (!shCanDrawSurfaceTextureFormat(&fd) ||
+      !shResolveTransferStride(dataStride, width, fd.bytes,
+                               &resolvedStride, &rowLength))
+    return VG_FALSE;
+
+  source = (const SHuint8*)data +
+           (size_t)copySy * (size_t)resolvedStride +
+           (size_t)copySx * (size_t)fd.bytes;
+
+  glGenTextures(1, &texture);
+  if (texture == 0)
+    return VG_FALSE;
+
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  shApplyAlphaTextureSwizzle(dataFormat);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, rowLength);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+  glTexImage2D(GL_TEXTURE_2D, 0, fd.glintformat,
+               copyWidth, copyHeight, 0,
+               fd.glformat, fd.gltype, source);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+  shRestoreImageUploadGLState(&state);
+
+  if (success)
+    success = shDrawSurfaceTexture(context, texture,
+                                   copyDx, copyDy,
+                                   copyWidth, copyHeight,
+                                   copyWidth, copyHeight, 0, 0);
+
+  glDeleteTextures(1, &texture);
+  return success;
+}
+
+static VGboolean shTryDirectCopyPixels(VGContext *context,
+                                       VGint dx,
+                                       VGint dy,
+                                       VGint sx,
+                                       VGint sy,
+                                       VGint width,
+                                       VGint height)
+{
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  GLuint texture = 0;
+  VGboolean success = VG_FALSE;
+  SHImageUploadGLState state;
+
+  if (!shClipSurfaceTransfer(context,
+                             &copyDx, &copyDy,
+                             &copySx, &copySy,
+                             &copyWidth, &copyHeight,
+                             context->surfaceWidth,
+                             context->surfaceHeight))
+    return VG_TRUE;
+
+  glGenTextures(1, &texture);
+  if (texture == 0)
+    return VG_FALSE;
+
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+               copyWidth, copyHeight, 0,
+               GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  if (glGetError() == GL_NO_ERROR) {
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0,
+                        0, 0,
+                        copySx, copySy,
+                        copyWidth, copyHeight);
+    success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+  }
+  shRestoreImageUploadGLState(&state);
+
+  if (success)
+    success = shDrawSurfaceTexture(context, texture,
+                                   copyDx, copyDy,
+                                   copyWidth, copyHeight,
+                                   copyWidth, copyHeight, 0, 0);
+
+  glDeleteTextures(1, &texture);
+  return success;
 }
 
 /*---------------------------------------------------------
@@ -2149,6 +2395,9 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
+  if (shTryDirectSetPixels(context, i, dx, dy, sx, sy, width, height))
+    VG_RETURN(VG_NO_RETVAL);
+
   if (!shClipSurfaceTransfer(context,
                              &copyDx, &copyDy,
                              &copySx, &copySy,
@@ -2214,6 +2463,10 @@ VG_API_CALL void vgWritePixels(const void * data, VGint dataStride,
   
   VG_RETURN_ERR_IF(width <= 0 || height <= 0 || !data,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  if (shTryDirectWritePixels(context, data, dataStride, dataFormat,
+                             dx, dy, width, height))
+    VG_RETURN(VG_NO_RETVAL);
 
   if (!shClipSurfaceTransfer(context,
                              &copyDx, &copyDy,
@@ -2391,6 +2644,9 @@ VG_API_CALL void vgCopyPixels(VGint dx, VGint dy,
   
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  if (shTryDirectCopyPixels(context, dx, dy, sx, sy, width, height))
+    VG_RETURN(VG_NO_RETVAL);
 
   if (!shClipSurfaceTransfer(context,
                              &copyDx, &copyDy,
