@@ -112,19 +112,19 @@ void SHMatrix3x3_dtor(SHMatrix3x3 *m);
 
 #define SUB2(v,xx,yy)       { v.x-=xx; v.y-=yy; }
 #define SUB3(v,xx,yy,zz)    { v.x-=xx; v.y-=yy; v.z-=zz; }
-#define SUB4(v,xx,yy,zz,ww) { v.x-=xx; v.y-=yy; v.z-=zz; v.w-=v2.w; }
+#define SUB4(v,xx,yy,zz,ww) { v.x-=xx; v.y-=yy; v.z-=zz; v.w-=ww; }
 
 #define SUB2V(v1,v2) { v1.x-=v2.x; v1.y-=v2.y; }
 #define SUB3V(v1,v2) { v1.x-=v2.x; v1.y-=v2.y; v1.z-=v2.z; }
 #define SUB4V(v1,v2) { v1.x-=v2.x; v1.y-=v2.y; v1.z-=v2.z; v1.w-=v2.w; }
 
 #define MUL2(v,f) { v.x*=f; v.y*=f; }
-#define MUL3(v,f) { v.x*=f; v.y*=f; v.z*=z; }
-#define MUL4(v,f) { v.x*=f; v.y*=f; v.z*=z; v.w*=w; }
+#define MUL3(v,f) { v.x*=f; v.y*=f; v.z*=f; }
+#define MUL4(v,f) { v.x*=f; v.y*=f; v.z*=f; v.w*=f; }
 
 #define DIV2(v,f) { v.x/=f; v.y/=f; }
-#define DIV3(v,f) { v.x/=f; v.y/=f; v.z/=z; }
-#define DIV4(v,f) { v.x/=f; v.y/=f; v.z/=z; v.w/=w; }
+#define DIV3(v,f) { v.x/=f; v.y/=f; v.z/=f; }
+#define DIV4(v,f) { v.x/=f; v.y/=f; v.z/=f; v.w/=f; }
 
 #define ABS2(v) { v.x=SH_ABS(v.x); v.y=SH_ABS(v.y); }
 #define ABS3(v) { v.x=SH_ABS(v.x); v.y=SH_ABS(v.y); v.z=SH_ABS(v.z); }
@@ -140,7 +140,7 @@ void SHMatrix3x3_dtor(SHMatrix3x3 *m);
 
 #define NORMALIZE2(v) { SHfloat n=NORM2(v); v.x/=n; v.y/=n; }
 #define NORMALIZE3(v) { SHfloat n=NORM3(v); v.x/=n; v.y/=n; v.z/=n; }
-#define NORMALIZE4(v) { SHfloat n=NORM4(v); v.x/=n; v.y/=n; v.z/=n; v.w/=w; }
+#define NORMALIZE4(v) { SHfloat n=NORM4(v); v.x/=n; v.y/=n; v.z/=n; v.w/=n; }
 
 #define DOT2(v1,v2) (v1.x*v2.x + v1.y*v2.y)
 #define DOT3(v1,v2) (v1.x*v2.x + v1.y*v2.y + v1.z*v2.z)

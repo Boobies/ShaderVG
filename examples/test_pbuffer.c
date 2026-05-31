@@ -6,6 +6,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__APPLE__)
+#  include <OpenGL/gl.h>
+#else
+#  include <GL/gl.h>
+#endif
+
 #include <EGL/egl.h>
 #include <vg/openvg.h>
 #include <vg/vgu.h>
@@ -494,6 +500,175 @@ static int expect_rgba_at(const VGubyte *data,
   return 1;
 }
 
+static int expect_gl_pack_state(GLint alignment,
+                                GLint rowLength,
+                                GLint skipPixels,
+                                GLint skipRows,
+                                const char *message)
+{
+  GLint actualAlignment;
+  GLint actualRowLength;
+  GLint actualSkipPixels;
+  GLint actualSkipRows;
+
+  glGetIntegerv(GL_PACK_ALIGNMENT, &actualAlignment);
+  glGetIntegerv(GL_PACK_ROW_LENGTH, &actualRowLength);
+  glGetIntegerv(GL_PACK_SKIP_PIXELS, &actualSkipPixels);
+  glGetIntegerv(GL_PACK_SKIP_ROWS, &actualSkipRows);
+
+  if (actualAlignment == alignment &&
+      actualRowLength == rowLength &&
+      actualSkipPixels == skipPixels &&
+      actualSkipRows == skipRows)
+    return 0;
+
+  fprintf(stderr,
+          "%s (got alignment=%d rowLength=%d skipPixels=%d skipRows=%d)\n",
+          message,
+          actualAlignment,
+          actualRowLength,
+          actualSkipPixels,
+          actualSkipRows);
+  return 1;
+}
+
+static VGPath create_test_path(const VGubyte *segments,
+                               VGint segmentCount,
+                               const VGfloat *coords)
+{
+  VGPath path = vgCreatePath(VG_PATH_FORMAT_STANDARD,
+                             VG_PATH_DATATYPE_F,
+                             1.0f,
+                             0.0f,
+                             segmentCount,
+                             8,
+                             VG_PATH_CAPABILITY_ALL);
+  if (path != VG_INVALID_HANDLE)
+    vgAppendPathData(path, segmentCount, segments, coords);
+  return path;
+}
+
+static int run_review_regression_test(void)
+{
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGImage image = VG_INVALID_HANDLE;
+  VGImage hugeImage;
+  VGubyte imageRead[2 * 2 * 4];
+  VGPath dst = VG_INVALID_HANDLE;
+  VGPath start = VG_INVALID_HANDLE;
+  VGPath end = VG_INVALID_HANDLE;
+  VGPath badEnd = VG_INVALID_HANDLE;
+  VGubyte dstSegments[] = {VG_MOVE_TO_ABS, VG_LINE_TO_ABS};
+  VGfloat dstCoords[] = {100.0f, 100.0f, 120.0f, 100.0f};
+  VGubyte startSegments[] = {VG_MOVE_TO_ABS, VG_LINE_TO_ABS};
+  VGfloat startCoords[] = {0.0f, 0.0f, 10.0f, 0.0f};
+  VGfloat endCoords[] = {0.0f, 0.0f, 20.0f, 0.0f};
+  VGubyte badEndSegments[] = {VG_MOVE_TO_ABS, VG_MOVE_TO_ABS};
+  VGfloat badEndCoords[] = {0.0f, 0.0f, 20.0f, 0.0f};
+  VGfloat minX = -1.0f;
+  VGfloat minY = -1.0f;
+  VGfloat width = -1.0f;
+  VGfloat height = -1.0f;
+  VGint segmentCount;
+  VGboolean interpolated;
+  int result = 0;
+
+  paint = vgCreatePaint();
+  if (paint == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG review regression paint setup failed");
+    goto cleanup;
+  }
+
+  vgSetParameteri(paint, VG_PAINT_PATTERN_TILING_MODE, 0x1234);
+  if (expect_vg_error("OpenVG accepted an invalid pattern tiling mode",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  image = vgCreateImage(VG_lABGR_8888, 2, 2, VG_IMAGE_QUALITY_BETTER);
+  if (image == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG review regression image setup failed");
+    goto cleanup;
+  }
+
+  memset(imageRead, 0xff, sizeof(imageRead));
+  vgGetImageSubData(image, imageRead, 2 * 4, VG_lABGR_8888, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG new image zero-readback failed") ||
+      expect_rgba_at(imageRead, 2 * 4, 0, 0, 0, 0, 0, 0,
+                     "OpenVG did not initialize new images to zero")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  hugeImage = vgCreateImage(VG_lABGR_8888, 65536, 65536,
+                            VG_IMAGE_QUALITY_BETTER);
+  if (hugeImage != VG_INVALID_HANDLE) {
+    vgDestroyImage(hugeImage);
+    fprintf(stderr, "OpenVG created an oversized image\n");
+    result = 1;
+    goto cleanup;
+  }
+  if (expect_vg_error("OpenVG reported the wrong oversized image error",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  dst = create_test_path(dstSegments, 2, dstCoords);
+  start = create_test_path(startSegments, 2, startCoords);
+  end = create_test_path(startSegments, 2, endCoords);
+  badEnd = create_test_path(badEndSegments, 2, badEndCoords);
+  if (dst == VG_INVALID_HANDLE ||
+      start == VG_INVALID_HANDLE ||
+      end == VG_INVALID_HANDLE ||
+      badEnd == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG review regression path setup failed");
+    goto cleanup;
+  }
+
+  interpolated = vgInterpolatePath(dst, start, end, 0.5f);
+  segmentCount = vgGetParameteri(dst, VG_PATH_NUM_SEGMENTS);
+  vgPathBounds(dst, &minX, &minY, &width, &height);
+  if (expect_no_vg_error("OpenVG path interpolation failed") ||
+      !interpolated ||
+      segmentCount != 4 ||
+      !channel_near((VGubyte)minX, 0) ||
+      !channel_near((VGubyte)minY, 0) ||
+      !channel_near((VGubyte)width, 120) ||
+      !channel_near((VGubyte)height, 100)) {
+    fprintf(stderr,
+            "OpenVG vgInterpolatePath did not append without corrupting the destination\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  interpolated = vgInterpolatePath(dst, start, badEnd, 0.5f);
+  if (expect_no_vg_error("OpenVG incompatible path interpolation raised an error") ||
+      interpolated ||
+      vgGetParameteri(dst, VG_PATH_NUM_SEGMENTS) != segmentCount) {
+    fprintf(stderr,
+            "OpenVG vgInterpolatePath changed the destination on incompatible input\n");
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  if (badEnd != VG_INVALID_HANDLE)
+    vgDestroyPath(badEnd);
+  if (end != VG_INVALID_HANDLE)
+    vgDestroyPath(end);
+  if (start != VG_INVALID_HANDLE)
+    vgDestroyPath(start);
+  if (dst != VG_INVALID_HANDLE)
+    vgDestroyPath(dst);
+  if (image != VG_INVALID_HANDLE)
+    vgDestroyImage(image);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  return result;
+}
+
 static int run_image_filter_test(void)
 {
   VGImage source = VG_INVALID_HANDLE;
@@ -514,6 +689,9 @@ static int run_image_filter_test(void)
     0.0f, 0.0f, 0.0f, 0.0f
   };
   VGshort convolveKernel[] = {1, 0, 0, 0};
+  VGshort horizontalKernel[] = {0, 1, 0};
+  VGshort verticalKernel[] = {0, 1, 0};
+  VGshort asymmetricKernel[] = {0, 0, 1, 0, 0, 0};
   VGshort separableKernelX[] = {1, 0};
   VGshort separableKernelY[] = {1};
   VGfloat tileFill[] = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -533,6 +711,7 @@ static int run_image_filter_test(void)
   }
   set_rgba(sourceData, 4 * 4, 0, 0, 10, 20, 30, 255);
   set_rgba(sourceData, 4 * 4, 1, 0, 100, 0, 0, 255);
+  set_rgba(sourceData, 4 * 4, 0, 1, 0, 80, 0, 255);
   set_rgba(sourceData, 4 * 4, 1, 1, 255, 0, 0, 255);
 
   for (i=0; i<256; ++i) {
@@ -611,6 +790,39 @@ static int run_image_filter_test(void)
     goto cleanup;
   }
 
+  vgConvolve(dest, source, 3, 1, 0, 0,
+             horizontalKernel, 1.0f, 0.0f, VG_TILE_PAD);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG horizontal vgConvolve failed") ||
+      expect_rgba_at(readData, 4 * 4, 0, 0, 100, 0, 0, 255,
+                     "OpenVG vgConvolve mishandled a 3x1 kernel")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgConvolve(dest, source, 1, 3, 0, 0,
+             verticalKernel, 1.0f, 0.0f, VG_TILE_PAD);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vertical vgConvolve failed") ||
+      expect_rgba_at(readData, 4 * 4, 0, 0, 0, 80, 0, 255,
+                     "OpenVG vgConvolve mishandled a 1x3 kernel")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgConvolve(dest, source, 2, 3, 0, 0,
+             asymmetricKernel, 1.0f, 0.0f, VG_TILE_PAD);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG asymmetric vgConvolve failed") ||
+      expect_rgba_at(readData, 4 * 4, 0, 0, 100, 0, 0, 255,
+                     "OpenVG vgConvolve did not use column-major kernel storage")) {
+    result = 1;
+    goto cleanup;
+  }
+
   vgSeparableConvolve(dest, source, 2, 1, 0, 0,
                       separableKernelX, separableKernelY,
                       1.0f, 0.0f, VG_TILE_PAD);
@@ -638,6 +850,13 @@ static int run_image_filter_test(void)
       readData[center + 3] == 0) {
     fprintf(stderr,
             "OpenVG vgGaussianBlur did not spread the source impulse as expected\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgGaussianBlur(dest, source, 0.0f, 1.0f, VG_TILE_PAD);
+  if (expect_vg_error("OpenVG accepted zero Gaussian blur deviation",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
     result = 1;
     goto cleanup;
   }
@@ -972,6 +1191,23 @@ static int run_pixel_transfer_test(unsigned char *pixels,
     goto cleanup;
   }
 
+  glPixelStorei(GL_PACK_ALIGNMENT, 8);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 1);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+  vgGetPixels(alphaImage, 0, 0, 32, 10, 1, 1);
+  vgGetImageSubData(alphaImage, alphaRead, 4, VG_A_8, 0, 0, 1, 1);
+  if (expect_no_vg_error("OpenVG fallback vgGetPixels failed") ||
+      alphaRead[0] < 250 ||
+      expect_gl_pack_state(8, 1, 0, 0,
+                           "OpenVG fallback vgGetPixels leaked GL pack state")) {
+    fprintf(stderr, "OpenVG fallback vgGetPixels did not copy alpha coverage\n");
+    result = 1;
+    goto cleanup;
+  }
+  glPixelStorei(GL_PACK_ALIGNMENT, 4);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+
   vgSetfv(VG_CLEAR_COLOR, 4, black);
   vgClear(0, 0, width, height);
   vgSetPixels(40, 8, dstImage, 1, 2, 1, 1);
@@ -993,6 +1229,23 @@ static int run_pixel_transfer_test(unsigned char *pixels,
     goto cleanup;
   }
 
+  glPixelStorei(GL_PACK_ALIGNMENT, 8);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 1);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+  memset(imageRead, 0, sizeof(imageRead));
+  vgReadPixels(imageRead, 5 * 4, VG_lRGBA_8888, 40, 8, 1, 1);
+  if (expect_no_vg_error("OpenVG fallback vgReadPixels failed") ||
+      expect_rgba_at(imageRead, 5 * 4, 0, 0, 0, 255, 0, 255,
+                     "OpenVG fallback vgReadPixels did not copy the requested surface pixel") ||
+      expect_gl_pack_state(8, 1, 0, 0,
+                           "OpenVG fallback vgReadPixels leaked GL pack state")) {
+    result = 1;
+    goto cleanup;
+  }
+  glPixelStorei(GL_PACK_ALIGNMENT, 4);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+
   vgSetfv(VG_CLEAR_COLOR, 4, black);
   vgClear(0, 0, width, height);
   vgWritePixels(writeData, 8 * 4, VG_lABGR_8888, 30, 20, 6, 5);
@@ -1009,6 +1262,10 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   }
 
 cleanup:
+  glPixelStorei(GL_PACK_ALIGNMENT, 4);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
   vgSeti(VG_SCISSORING, VG_FALSE);
   vgSeti(VG_MASKING, VG_FALSE);
   vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
@@ -2196,6 +2453,8 @@ int main(void)
       result = run_image_draw_test(pixels, width, height);
       if (result == 0)
         result = run_gradient_ramp_test(pixels, width, height);
+      if (result == 0)
+        result = run_review_regression_test();
       if (result == 0)
         result = run_src_over_alpha_test(pixels, width, height);
       if (result == 0)

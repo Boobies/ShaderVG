@@ -708,6 +708,66 @@ void shUpdateImageTexture(SHImage *i, VGContext *c)
   i->gpuDataDirty = VG_FALSE;
 }
 
+static VGboolean shCheckedSizeMul(size_t a, size_t b, size_t *out)
+{
+  if (b != 0 && a > ((size_t)-1) / b)
+    return VG_FALSE;
+
+  if (out)
+    *out = a * b;
+  return VG_TRUE;
+}
+
+static VGboolean shImageDataSize(SHint width,
+                                 SHint height,
+                                 SHint bytesPerPixel,
+                                 size_t *pixelCountOut,
+                                 size_t *byteCountOut)
+{
+  size_t pixelCount;
+  size_t byteCount;
+
+  if (width <= 0 || height <= 0 || bytesPerPixel <= 0)
+    return VG_FALSE;
+
+  if (!shCheckedSizeMul((size_t)width, (size_t)height, &pixelCount) ||
+      pixelCount > (size_t)SH_MAX_IMAGE_PIXELS)
+    return VG_FALSE;
+
+  if (!shCheckedSizeMul(pixelCount, (size_t)bytesPerPixel, &byteCount) ||
+      byteCount > (size_t)SH_MAX_IMAGE_BYTES)
+    return VG_FALSE;
+
+  if (pixelCountOut)
+    *pixelCountOut = pixelCount;
+  if (byteCountOut)
+    *byteCountOut = byteCount;
+  return VG_TRUE;
+}
+
+static VGboolean shPixelBufferSize(SHint width,
+                                   SHint height,
+                                   SHint bytesPerPixel,
+                                   size_t *byteCountOut)
+{
+  size_t pixelCount;
+  size_t byteCount;
+
+  if (width <= 0 || height <= 0 || bytesPerPixel <= 0)
+    return VG_FALSE;
+
+  if (!shCheckedSizeMul((size_t)width, (size_t)height, &pixelCount) ||
+      !shCheckedSizeMul(pixelCount, (size_t)bytesPerPixel, &byteCount))
+    return VG_FALSE;
+
+  if (byteCount > (size_t)SH_MAX_INT)
+    return VG_FALSE;
+
+  if (byteCountOut)
+    *byteCountOut = byteCount;
+  return VG_TRUE;
+}
+
 /*----------------------------------------------------------
  * Creates a new image object and returns the handle to it
  *----------------------------------------------------------*/
@@ -718,6 +778,7 @@ VG_API_CALL VGImage vgCreateImage(VGImageFormat format,
 {
   SHImage *i = NULL;
   SHImageFormatDesc fd;
+  size_t dataSize = 0;
   VG_GETCONTEXT(VG_INVALID_HANDLE);
   
   /* Reject invalid formats */
@@ -731,14 +792,11 @@ VG_API_CALL VGImage vgCreateImage(VGImageFormat format,
                    VG_INVALID_HANDLE);
   
   /* Reject invalid sizes */
-  VG_RETURN_ERR_IF(width  <= 0 || width > SH_MAX_IMAGE_WIDTH ||
-                   height <= 0 || height > SH_MAX_IMAGE_HEIGHT ||
-                   width * height > SH_MAX_IMAGE_PIXELS,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
-  
-  /* Check if byte size exceeds SH_MAX_IMAGE_BYTES */
   shSetupImageFormat(format, &fd);
-  VG_RETURN_ERR_IF(width * height * fd.bytes > SH_MAX_IMAGE_BYTES,
+  VG_RETURN_ERR_IF(width <= 0 || width > SH_MAX_IMAGE_WIDTH ||
+                   height <= 0 || height > SH_MAX_IMAGE_HEIGHT ||
+                   !shImageDataSize(width, height, fd.bytes,
+                                    NULL, &dataSize),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
   
   /* Reject invalid quality bits */
@@ -756,18 +814,26 @@ VG_API_CALL VGImage vgCreateImage(VGImageFormat format,
   
   /* Allocate data memory */
   shUpdateImageTextureSize(i);
-  i->data = (SHuint8*)malloc( i->texwidth * i->texheight * fd.bytes );
+  if (!shImageDataSize(i->texwidth, i->texheight, fd.bytes,
+                       NULL, &dataSize)) {
+    SH_DELETEOBJ(SHImage, i);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
+  }
+  i->data = (SHuint8*)malloc(dataSize);
   
   if (i->data == NULL) {
     SH_DELETEOBJ(SHImage, i);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE); }
   
   /* Initialize data by zeroing-out */
-  memset(i->data, 1, width * height * fd.bytes);
+  memset(i->data, 0, dataSize);
   shUpdateImageTexture(i, context);
   
   /* Add to resource list */
-  shImageArrayPushBack(&context->resources->images, i);
+  if (!shImageArrayPushBack(&context->resources->images, i)) {
+    SH_DELETEOBJ(SHImage, i);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
   
   VG_RETURN((VGImage)i);
 }
@@ -1067,13 +1133,24 @@ static VGboolean shResolveTransferStride(VGint dataStride,
                                          SHint *resolvedStride,
                                          GLint *rowLength)
 {
+  size_t minStrideSize;
+  SHint minStride;
+
   if (logicalWidth <= 0 || bytesPerPixel <= 0)
     return VG_FALSE;
 
-  if (dataStride == -1)
-    dataStride = logicalWidth * bytesPerPixel;
+  if (!shCheckedSizeMul((size_t)logicalWidth,
+                        (size_t)bytesPerPixel,
+                        &minStrideSize) ||
+      minStrideSize > (size_t)SH_MAX_INT)
+    return VG_FALSE;
 
-  if (dataStride < logicalWidth * bytesPerPixel ||
+  minStride = (SHint)minStrideSize;
+
+  if (dataStride == -1)
+    dataStride = minStride;
+
+  if (dataStride < minStride ||
       dataStride % bytesPerPixel != 0)
     return VG_FALSE;
 
@@ -2373,6 +2450,7 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
 {
   SHImage *s, *d;
   SHuint8 *pixels;
+  size_t pixelBytes;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   
@@ -2402,7 +2480,10 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
      the same and whether the regions overlap. if not
      we can copy directly */
 
-  pixels = (SHuint8*)malloc(width * height * s->fd.bytes);
+  if (!shPixelBufferSize(width, height, s->fd.bytes, &pixelBytes))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  pixels = (SHuint8*)malloc(pixelBytes);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
 
   shCopyPixels(pixels, s->fd.vgformat, width * s->fd.bytes,
@@ -2433,6 +2514,7 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
 {
   SHImage *i;
   SHuint8 *pixels;
+  size_t pixelBytes;
   SHint copyDx = dx;
   SHint copyDy = dy;
   SHint copySx = sx;
@@ -2464,7 +2546,10 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
   VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
-  pixels = (SHuint8*)malloc(copyWidth * copyHeight * 4);
+  if (!shPixelBufferSize(copyWidth, copyHeight, 4, &pixelBytes))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  pixels = (SHuint8*)malloc(pixelBytes);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
 
   shCopyPixelsToRGBA(pixels,
@@ -2496,6 +2581,7 @@ VG_API_CALL void vgWritePixels(const void * data, VGint dataStride,
                                VGint width, VGint height)
 {
   SHuint8 *pixels;
+  size_t pixelBytes;
   SHint copyDx = dx;
   SHint copyDy = dy;
   SHint copySx = 0;
@@ -2531,7 +2617,10 @@ VG_API_CALL void vgWritePixels(const void * data, VGint dataStride,
                              width, height))
     VG_RETURN(VG_NO_RETVAL);
 
-  pixels = (SHuint8*)malloc(copyWidth * copyHeight * 4);
+  if (!shPixelBufferSize(copyWidth, copyHeight, 4, &pixelBytes))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  pixels = (SHuint8*)malloc(pixelBytes);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
   
   shCopyPixelsToRGBA(pixels,
@@ -2563,6 +2652,8 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
 {
   SHImage *i;
   SHuint8 *pixels;
+  size_t pixelBytes;
+  SHSurfaceReadGLState state;
   SHint copyDx = dx;
   SHint copyDy = dy;
   SHint copySx = sx;
@@ -2593,12 +2684,20 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
   VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
-  pixels = (SHuint8*)malloc(copyWidth * copyHeight * 4);
+  if (!shPixelBufferSize(copyWidth, copyHeight, 4, &pixelBytes))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  pixels = (SHuint8*)malloc(pixelBytes);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
 
+  shSaveSurfaceReadGLState(&state);
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
   glReadPixels(copySx, copySy, copyWidth, copyHeight,
                GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  shRestoreSurfaceReadGLState(&state);
   
   shCopyRGBAToPixels(i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
                      i->width, copyDx, copyDy,
@@ -2623,6 +2722,8 @@ VG_API_CALL void vgReadPixels(void * data, VGint dataStride,
 {
   SHuint8 *pixels;
   SHImageFormatDesc winfd;
+  size_t pixelBytes;
+  SHSurfaceReadGLState state;
   SHint copyDx = 0;
   SHint copyDy = 0;
   SHint copySx = sx;
@@ -2662,12 +2763,21 @@ VG_API_CALL void vgReadPixels(void * data, VGint dataStride,
      if we really want the copy to be optimized */
   shSetupImageFormat(VG_sRGBA_8888, &winfd);
 
-  pixels = (SHuint8*)malloc(copyWidth * copyHeight * winfd.bytes);
+  if (!shPixelBufferSize(copyWidth, copyHeight,
+                         winfd.bytes, &pixelBytes))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  pixels = (SHuint8*)malloc(pixelBytes);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
 
+  shSaveSurfaceReadGLState(&state);
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
   glReadPixels(copySx, copySy, copyWidth, copyHeight,
                GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  shRestoreSurfaceReadGLState(&state);
   
   shCopyPixels(data, dataFormat, dataStride,
                pixels, winfd.vgformat, -1,
@@ -2690,6 +2800,8 @@ VG_API_CALL void vgCopyPixels(VGint dx, VGint dy,
                               VGint width, VGint height)
 {
   SHuint8 *pixels;
+  size_t pixelBytes;
+  SHSurfaceReadGLState state;
   SHint copyDx = dx;
   SHint copyDy = dy;
   SHint copySx = sx;
@@ -2712,12 +2824,20 @@ VG_API_CALL void vgCopyPixels(VGint dx, VGint dy,
                              context->surfaceHeight))
     VG_RETURN(VG_NO_RETVAL);
 
-  pixels = (SHuint8*)malloc(copyWidth * copyHeight * 4);
+  if (!shPixelBufferSize(copyWidth, copyHeight, 4, &pixelBytes))
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  pixels = (SHuint8*)malloc(pixelBytes);
   SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
 
+  shSaveSurfaceReadGLState(&state);
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
   glReadPixels(copySx, copySy, copyWidth, copyHeight,
                GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  shRestoreSurfaceReadGLState(&state);
 
   if (!shDrawSurfacePixels(context, pixels,
                            copyDx, copyDy,
@@ -3373,6 +3493,8 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
                    !shIsValidImage(context, dst),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode) ||
+                   SH_ISNAN(stdDeviationX) ||
+                   SH_ISNAN(stdDeviationY) ||
                    stdDeviationX <= 0.0f ||
                    stdDeviationY <= 0.0f ||
                    stdDeviationX > SH_MAX_GAUSSIAN_STD_DEVIATION ||

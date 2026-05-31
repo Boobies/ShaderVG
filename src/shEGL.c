@@ -1098,14 +1098,21 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
   SHEGLSurface *drawSurface = NULL;
   SHEGLSurface *readSurface = NULL;
   SHEGLContext *context = NULL;
+  SHEGLDisplay *oldDisplay = t_currentDisplay;
+  SHEGLSurface *oldDraw = t_currentDraw;
+  SHEGLSurface *oldRead = t_currentRead;
+  SHEGLContext *oldContext = t_currentContext;
   EGLSurface realDraw = EGL_NO_SURFACE;
   EGLSurface realRead = EGL_NO_SURFACE;
   EGLContext realContext = EGL_NO_CONTEXT;
+  EGLint oldWidth = 0;
+  EGLint oldHeight = 0;
   EGLint width = 0;
   EGLint height = 0;
-  SHEGLSurface *oldDraw;
+  SHImage *oldRenderTargetImage = NULL;
   SHImage *renderTargetImage = NULL;
   EGLBoolean usesImageSurface = EGL_FALSE;
+  EGLBoolean usesOpenVGContext = EGL_FALSE;
 
   if (!shLoadRealEGL())
     return EGL_FALSE;
@@ -1135,6 +1142,17 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
     realContext = context->realContext;
   }
 
+  if (oldContext &&
+      oldContext->api == EGL_OPENVG_API &&
+      oldContext->vgContext) {
+    oldWidth = oldContext->vgContext->surfaceWidth;
+    oldHeight = oldContext->vgContext->surfaceHeight;
+    oldRenderTargetImage = oldContext->vgContext->renderTargetImage;
+  }
+
+  usesOpenVGContext = (context && context->api == EGL_OPENVG_API) ?
+    EGL_TRUE : EGL_FALSE;
+
   usesImageSurface =
     (drawSurface && drawSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE) ||
     (readSurface && readSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE);
@@ -1163,13 +1181,65 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
     }
   }
 
+  if (usesOpenVGContext) {
+    if (drawSurface &&
+        drawSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE) {
+      width = drawSurface->width;
+      height = drawSurface->height;
+      renderTargetImage = drawSurface->vgImage;
+    } else if (!shQuerySurfaceSize(display, drawSurface, &width, &height)) {
+      return EGL_FALSE;
+    }
+  }
+
   if (context && context->api == EGL_OPENVG_API && !g_egl.BindAPI(EGL_OPENGL_API))
     return EGL_FALSE;
 
   if (!g_egl.MakeCurrent(display->realDisplay, realDraw, realRead, realContext))
     return EGL_FALSE;
 
-  oldDraw = t_currentDraw;
+  if (usesOpenVGContext) {
+    if (drawSurface &&
+        drawSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+      glBindFramebuffer(GL_FRAMEBUFFER, drawSurface->framebuffer);
+    else
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    if (!shSetCurrentContextForImage(context->vgContext,
+                                     width,
+                                     height,
+                                     renderTargetImage)) {
+      shClearCurrentContext();
+      if (oldDisplay) {
+        g_egl.MakeCurrent(oldDisplay->realDisplay,
+                          oldDraw ? oldDraw->realSurface : EGL_NO_SURFACE,
+                          oldRead ? oldRead->realSurface : EGL_NO_SURFACE,
+                          oldContext ? oldContext->realContext : EGL_NO_CONTEXT);
+      } else {
+        g_egl.MakeCurrent(display->realDisplay,
+                          EGL_NO_SURFACE,
+                          EGL_NO_SURFACE,
+                          EGL_NO_CONTEXT);
+      }
+
+      if (oldContext &&
+          oldContext->api == EGL_OPENVG_API &&
+          oldContext->vgContext) {
+        shSetCurrentContextForImage(oldContext->vgContext,
+                                    oldWidth,
+                                    oldHeight,
+                                    oldRenderTargetImage);
+      } else {
+        shClearCurrentContext();
+      }
+
+      shSetEGLError(EGL_BAD_ALLOC);
+      return EGL_FALSE;
+    }
+  } else {
+    shClearCurrentContext();
+  }
+
   if (oldDraw != drawSurface &&
       oldDraw &&
       oldDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE)
@@ -1184,31 +1254,6 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
   t_currentDraw = drawSurface;
   t_currentRead = readSurface;
   t_currentContext = context;
-
-  if (!context || context->api != EGL_OPENVG_API) {
-    shClearCurrentContext();
-    return EGL_TRUE;
-  }
-
-  if (drawSurface &&
-      drawSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE) {
-    glBindFramebuffer(GL_FRAMEBUFFER, drawSurface->framebuffer);
-    width = drawSurface->width;
-    height = drawSurface->height;
-    renderTargetImage = drawSurface->vgImage;
-  } else {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    if (!shQuerySurfaceSize(display, drawSurface, &width, &height))
-      return EGL_FALSE;
-  }
-
-  if (!shSetCurrentContextForImage(context->vgContext,
-                                   width,
-                                   height,
-                                   renderTargetImage)) {
-    shSetEGLError(EGL_BAD_ALLOC);
-    return EGL_FALSE;
-  }
 
   return EGL_TRUE;
 }

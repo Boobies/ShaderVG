@@ -115,6 +115,12 @@ int JN(_FUNC_T,Realloc) (_ARRAY_T *a, SHint newsize)
   _ITEM_T *newitems = 0;
   
   SH_ASSERT(newsize > 0);
+  if (newsize <= 0 ||
+      (size_t)newsize > ((size_t)-1) / sizeof(_ITEM_T)) {
+    a->outofmemory = 1;
+    return 0;
+  }
+
   if (newsize == a->capacity)
     return 1;
   
@@ -150,6 +156,12 @@ int JN(_FUNC_T,Reserve) (_ARRAY_T *a, SHint newsize)
   _ITEM_T *newitems = 0;
   
   SH_ASSERT(newsize >= 0);
+  if (newsize < 0 ||
+      (size_t)newsize > ((size_t)-1) / sizeof(_ITEM_T)) {
+    a->outofmemory = 1;
+    return 0;
+  }
+
   if (newsize <= a->capacity)
     return 1;
   
@@ -184,6 +196,12 @@ int JN(_FUNC_T,ReserveAndCopy) (_ARRAY_T *a, SHint newsize)
   _ITEM_T *newitems = 0;
   
   SH_ASSERT(newsize >= 0);
+  if (newsize < 0 ||
+      (size_t)newsize > ((size_t)-1) / sizeof(_ITEM_T)) {
+    a->outofmemory = 1;
+    return 0;
+  }
+
   if (newsize <= a->capacity)
     return 1;
   
@@ -207,14 +225,28 @@ int JN(_FUNC_T,ReserveAndCopy) (_ARRAY_T *a, SHint newsize)
 int JN(_FUNC_T,PushBack) (_ARRAY_T *a, _ITEM_T item)
 #ifdef _ARRAY_DEFINE
 {
+  SHint required;
+  SHint newcapacity;
+
+  if (a->size >= SH_MAX_INT) {
+    a->outofmemory = 1;
+    return 0;
+  }
+
   if (a->capacity == 0) {
     JN(_FUNC_T,Realloc)(a, 1);
     if (a->outofmemory)
       return 0;
   }
   
-  if (a->size + 1 > a->capacity)
-    JN(_FUNC_T,ReserveAndCopy)(a, a->capacity*2);
+  required = a->size + 1;
+  if (required > a->capacity) {
+    newcapacity = a->capacity > SH_MAX_INT / 2 ?
+      SH_MAX_INT : a->capacity * 2;
+    if (newcapacity < required)
+      newcapacity = required;
+    JN(_FUNC_T,ReserveAndCopy)(a, newcapacity);
+  }
   
   if (a->outofmemory)
     return 0;
@@ -230,14 +262,28 @@ int JN(_FUNC_T,PushBack) (_ARRAY_T *a, _ITEM_T item)
 int JN(_FUNC_T,PushBackP) (_ARRAY_T *a, _ITEM_T *item)
 #ifdef _ARRAY_DEFINE
 {
+  SHint required;
+  SHint newcapacity;
+
+  if (a->size >= SH_MAX_INT) {
+    a->outofmemory = 1;
+    return 0;
+  }
+
   if (a->capacity == 0) {
     JN(_FUNC_T,Realloc)(a, 1);
     if (a->outofmemory)
       return 0;
   }
   
-  if (a->size + 1 > a->capacity)
-    JN(_FUNC_T,ReserveAndCopy)(a, a->capacity*2);
+  required = a->size + 1;
+  if (required > a->capacity) {
+    newcapacity = a->capacity > SH_MAX_INT / 2 ?
+      SH_MAX_INT : a->capacity * 2;
+    if (newcapacity < required)
+      newcapacity = required;
+    JN(_FUNC_T,ReserveAndCopy)(a, newcapacity);
+  }
   
   if (a->outofmemory)
     return 0;

@@ -223,7 +223,10 @@ VG_API_CALL VGPaint vgCreatePaint(void)
                    VG_INVALID_HANDLE);
   
   /* Add to resource list */
-  shPaintArrayPushBack(&context->resources->paints, p);
+  if (!shPaintArrayPushBack(&context->resources->paints, p)) {
+    SH_DELETEOBJ(SHPaint, p);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
   
   VG_RETURN((VGPaint)p);
 }

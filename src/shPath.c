@@ -170,7 +170,6 @@ VG_API_CALL VGPath vgCreatePath(VGint pathFormat,
   /* Allocate new resource */
   SH_NEWOBJ(SHPath, p);
   VG_RETURN_ERR_IF(!p, VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
-  shPathArrayPushBack(&context->resources->paths, p);
   
   /* Set parameters */
   p->format = pathFormat;
@@ -185,6 +184,11 @@ VG_API_CALL VGPath vgCreatePath(VGint pathFormat,
   p->cacheDataValid = VG_TRUE;
   p->cacheTransformInit = VG_FALSE;
   p->cacheStrokeInit = VG_FALSE;
+
+  if (!shPathArrayPushBack(&context->resources->paths, p)) {
+    SH_DELETEOBJ(SHPath, p);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
   
   VG_RETURN((VGPath)p);
 }
@@ -349,24 +353,57 @@ static void shRealCoordToData(VGPathDatatype type, SHfloat scale, SHfloat bias,
 static int shResizePathData(SHPath *p, SHint newSegCount, SHint newDataCount,
                             SHuint8 **newSegs, SHuint8 **newData)
 {
-  SHint oldDataSize = 0;
-  SHint newDataSize = 0;
+  size_t oldDataSize = 0;
+  size_t newDataSize = 0;
+  size_t totalSegSize = 0;
+  size_t totalDataSize = 0;
+  size_t bytesPerData;
+
+  *newSegs = NULL;
+  *newData = NULL;
+
+  if (newSegCount < 0 ||
+      newDataCount < 0 ||
+      p->segCount < 0 ||
+      p->dataCount < 0 ||
+      p->segCount > SH_MAX_INT - newSegCount)
+    return 0;
   
   /* Allocate memory for new segments */
-  (*newSegs) = (SHuint8*)malloc(p->segCount + newSegCount);
+  totalSegSize = (size_t)p->segCount + (size_t)newSegCount;
+  (*newSegs) = (SHuint8*)malloc(totalSegSize ? totalSegSize : 1);
   if ((*newSegs) == NULL) return 0;
   
   /* Allocate memory for new data */
-  oldDataSize = p->dataCount * shBytesPerDatatype[p->datatype];
-  newDataSize = newDataCount * shBytesPerDatatype[p->datatype];
-  (*newData) = (SHuint8*)malloc(oldDataSize + newDataSize);
-  if ((*newData) == NULL) {free(*newSegs); return 0;}
+  bytesPerData = (size_t)shBytesPerDatatype[p->datatype];
+  if ((size_t)p->dataCount > ((size_t)-1) / bytesPerData ||
+      (size_t)newDataCount > ((size_t)-1) / bytesPerData) {
+    free(*newSegs);
+    *newSegs = NULL;
+    return 0;
+  }
+  oldDataSize = (size_t)p->dataCount * bytesPerData;
+  newDataSize = (size_t)newDataCount * bytesPerData;
+  if (oldDataSize > ((size_t)-1) - newDataSize) {
+    free(*newSegs);
+    *newSegs = NULL;
+    return 0;
+  }
+  totalDataSize = oldDataSize + newDataSize;
+  (*newData) = (SHuint8*)malloc(totalDataSize ? totalDataSize : 1);
+  if ((*newData) == NULL) {
+    free(*newSegs);
+    *newSegs = NULL;
+    return 0;
+  }
   
   /* Copy old segments */
-  memcpy(*newSegs, p->segs, p->segCount);
+  if (p->segCount > 0)
+    memcpy(*newSegs, p->segs, (size_t)p->segCount);
   
   /* Copy old data */
-  memcpy(*newData, p->data, oldDataSize);
+  if (oldDataSize > 0)
+    memcpy(*newData, p->data, oldDataSize);
   
   return 1;
 }
@@ -1211,9 +1248,10 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
   SHfloat *procData1, *procData2;
   SHint procSegCount1=0, procSegCount2=0;
   SHint procDataCount1=0, procDataCount2=0;
-  SHuint8 *newSegs, *newData;
+  SHuint8 *newSegs = NULL, *newData = NULL;
   void *userData[4];
   SHint segment1, segment2;
+  SHint oldSegCount, oldDataCount;
   SHint segindex, s,d,i;
   SHint processFlags =
     SH_PROCESS_SIMPLIFY_LINES |
@@ -1263,6 +1301,8 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
             procDataCount1 == procDataCount2);
   
   /* Resize dst path storage to include interpolated data */
+  oldSegCount = dst->segCount;
+  oldDataCount = dst->dataCount;
   shResizePathData(dst, procSegCount1, procDataCount1, &newSegs, &newData);
   if (!newData) {
     free(procSegs1); free(procData1);
@@ -1296,12 +1336,12 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
     
     /* Interpolate values */
     segindex = (segment1 >> 1);
-    newSegs[s] = segment1 | VG_ABSOLUTE;
+    newSegs[oldSegCount + s] = segment1 | VG_ABSOLUTE;
     for (i=0; i<shCoordsPerCommand[segindex]; ++i, ++d) {
       SHfloat diff = procData2[d] - procData1[d];
       SHfloat value = procData1[d] + amount * diff;
       shRealCoordToData(dst->datatype, dst->scale, dst->bias,
-                        newData, dst->dataCount + d, value);
+                        newData, oldDataCount + d, value);
     }
   }
   
@@ -1310,10 +1350,12 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
   free(procSegs2); free(procData2);
   
   /* Assign interpolated data */
+  free(dst->segs);
+  free(dst->data);
   dst->segs = newSegs;
   dst->data = newData;
-  dst->segCount += procSegCount1;
-  dst->dataCount += procDataCount1;
+  dst->segCount = oldSegCount + procSegCount1;
+  dst->dataCount = oldDataCount + procDataCount1;
 
   /* Mark change */
   dst->cacheDataValid = VG_FALSE;
