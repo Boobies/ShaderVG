@@ -457,6 +457,7 @@ static void shDeinitContextGL(VGContext *context)
   shDeinitMaskProgram(context);
   shDeinitPiplelineShaders();
   shDeinitRampShaders();
+  shDeinitImageFilterShaders();
 
   if (context->maskTexture != 0) {
     glDeleteTextures(1, &context->maskTexture);
@@ -490,6 +491,18 @@ static void shDeinitContextGL(VGContext *context)
     context->blendTextureHeight = 0;
   }
 
+  if (context->filterFramebuffer != 0) {
+    glDeleteFramebuffers(1, &context->filterFramebuffer);
+    context->filterFramebuffer = 0;
+  }
+
+  if (context->filterScratchTexture != 0) {
+    glDeleteTextures(1, &context->filterScratchTexture);
+    context->filterScratchTexture = 0;
+    context->filterScratchWidth = 0;
+    context->filterScratchHeight = 0;
+  }
+
   shDeinitContextVertexState(context);
   context->glInitialized = VG_FALSE;
 }
@@ -509,6 +522,7 @@ static VGboolean shInitContextGL(VGContext *context, VGint width, VGint height)
     return VG_FALSE;
   shInitPiplelineShaders();
   shInitRampShaders();
+  shInitImageFilterShaders();
   context->glInitialized = VG_TRUE;
   shResizeSurface(context, width, height);
 
@@ -702,6 +716,11 @@ void VGContext_ctor(VGContext *c)
   c->progDraw = 0;
   c->progColorRamp = 0;
   c->progMask = 0;
+  c->progImageFilter = 0;
+  c->filterFramebuffer = 0;
+  c->filterScratchTexture = 0;
+  c->filterScratchWidth = 0;
+  c->filterScratchHeight = 0;
   c->arrayObject = 0;
   c->arrayBuffer = 0;
   c->userShaderVertex = NULL;

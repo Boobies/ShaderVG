@@ -673,9 +673,15 @@ static int run_image_filter_test(void)
 {
   VGImage source = VG_INVALID_HANDLE;
   VGImage dest = VG_INVALID_HANDLE;
+  VGImage alphaDest = VG_INVALID_HANDLE;
+  VGImage lumaDest = VG_INVALID_HANDLE;
   VGubyte sourceData[4 * 4 * 4];
   VGubyte destData[4 * 4 * 4];
   VGubyte readData[4 * 4 * 4];
+  VGubyte alphaData[2 * 2];
+  VGubyte alphaRead[2 * 2];
+  VGubyte lumaData[2 * 2];
+  VGubyte lumaRead[2 * 2];
   VGubyte redLut[256];
   VGubyte greenLut[256];
   VGubyte blueLut[256];
@@ -685,6 +691,13 @@ static int run_image_filter_test(void)
     0.0f, 0.0f, 1.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f,
     1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f,
+    0.0f, 0.0f, 0.0f, 0.0f
+  };
+  VGfloat identityMatrix[20] = {
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 1.0f, 0.0f,
     0.0f, 0.0f, 0.0f, 1.0f,
     0.0f, 0.0f, 0.0f, 0.0f
   };
@@ -704,6 +717,10 @@ static int run_image_filter_test(void)
   memset(sourceData, 0, sizeof(sourceData));
   memset(destData, 0, sizeof(destData));
   memset(readData, 0, sizeof(readData));
+  memset(alphaData, 64, sizeof(alphaData));
+  memset(alphaRead, 0, sizeof(alphaRead));
+  memset(lumaData, 0, sizeof(lumaData));
+  memset(lumaRead, 0, sizeof(lumaRead));
 
   for (i=0; i<16; ++i) {
     set_rgba(sourceData, 4 * 4, i % 4, i / 4, 0, 0, 0, 255);
@@ -727,7 +744,12 @@ static int run_image_filter_test(void)
 
   source = vgCreateImage(VG_lABGR_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
   dest = vgCreateImage(VG_lABGR_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
-  if (source == VG_INVALID_HANDLE || dest == VG_INVALID_HANDLE) {
+  alphaDest = vgCreateImage(VG_A_8, 2, 2, VG_IMAGE_QUALITY_BETTER);
+  lumaDest = vgCreateImage(VG_lL_8, 2, 2, VG_IMAGE_QUALITY_BETTER);
+  if (source == VG_INVALID_HANDLE ||
+      dest == VG_INVALID_HANDLE ||
+      alphaDest == VG_INVALID_HANDLE ||
+      lumaDest == VG_INVALID_HANDLE) {
     result = fail_vg("OpenVG image filter test setup failed");
     goto cleanup;
   }
@@ -744,6 +766,8 @@ static int run_image_filter_test(void)
                  VG_lABGR_8888, 0, 0, 4, 4);
   vgImageSubData(dest, destData, 4 * 4,
                  VG_lABGR_8888, 0, 0, 4, 4);
+  vgImageSubData(alphaDest, alphaData, 2, VG_A_8, 0, 0, 2, 2);
+  vgImageSubData(lumaDest, lumaData, 2, VG_lL_8, 0, 0, 2, 2);
   vgSeti(VG_FILTER_FORMAT_LINEAR, VG_TRUE);
   vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_BLUE);
   vgColorMatrix(dest, source, matrix);
@@ -854,6 +878,41 @@ static int run_image_filter_test(void)
     goto cleanup;
   }
 
+  vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_GREEN | VG_BLUE);
+  vgColorMatrix(alphaDest, source, identityMatrix);
+  vgGetImageSubData(alphaDest, alphaRead, 2, VG_A_8, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG A_8 channel mask filter failed") ||
+      !channel_near(alphaRead[0], 64)) {
+    fprintf(stderr,
+            "OpenVG image filter modified A_8 without VG_ALPHA in the mask\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_FILTER_CHANNEL_MASK, VG_ALPHA);
+  vgColorMatrix(alphaDest, source, identityMatrix);
+  vgGetImageSubData(alphaDest, alphaRead, 2, VG_A_8, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG A_8 alpha filter failed") ||
+      !channel_near(alphaRead[0], 255)) {
+    fprintf(stderr,
+            "OpenVG image filter did not update A_8 through VG_ALPHA\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_FILTER_CHANNEL_MASK, 0);
+  vgColorMatrix(lumaDest, source, identityMatrix);
+  vgGetImageSubData(lumaDest, lumaRead, 2, VG_lL_8, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG luminance filter failed") ||
+      !channel_near(lumaRead[0], 19)) {
+    fprintf(stderr,
+            "OpenVG image filter did not update luminance destinations\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
+
   vgGaussianBlur(dest, source, 0.0f, 1.0f, VG_TILE_PAD);
   if (expect_vg_error("OpenVG accepted zero Gaussian blur deviation",
                       VG_ILLEGAL_ARGUMENT_ERROR)) {
@@ -887,6 +946,10 @@ static int run_image_filter_test(void)
 cleanup:
   vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
   vgSeti(VG_FILTER_FORMAT_LINEAR, VG_FALSE);
+  if (lumaDest != VG_INVALID_HANDLE)
+    vgDestroyImage(lumaDest);
+  if (alphaDest != VG_INVALID_HANDLE)
+    vgDestroyImage(alphaDest);
   if (dest != VG_INVALID_HANDLE)
     vgDestroyImage(dest);
   if (source != VG_INVALID_HANDLE)

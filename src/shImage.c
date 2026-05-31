@@ -2888,19 +2888,6 @@ static VGboolean shImageFilterAligned(const void *ptr, size_t alignment)
   return (value % alignment) == 0 ? VG_TRUE : VG_FALSE;
 }
 
-static SHint shImageFilterIntMod(SHint value, SHint modulus)
-{
-  SHint result;
-
-  if (modulus <= 0)
-    return 0;
-
-  result = value % modulus;
-  if (result < 0)
-    result += modulus;
-  return result;
-}
-
 static VGboolean shImageFilterIsLuminanceFormat(VGImageFormat format)
 {
   SHuint32 base = (SHuint32)format & 0x1Fu;
@@ -2918,300 +2905,560 @@ static VGboolean shImageFilterFormatIsLinear(VGImageFormat format)
           base == VG_lL_8) ? VG_TRUE : VG_FALSE;
 }
 
-static SHfloat shImageFilterSRGBToLinear(SHfloat value)
+enum
 {
-  if (value <= 0.0f)
-    return 0.0f;
-  if (value >= 1.0f)
-    return 1.0f;
-  if (value <= 0.04045f)
-    return value / 12.92f;
-  return (SHfloat)powf((value + 0.055f) / 1.055f, 2.4f);
+  SH_IMAGE_FILTER_COLOR_MATRIX = 0,
+  SH_IMAGE_FILTER_CONVOLVE = 1,
+  SH_IMAGE_FILTER_SEPARABLE_X = 2,
+  SH_IMAGE_FILTER_SEPARABLE_Y = 3,
+  SH_IMAGE_FILTER_GAUSSIAN_X = 4,
+  SH_IMAGE_FILTER_GAUSSIAN_Y = 5,
+  SH_IMAGE_FILTER_LOOKUP = 6,
+  SH_IMAGE_FILTER_LOOKUP_SINGLE = 7
+};
+
+enum
+{
+  SH_IMAGE_FILTER_STORE_RGBA = 0,
+  SH_IMAGE_FILTER_STORE_ALPHA = 1,
+  SH_IMAGE_FILTER_STORE_LUMINANCE = 2,
+  SH_IMAGE_FILTER_STORE_FLOAT = 3
+};
+
+typedef struct
+{
+  GLint framebuffer;
+  GLint renderbuffer;
+  GLint viewport[4];
+  GLint program;
+  GLint vertexArray;
+  GLint arrayBuffer;
+  GLint activeTexture;
+  GLint sourceTextureBinding;
+  GLint auxTextureBinding;
+  GLint drawBuffer;
+  GLint readBuffer;
+  GLint scissorBox[4];
+  GLboolean blend;
+  GLboolean scissor;
+  GLboolean depth;
+  GLboolean stencil;
+  GLboolean colorMask[4];
+} SHImageFilterGLState;
+
+typedef struct
+{
+  SHint mode;
+  SHint sourceWidth;
+  SHint sourceHeight;
+  SHint kernelWidth;
+  SHint kernelHeight;
+  SHint shiftX;
+  SHint shiftY;
+  SHfloat scale;
+  SHfloat bias;
+  VGTilingMode tilingMode;
+  GLfloat colorMatrix[16];
+  GLfloat colorBias[4];
+  GLfloat tileFillColor[4];
+  VGboolean sourceLinear;
+  VGboolean filterLinear;
+  VGboolean outputLinear;
+  VGboolean dstLinear;
+  VGboolean premultiplyInput;
+  VGboolean unpremultiplyOutput;
+  SHint dstStorageMode;
+  SHint lookupSourceChannel;
+} SHImageFilterPass;
+
+static void shSaveImageFilterGLState(SHImageFilterGLState *state)
+{
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
+  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
+  glGetIntegerv(GL_VIEWPORT, state->viewport);
+  glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
+  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
+  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
+  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
+  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
+  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
+  state->blend = glIsEnabled(GL_BLEND);
+  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
+  state->depth = glIsEnabled(GL_DEPTH_TEST);
+  state->stencil = glIsEnabled(GL_STENCIL_TEST);
+  glActiveTexture(GL_TEXTURE0);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->sourceTextureBinding);
+  glActiveTexture(GL_TEXTURE1);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->auxTextureBinding);
+  glActiveTexture(state->activeTexture);
 }
 
-static SHfloat shImageFilterLinearToSRGB(SHfloat value)
+static void shRestoreImageFilterGLState(const SHImageFilterGLState *state)
 {
-  if (value <= 0.0f)
-    return 0.0f;
-  if (value >= 1.0f)
-    return 1.0f;
-  if (value <= 0.0031308f)
-    return value * 12.92f;
-  return 1.055f * (SHfloat)powf(value, 1.0f / 2.4f) - 0.055f;
+  if (state->blend) glEnable(GL_BLEND);
+  else glDisable(GL_BLEND);
+
+  if (state->scissor) glEnable(GL_SCISSOR_TEST);
+  else glDisable(GL_SCISSOR_TEST);
+
+  if (state->depth) glEnable(GL_DEPTH_TEST);
+  else glDisable(GL_DEPTH_TEST);
+
+  if (state->stencil) glEnable(GL_STENCIL_TEST);
+  else glDisable(GL_STENCIL_TEST);
+
+  glScissor(state->scissorBox[0], state->scissorBox[1],
+            state->scissorBox[2], state->scissorBox[3]);
+  glColorMask(state->colorMask[0], state->colorMask[1],
+              state->colorMask[2], state->colorMask[3]);
+  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
+  glDrawBuffer(state->drawBuffer);
+  glReadBuffer(state->readBuffer);
+  glUseProgram(state->program);
+  if (state->vertexArray == 0 ||
+      glIsVertexArray((GLuint)state->vertexArray))
+    glBindVertexArray((GLuint)state->vertexArray);
+  else
+    glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
+  glViewport(state->viewport[0], state->viewport[1],
+             state->viewport[2], state->viewport[3]);
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, (GLuint)state->auxTextureBinding);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, (GLuint)state->sourceTextureBinding);
+  glActiveTexture(state->activeTexture);
 }
 
-static void shImageFilterConvertColorSpace(SHColor *color,
-                                           VGboolean fromLinear,
-                                           VGboolean toLinear)
+static void shImageFilterPremultiplyColor(GLfloat color[4])
 {
-  if (fromLinear == toLinear)
-    return;
+  color[0] *= color[3];
+  color[1] *= color[3];
+  color[2] *= color[3];
+}
 
-  if (toLinear) {
-    color->r = shImageFilterSRGBToLinear(color->r);
-    color->g = shImageFilterSRGBToLinear(color->g);
-    color->b = shImageFilterSRGBToLinear(color->b);
+static void shImageFilterEdgeColor(VGContext *context, GLfloat color[4])
+{
+  color[0] = context->tileFillColor.r;
+  color[1] = context->tileFillColor.g;
+  color[2] = context->tileFillColor.b;
+  color[3] = context->tileFillColor.a;
+
+  if (context->filterFormatPremultiplied)
+    shImageFilterPremultiplyColor(color);
+}
+
+static SHint shImageFilterStorageMode(const SHImage *image)
+{
+  SHuint32 base;
+
+  if (!image)
+    return SH_IMAGE_FILTER_STORE_RGBA;
+
+  base = (SHuint32)image->fd.vgformat & 0x1Fu;
+  if (base == VG_A_8)
+    return SH_IMAGE_FILTER_STORE_ALPHA;
+  if (shImageFilterIsLuminanceFormat(image->fd.vgformat))
+    return SH_IMAGE_FILTER_STORE_LUMINANCE;
+  return SH_IMAGE_FILTER_STORE_RGBA;
+}
+
+static void shImageFilterSetColorMask(const SHImage *dst,
+                                      VGbitfield channelMask,
+                                      SHint storageMode)
+{
+  channelMask &= VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA;
+
+  if (storageMode == SH_IMAGE_FILTER_STORE_FLOAT) {
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  } else if (storageMode == SH_IMAGE_FILTER_STORE_LUMINANCE) {
+    glColorMask(GL_TRUE, GL_FALSE, GL_FALSE, GL_FALSE);
+  } else if (storageMode == SH_IMAGE_FILTER_STORE_ALPHA) {
+    glColorMask((channelMask & VG_ALPHA) ? GL_TRUE : GL_FALSE,
+                GL_FALSE, GL_FALSE, GL_FALSE);
   } else {
-    color->r = shImageFilterLinearToSRGB(color->r);
-    color->g = shImageFilterLinearToSRGB(color->g);
-    color->b = shImageFilterLinearToSRGB(color->b);
+    glColorMask((channelMask & VG_RED) ? GL_TRUE : GL_FALSE,
+                (channelMask & VG_GREEN) ? GL_TRUE : GL_FALSE,
+                (channelMask & VG_BLUE) ? GL_TRUE : GL_FALSE,
+                (dst && dst->fd.amask != 0 &&
+                 (channelMask & VG_ALPHA)) ? GL_TRUE : GL_FALSE);
   }
 }
 
-static void shImageFilterClampColor(SHColor *color)
+static VGboolean shImageFilterEnsureFramebuffer(VGContext *context)
 {
-  if (color->r < 0.0f) color->r = 0.0f;
-  if (color->g < 0.0f) color->g = 0.0f;
-  if (color->b < 0.0f) color->b = 0.0f;
-  if (color->a < 0.0f) color->a = 0.0f;
-  if (color->r > 1.0f) color->r = 1.0f;
-  if (color->g > 1.0f) color->g = 1.0f;
-  if (color->b > 1.0f) color->b = 1.0f;
-  if (color->a > 1.0f) color->a = 1.0f;
+  if (context->filterFramebuffer == 0)
+    glGenFramebuffers(1, &context->filterFramebuffer);
+  return context->filterFramebuffer != 0 ? VG_TRUE : VG_FALSE;
 }
 
-static SHuint8 shImageFilterColorToByte(SHfloat value)
+static VGboolean shImageFilterAttachTarget(VGContext *context,
+                                           GLuint texture)
 {
-  SHint rounded;
+  GLenum status;
 
-  if (value < 0.0f)
-    value = 0.0f;
-  else if (value > 1.0f)
-    value = 1.0f;
-
-  rounded = (SHint)SH_FLOOR(value * 255.0f + 0.5f);
-  if (rounded < 0)
-    rounded = 0;
-  else if (rounded > 255)
-    rounded = 255;
-  return (SHuint8)rounded;
-}
-
-static SHfloat shImageFilterByteToColor(SHuint32 value)
-{
-  return (SHfloat)(value & 0xffu) / 255.0f;
-}
-
-static void shImageFilterPremultiply(SHColor *color)
-{
-  color->r *= color->a;
-  color->g *= color->a;
-  color->b *= color->a;
-}
-
-static void shImageFilterUnpremultiply(SHColor *color)
-{
-  if (color->a <= 0.0f) {
-    color->r = 0.0f;
-    color->g = 0.0f;
-    color->b = 0.0f;
-    color->a = 0.0f;
-    return;
-  }
-
-  if (color->r > color->a) color->r = color->a;
-  if (color->g > color->a) color->g = color->a;
-  if (color->b > color->a) color->b = color->a;
-  color->r /= color->a;
-  color->g /= color->a;
-  color->b /= color->a;
-}
-
-static void shImageFilterFinishColor(SHColor *color,
-                                     VGboolean premultiplied)
-{
-  shImageFilterClampColor(color);
-  if (premultiplied)
-    shImageFilterUnpremultiply(color);
-  shImageFilterClampColor(color);
-}
-
-static void shImageFilterAddScaled(SHColor *sum,
-                                   const SHColor *color,
-                                   SHfloat scale)
-{
-  sum->r += color->r * scale;
-  sum->g += color->g * scale;
-  sum->b += color->b * scale;
-  sum->a += color->a * scale;
-}
-
-static void shImageFilterScaleColor(SHColor *color, SHfloat scale)
-{
-  color->r *= scale;
-  color->g *= scale;
-  color->b *= scale;
-  color->a *= scale;
-}
-
-static void shImageFilterBiasColor(SHColor *color, SHfloat bias)
-{
-  color->r += bias;
-  color->g += bias;
-  color->b += bias;
-  color->a += bias;
-}
-
-static SHuint8 *shImageFilterPixel(SHImage *image, SHint x, SHint y)
-{
-  return image->data +
-         ((size_t)y * (size_t)image->texwidth + (size_t)x) *
-         (size_t)image->fd.bytes;
-}
-
-static const SHuint8 *shImageFilterConstPixel(const SHImage *image,
-                                              SHint x,
-                                              SHint y)
-{
-  return image->data +
-         ((size_t)y * (size_t)image->texwidth + (size_t)x) *
-         (size_t)image->fd.bytes;
-}
-
-static void shImageFilterLoadImageColor(const SHImage *image,
-                                        SHint x,
-                                        SHint y,
-                                        VGboolean targetLinear,
-                                        VGboolean premultiply,
-                                        SHColor *color)
-{
-  shLoadColor(color, shImageFilterConstPixel(image, x, y),
-              (SHImageFormatDesc*)&image->fd);
-  shImageFilterConvertColorSpace(
-    color, shImageFilterFormatIsLinear(image->fd.vgformat), targetLinear);
-  if (premultiply)
-    shImageFilterPremultiply(color);
-}
-
-static void shImageFilterStoreImageColor(SHImage *image,
-                                         SHint x,
-                                         SHint y,
-                                         const SHColor *color)
-{
-  SHColor stored = *color;
-
-  shImageFilterClampColor(&stored);
-  shStoreColor(&stored, shImageFilterPixel(image, x, y), &image->fd);
-}
-
-static SHColor *shImageFilterAllocColors(SHint width, SHint height)
-{
-  size_t count;
-  size_t maxSize = (size_t)-1;
-
-  if (width <= 0 || height <= 0)
-    return NULL;
-
-  if ((size_t)width > maxSize / (size_t)height)
-    return NULL;
-  count = (size_t)width * (size_t)height;
-  if (count > maxSize / sizeof(SHColor))
-    return NULL;
-
-  return (SHColor*)malloc(count * sizeof(SHColor));
-}
-
-static VGboolean shImageFilterLoadSource(SHImage *src,
-                                         VGboolean targetLinear,
-                                         VGboolean premultiply,
-                                         SHColor **outColors)
-{
-  SHColor *colors;
-  SHint x, y;
-
-  colors = shImageFilterAllocColors(src->width, src->height);
-  if (!colors)
+  if (!shImageFilterEnsureFramebuffer(context))
     return VG_FALSE;
 
-  for (y=0; y<src->height; ++y) {
-    for (x=0; x<src->width; ++x) {
-      shImageFilterLoadImageColor(src, x, y, targetLinear, premultiply,
-                                  &colors[y * src->width + x]);
-    }
-  }
+  glBindFramebuffer(GL_FRAMEBUFFER, context->filterFramebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D, texture, 0);
+  glDrawBuffer(GL_COLOR_ATTACHMENT0);
+  glReadBuffer(GL_COLOR_ATTACHMENT0);
+  status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  return status == GL_FRAMEBUFFER_COMPLETE ? VG_TRUE : VG_FALSE;
+}
 
-  *outColors = colors;
+static void shImageFilterSetTextureParams(GLuint texture)
+{
+  if (texture == 0)
+    return;
+
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+}
+
+static VGboolean shImageFilterEnsureScratch(VGContext *context,
+                                            SHint width,
+                                            SHint height)
+{
+  SHImageUploadGLState state;
+
+  if (width <= 0 || height <= 0)
+    return VG_FALSE;
+
+  if (context->filterScratchTexture != 0 &&
+      context->filterScratchWidth == width &&
+      context->filterScratchHeight == height)
+    return VG_TRUE;
+
+  if (context->filterScratchTexture == 0)
+    glGenTextures(1, &context->filterScratchTexture);
+  if (context->filterScratchTexture == 0)
+    return VG_FALSE;
+
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, context->filterScratchTexture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F,
+               width, height, 0, GL_RGBA, GL_FLOAT, NULL);
+  shRestoreImageUploadGLState(&state);
+
+  if (glGetError() != GL_NO_ERROR)
+    return VG_FALSE;
+
+  context->filterScratchWidth = width;
+  context->filterScratchHeight = height;
   return VG_TRUE;
 }
 
-static const SHColor *shImageFilterTiledColor(const SHColor *colors,
-                                             SHint width,
-                                             SHint height,
-                                             SHint x,
-                                             SHint y,
-                                             VGTilingMode tilingMode,
-                                             const SHColor *edge)
+static VGboolean shImageFilterCreateFloatTexture(GLuint *texture,
+                                                 SHint width,
+                                                 SHint height,
+                                                 const void *data,
+                                                 GLenum internalFormat,
+                                                 GLenum format,
+                                                 GLenum type)
 {
-  if (x >= 0 && x < width && y >= 0 && y < height)
-    return &colors[y * width + x];
+  SHImageUploadGLState state;
+  VGboolean success;
 
-  switch (tilingMode) {
-  case VG_TILE_FILL:
-    return edge;
+  *texture = 0;
+  if (width <= 0 || height <= 0 || !data)
+    return VG_FALSE;
 
-  case VG_TILE_PAD:
-    if (x < 0) x = 0;
-    else if (x >= width) x = width - 1;
-    if (y < 0) y = 0;
-    else if (y >= height) y = height - 1;
-    return &colors[y * width + x];
+  glGenTextures(1, texture);
+  if (*texture == 0)
+    return VG_FALSE;
 
-  case VG_TILE_REPEAT:
-    x = shImageFilterIntMod(x, width);
-    y = shImageFilterIntMod(y, height);
-    return &colors[y * width + x];
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, *texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+  glTexImage2D(GL_TEXTURE_2D, 0, internalFormat,
+               width, height, 0, format, type, data);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+  shRestoreImageUploadGLState(&state);
 
-  case VG_TILE_REFLECT:
-  default:
-    x = shImageFilterIntMod(x, width * 2);
-    y = shImageFilterIntMod(y, height * 2);
-    if (x >= width)
-      x = width * 2 - 1 - x;
-    if (y >= height)
-      y = height * 2 - 1 - y;
-    return &colors[y * width + x];
+  if (!success) {
+    glDeleteTextures(1, texture);
+    *texture = 0;
   }
+  return success;
 }
 
-static SHColor shImageFilterMergeColor(const SHImage *dst,
-                                       const SHColor *filtered,
-                                       const SHColor *oldColor,
-                                       VGbitfield channelMask)
+static VGboolean shImageFilterCreateConvolveKernelTexture(
+  const VGshort *kernel,
+  SHint kernelWidth,
+  SHint kernelHeight,
+  GLuint *texture)
 {
-  SHColor result = *oldColor;
+  GLfloat *data;
+  size_t count;
+  SHint x, y;
+  VGboolean success;
 
-  if (shImageFilterIsLuminanceFormat(dst->fd.vgformat))
-    return *filtered;
+  count = (size_t)kernelWidth * (size_t)kernelHeight;
+  data = (GLfloat*)malloc(count * sizeof(GLfloat));
+  if (!data)
+    return VG_FALSE;
 
-  channelMask &= VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA;
-  if (channelMask & VG_RED)
-    result.r = filtered->r;
-  if (channelMask & VG_GREEN)
-    result.g = filtered->g;
-  if (channelMask & VG_BLUE)
-    result.b = filtered->b;
-  if ((channelMask & VG_ALPHA) && dst->fd.amask != 0)
-    result.a = filtered->a;
+  for (y=0; y<kernelHeight; ++y)
+    for (x=0; x<kernelWidth; ++x)
+      data[y * kernelWidth + x] =
+        (GLfloat)kernel[x * kernelHeight + y];
 
-  return result;
+  success = shImageFilterCreateFloatTexture(texture,
+                                            kernelWidth,
+                                            kernelHeight,
+                                            data,
+                                            GL_R32F,
+                                            GL_RED,
+                                            GL_FLOAT);
+  free(data);
+  return success;
 }
 
-static void shImageFilterStoreMergedColor(SHImage *dst,
-                                          SHint x,
-                                          SHint y,
-                                          const SHColor *filtered,
-                                          VGbitfield channelMask,
-                                          VGboolean filteredLinear)
+static VGboolean shImageFilterCreateShortKernelTexture(
+  const VGshort *kernel,
+  SHint kernelSize,
+  GLuint *texture)
 {
-  SHColor oldColor;
-  SHColor dstColor = *filtered;
-  SHColor merged;
-  VGboolean dstLinear = shImageFilterFormatIsLinear(dst->fd.vgformat);
+  GLfloat *data;
+  SHint i;
+  VGboolean success;
 
-  shImageFilterConvertColorSpace(&dstColor, filteredLinear, dstLinear);
-  shImageFilterLoadImageColor(dst, x, y, dstLinear, VG_FALSE, &oldColor);
-  merged = shImageFilterMergeColor(dst, &dstColor, &oldColor, channelMask);
-  shImageFilterStoreImageColor(dst, x, y, &merged);
+  data = (GLfloat*)malloc((size_t)kernelSize * sizeof(GLfloat));
+  if (!data)
+    return VG_FALSE;
+
+  for (i=0; i<kernelSize; ++i)
+    data[i] = (GLfloat)kernel[i];
+
+  success = shImageFilterCreateFloatTexture(texture,
+                                            kernelSize,
+                                            1,
+                                            data,
+                                            GL_R32F,
+                                            GL_RED,
+                                            GL_FLOAT);
+  free(data);
+  return success;
+}
+
+static VGboolean shImageFilterCreateFloatKernelTexture(
+  const GLfloat *kernel,
+  SHint kernelSize,
+  GLuint *texture)
+{
+  return shImageFilterCreateFloatTexture(texture,
+                                         kernelSize,
+                                         1,
+                                         kernel,
+                                         GL_R32F,
+                                         GL_RED,
+                                         GL_FLOAT);
+}
+
+static VGboolean shImageFilterCreateLookupTexture(
+  const VGubyte *redLUT,
+  const VGubyte *greenLUT,
+  const VGubyte *blueLUT,
+  const VGubyte *alphaLUT,
+  GLuint *texture)
+{
+  SHuint8 data[256 * 4];
+  SHint i;
+
+  for (i=0; i<256; ++i) {
+    data[i * 4 + 0] = redLUT[i];
+    data[i * 4 + 1] = greenLUT[i];
+    data[i * 4 + 2] = blueLUT[i];
+    data[i * 4 + 3] = alphaLUT[i];
+  }
+
+  return shImageFilterCreateFloatTexture(texture,
+                                         256,
+                                         1,
+                                         data,
+                                         GL_RGBA,
+                                         GL_RGBA,
+                                         GL_UNSIGNED_BYTE);
+}
+
+static VGboolean shImageFilterCreateSingleLookupTexture(
+  const VGuint *lookupTable,
+  GLuint *texture)
+{
+  SHuint8 data[256 * 4];
+  SHint i;
+
+  for (i=0; i<256; ++i) {
+    VGuint value = lookupTable[i];
+    data[i * 4 + 0] = (SHuint8)((value >> 24) & 0xffu);
+    data[i * 4 + 1] = (SHuint8)((value >> 16) & 0xffu);
+    data[i * 4 + 2] = (SHuint8)((value >> 8) & 0xffu);
+    data[i * 4 + 3] = (SHuint8)(value & 0xffu);
+  }
+
+  return shImageFilterCreateFloatTexture(texture,
+                                         256,
+                                         1,
+                                         data,
+                                         GL_RGBA,
+                                         GL_RGBA,
+                                         GL_UNSIGNED_BYTE);
+}
+
+static void shImageFilterInitPass(VGContext *context,
+                                  const SHImage *src,
+                                  const SHImage *dst,
+                                  SHImageFilterPass *pass)
+{
+  memset(pass, 0, sizeof(*pass));
+  pass->sourceWidth = src ? src->width : 0;
+  pass->sourceHeight = src ? src->height : 0;
+  pass->scale = 1.0f;
+  pass->bias = 0.0f;
+  pass->tilingMode = VG_TILE_PAD;
+  pass->sourceLinear = src ?
+    shImageFilterFormatIsLinear(src->fd.vgformat) : VG_FALSE;
+  pass->filterLinear = context->filterFormatLinear;
+  pass->outputLinear = context->filterFormatLinear;
+  pass->dstLinear = dst ?
+    shImageFilterFormatIsLinear(dst->fd.vgformat) : context->filterFormatLinear;
+  pass->premultiplyInput = context->filterFormatPremultiplied;
+  pass->unpremultiplyOutput = context->filterFormatPremultiplied;
+  pass->dstStorageMode = dst ?
+    shImageFilterStorageMode(dst) : SH_IMAGE_FILTER_STORE_RGBA;
+  shImageFilterEdgeColor(context, pass->tileFillColor);
+}
+
+static VGboolean shImageFilterRunPass(VGContext *context,
+                                      SHImage *dst,
+                                      GLuint targetTexture,
+                                      SHint targetWidth,
+                                      SHint targetHeight,
+                                      GLuint sourceTexture,
+                                      GLuint auxTexture,
+                                      VGbitfield channelMask,
+                                      const SHImageFilterPass *pass)
+{
+  typedef struct
+  {
+    GLfloat x;
+    GLfloat y;
+  } SHImageFilterVertex;
+
+  SHImageFilterVertex vertices[4];
+  SHImageFilterGLState glState;
+  SHVertexState vertexState;
+  VGboolean success = VG_FALSE;
+
+  if (!context || targetTexture == 0 || sourceTexture == 0 ||
+      targetWidth <= 0 || targetHeight <= 0)
+    return VG_FALSE;
+
+  vertices[0].x = 0.0f;
+  vertices[0].y = 0.0f;
+  vertices[1].x = (GLfloat)targetWidth;
+  vertices[1].y = 0.0f;
+  vertices[2].x = 0.0f;
+  vertices[2].y = (GLfloat)targetHeight;
+  vertices[3].x = (GLfloat)targetWidth;
+  vertices[3].y = (GLfloat)targetHeight;
+
+  shSaveImageFilterGLState(&glState);
+
+  if (!shImageFilterAttachTarget(context, targetTexture))
+    goto cleanup;
+
+  glViewport(0, 0, targetWidth, targetHeight);
+  glDisable(GL_BLEND);
+  glDisable(GL_SCISSOR_TEST);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_STENCIL_TEST);
+  shImageFilterSetColorMask(dst, channelMask, pass->dstStorageMode);
+
+  glUseProgram(context->progImageFilter);
+  glUniform1i(context->locationImageFilter.mode, pass->mode);
+  glUniform1i(context->locationImageFilter.sourceSampler, 0);
+  glUniform1i(context->locationImageFilter.auxSampler, 1);
+  glUniform2f(context->locationImageFilter.targetSize,
+              (GLfloat)targetWidth, (GLfloat)targetHeight);
+  glUniform2i(context->locationImageFilter.sourceSize,
+              pass->sourceWidth, pass->sourceHeight);
+  glUniform2i(context->locationImageFilter.kernelSize,
+              pass->kernelWidth, pass->kernelHeight);
+  glUniform2i(context->locationImageFilter.shift,
+              pass->shiftX, pass->shiftY);
+  glUniform1f(context->locationImageFilter.scale, pass->scale);
+  glUniform1f(context->locationImageFilter.bias, pass->bias);
+  glUniform1i(context->locationImageFilter.tilingMode, pass->tilingMode);
+  glUniform4fv(context->locationImageFilter.colorMatrix,
+               4, pass->colorMatrix);
+  glUniform4fv(context->locationImageFilter.colorBias,
+               1, pass->colorBias);
+  glUniform4fv(context->locationImageFilter.tileFillColor,
+               1, pass->tileFillColor);
+  glUniform1i(context->locationImageFilter.sourceLinear,
+              pass->sourceLinear ? 1 : 0);
+  glUniform1i(context->locationImageFilter.filterLinear,
+              pass->filterLinear ? 1 : 0);
+  glUniform1i(context->locationImageFilter.outputLinear,
+              pass->outputLinear ? 1 : 0);
+  glUniform1i(context->locationImageFilter.dstLinear,
+              pass->dstLinear ? 1 : 0);
+  glUniform1i(context->locationImageFilter.premultiplyInput,
+              pass->premultiplyInput ? 1 : 0);
+  glUniform1i(context->locationImageFilter.unpremultiplyOutput,
+              pass->unpremultiplyOutput ? 1 : 0);
+  glUniform1i(context->locationImageFilter.dstStorageMode,
+              pass->dstStorageMode);
+  glUniform1i(context->locationImageFilter.lookupSourceChannel,
+              pass->lookupSourceChannel);
+
+  glActiveTexture(GL_TEXTURE0);
+  shImageFilterSetTextureParams(sourceTexture);
+  glActiveTexture(GL_TEXTURE1);
+  shImageFilterSetTextureParams(auxTexture);
+
+  shBindContextVertexState(context, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(context->locationImageFilter.pos);
+  glVertexAttribPointer(context->locationImageFilter.pos, 2, GL_FLOAT,
+                        GL_FALSE, sizeof(SHImageFilterVertex),
+                        (const GLvoid*)0);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  glDisableVertexAttribArray(context->locationImageFilter.pos);
+  shRestoreVertexState(&vertexState);
+
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+
+cleanup:
+  shRestoreImageFilterGLState(&glState);
+  return success;
 }
 
 VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,
@@ -3219,7 +3466,7 @@ VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,
 {
   SHImage *s, *d;
   SHint width, height;
-  SHint x, y;
+  SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
@@ -3236,42 +3483,41 @@ VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
-                   !shImageSyncDataFromTexture(d),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   width = SH_MIN(d->width, s->width);
   height = SH_MIN(d->height, s->height);
-  for (y=0; y<height; ++y) {
-    for (x=0; x<width; ++x) {
-      SHColor source;
-      SHColor filtered;
 
-      shImageFilterLoadImageColor(s, x, y,
-                                  context->filterFormatLinear,
-                                  context->filterFormatPremultiplied,
-                                  &source);
-      filtered.r = matrix[0]  * source.r + matrix[4]  * source.g +
-                   matrix[8]  * source.b + matrix[12] * source.a +
-                   matrix[16];
-      filtered.g = matrix[1]  * source.r + matrix[5]  * source.g +
-                   matrix[9]  * source.b + matrix[13] * source.a +
-                   matrix[17];
-      filtered.b = matrix[2]  * source.r + matrix[6]  * source.g +
-                   matrix[10] * source.b + matrix[14] * source.a +
-                   matrix[18];
-      filtered.a = matrix[3]  * source.r + matrix[7]  * source.g +
-                   matrix[11] * source.b + matrix[15] * source.a +
-                   matrix[19];
-      shImageFilterFinishColor(&filtered,
-                               context->filterFormatPremultiplied);
-      shImageFilterStoreMergedColor(d, x, y, &filtered,
-                                    context->filterChannelMask,
-                                    context->filterFormatLinear);
-    }
-  }
+  shImageFilterInitPass(context, s, d, &pass);
+  pass.mode = SH_IMAGE_FILTER_COLOR_MATRIX;
+  pass.colorMatrix[0] = matrix[0];
+  pass.colorMatrix[1] = matrix[4];
+  pass.colorMatrix[2] = matrix[8];
+  pass.colorMatrix[3] = matrix[12];
+  pass.colorMatrix[4] = matrix[1];
+  pass.colorMatrix[5] = matrix[5];
+  pass.colorMatrix[6] = matrix[9];
+  pass.colorMatrix[7] = matrix[13];
+  pass.colorMatrix[8] = matrix[2];
+  pass.colorMatrix[9] = matrix[6];
+  pass.colorMatrix[10] = matrix[10];
+  pass.colorMatrix[11] = matrix[14];
+  pass.colorMatrix[12] = matrix[3];
+  pass.colorMatrix[13] = matrix[7];
+  pass.colorMatrix[14] = matrix[11];
+  pass.colorMatrix[15] = matrix[15];
+  pass.colorBias[0] = matrix[16];
+  pass.colorBias[1] = matrix[17];
+  pass.colorBias[2] = matrix[18];
+  pass.colorBias[3] = matrix[19];
 
-  shUpdateImageTexture(d, context);
+  VG_RETURN_ERR_IF(!shImageFilterRunPass(context, d, d->texture,
+                                         width, height,
+                                         s->texture, 0,
+                                         context->filterChannelMask,
+                                         &pass),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  d->gpuDataDirty = VG_TRUE;
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -3284,10 +3530,9 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
                             VGTilingMode tilingMode)
 {
   SHImage *s, *d;
-  SHColor *source = NULL;
-  SHColor edge;
   SHint width, height;
-  SHint x, y, kx, ky;
+  GLuint kernelTexture = 0;
+  SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
@@ -3310,51 +3555,35 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
-                   !shImageSyncDataFromTexture(d),
+
+  VG_RETURN_ERR_IF(!shImageFilterCreateConvolveKernelTexture(
+                     kernel, kernelWidth, kernelHeight, &kernelTexture),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
-  if (!shImageFilterLoadSource(s, context->filterFormatLinear,
-                               context->filterFormatPremultiplied,
-                               &source))
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  edge = context->tileFillColor;
-  if (context->filterFormatPremultiplied)
-    shImageFilterPremultiply(&edge);
   width = SH_MIN(d->width, s->width);
   height = SH_MIN(d->height, s->height);
 
-  for (y=0; y<height; ++y) {
-    for (x=0; x<width; ++x) {
-      SHColor filtered;
+  shImageFilterInitPass(context, s, d, &pass);
+  pass.mode = SH_IMAGE_FILTER_CONVOLVE;
+  pass.kernelWidth = kernelWidth;
+  pass.kernelHeight = kernelHeight;
+  pass.shiftX = shiftX;
+  pass.shiftY = shiftY;
+  pass.scale = scale;
+  pass.bias = bias;
+  pass.tilingMode = tilingMode;
 
-      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
-      for (ky=0; ky<kernelHeight; ++ky) {
-        for (kx=0; kx<kernelWidth; ++kx) {
-          const SHColor *sample = shImageFilterTiledColor(
-            source, s->width, s->height,
-            x + kx - shiftX, y + ky - shiftY, tilingMode, &edge);
-          SHint reversedX = kernelWidth - kx - 1;
-          SHint reversedY = kernelHeight - ky - 1;
-          SHfloat weight =
-            (SHfloat)kernel[reversedX * kernelHeight + reversedY];
-
-          shImageFilterAddScaled(&filtered, sample, weight);
-        }
-      }
-      shImageFilterScaleColor(&filtered, scale);
-      shImageFilterBiasColor(&filtered, bias);
-      shImageFilterFinishColor(&filtered,
-                               context->filterFormatPremultiplied);
-      shImageFilterStoreMergedColor(d, x, y, &filtered,
-                                    context->filterChannelMask,
-                                    context->filterFormatLinear);
-    }
+  if (!shImageFilterRunPass(context, d, d->texture,
+                            width, height,
+                            s->texture, kernelTexture,
+                            context->filterChannelMask,
+                            &pass)) {
+    glDeleteTextures(1, &kernelTexture);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   }
 
-  free(source);
-  shUpdateImageTexture(d, context);
+  glDeleteTextures(1, &kernelTexture);
+  d->gpuDataDirty = VG_TRUE;
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -3369,13 +3598,12 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
                                      VGTilingMode tilingMode)
 {
   SHImage *s, *d;
-  SHColor *source = NULL;
-  SHColor *horizontal = NULL;
-  SHColor edge;
-  SHColor horizontalEdge;
+  GLuint kernelXTexture = 0;
+  GLuint kernelYTexture = 0;
   SHfloat kernelXSum = 0.0f;
   SHint width, height;
-  SHint x, y, k;
+  SHint k;
+  SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
@@ -3400,76 +3628,71 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
-                   !shImageSyncDataFromTexture(d),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  if (!shImageFilterLoadSource(s, context->filterFormatLinear,
-                               context->filterFormatPremultiplied,
-                               &source))
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  horizontal = shImageFilterAllocColors(s->width, s->height);
-  if (!horizontal) {
-    free(source);
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-  }
-
-  edge = context->tileFillColor;
-  if (context->filterFormatPremultiplied)
-    shImageFilterPremultiply(&edge);
 
   for (k=0; k<kernelWidth; ++k)
     kernelXSum += (SHfloat)kernelX[k];
-  horizontalEdge = edge;
-  shImageFilterScaleColor(&horizontalEdge, kernelXSum);
 
-  for (y=0; y<s->height; ++y) {
-    for (x=0; x<s->width; ++x) {
-      SHColor filtered;
+  if (!shImageFilterCreateShortKernelTexture(kernelX,
+                                             kernelWidth,
+                                             &kernelXTexture) ||
+      !shImageFilterCreateShortKernelTexture(kernelY,
+                                             kernelHeight,
+                                             &kernelYTexture) ||
+      !shImageFilterEnsureScratch(context, s->width, s->height))
+    goto separable_out_of_memory;
 
-      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
-      for (k=0; k<kernelWidth; ++k) {
-        const SHColor *sample = shImageFilterTiledColor(
-          source, s->width, s->height,
-          x + k - shiftX, y, tilingMode, &edge);
-        SHfloat weight = (SHfloat)kernelX[kernelWidth - k - 1];
+  shImageFilterInitPass(context, s, NULL, &pass);
+  pass.mode = SH_IMAGE_FILTER_SEPARABLE_X;
+  pass.kernelWidth = kernelWidth;
+  pass.kernelHeight = 1;
+  pass.shiftX = shiftX;
+  pass.tilingMode = tilingMode;
+  pass.dstStorageMode = SH_IMAGE_FILTER_STORE_FLOAT;
 
-        shImageFilterAddScaled(&filtered, sample, weight);
-      }
-      horizontal[y * s->width + x] = filtered;
-    }
-  }
+  if (!shImageFilterRunPass(context, NULL, context->filterScratchTexture,
+                            s->width, s->height,
+                            s->texture, kernelXTexture,
+                            VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA,
+                            &pass))
+    goto separable_out_of_memory;
 
   width = SH_MIN(d->width, s->width);
   height = SH_MIN(d->height, s->height);
-  for (y=0; y<height; ++y) {
-    for (x=0; x<width; ++x) {
-      SHColor filtered;
+  shImageFilterInitPass(context, s, d, &pass);
+  pass.mode = SH_IMAGE_FILTER_SEPARABLE_Y;
+  pass.sourceWidth = s->width;
+  pass.sourceHeight = s->height;
+  pass.kernelWidth = 1;
+  pass.kernelHeight = kernelHeight;
+  pass.shiftY = shiftY;
+  pass.scale = scale;
+  pass.bias = bias;
+  pass.tilingMode = tilingMode;
+  pass.premultiplyInput = VG_FALSE;
+  pass.tileFillColor[0] *= kernelXSum;
+  pass.tileFillColor[1] *= kernelXSum;
+  pass.tileFillColor[2] *= kernelXSum;
+  pass.tileFillColor[3] *= kernelXSum;
 
-      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
-      for (k=0; k<kernelHeight; ++k) {
-        const SHColor *sample = shImageFilterTiledColor(
-          horizontal, s->width, s->height,
-          x, y + k - shiftY, tilingMode, &horizontalEdge);
-        SHfloat weight = (SHfloat)kernelY[kernelHeight - k - 1];
+  if (!shImageFilterRunPass(context, d, d->texture,
+                            width, height,
+                            context->filterScratchTexture,
+                            kernelYTexture,
+                            context->filterChannelMask,
+                            &pass))
+    goto separable_out_of_memory;
 
-        shImageFilterAddScaled(&filtered, sample, weight);
-      }
-      shImageFilterScaleColor(&filtered, scale);
-      shImageFilterBiasColor(&filtered, bias);
-      shImageFilterFinishColor(&filtered,
-                               context->filterFormatPremultiplied);
-      shImageFilterStoreMergedColor(d, x, y, &filtered,
-                                    context->filterChannelMask,
-                                    context->filterFormatLinear);
-    }
-  }
-
-  free(horizontal);
-  free(source);
-  shUpdateImageTexture(d, context);
+  glDeleteTextures(1, &kernelYTexture);
+  glDeleteTextures(1, &kernelXTexture);
+  d->gpuDataDirty = VG_TRUE;
   VG_RETURN(VG_NO_RETVAL);
+
+separable_out_of_memory:
+  if (kernelYTexture != 0)
+    glDeleteTextures(1, &kernelYTexture);
+  if (kernelXTexture != 0)
+    glDeleteTextures(1, &kernelXTexture);
+  VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
@@ -3478,15 +3701,15 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
                                 VGTilingMode tilingMode)
 {
   SHImage *s, *d;
-  SHColor *source = NULL;
-  SHColor *horizontal = NULL;
-  SHColor edge;
   SHfloat *kernelX = NULL;
   SHfloat *kernelY = NULL;
+  GLuint kernelXTexture = 0;
+  GLuint kernelYTexture = 0;
   SHint radiusX, radiusY;
   SHint sizeX, sizeY;
   SHint width, height;
-  SHint x, y, k;
+  SHint k;
+  SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
@@ -3508,9 +3731,6 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
-                   !shImageSyncDataFromTexture(d),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   radiusX = (SHint)SH_CEIL(stdDeviationX * 3.0f);
   radiusY = (SHint)SH_CEIL(stdDeviationY * 3.0f);
@@ -3545,67 +3765,62 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
       kernelY[k] /= sumY;
   }
 
-  if (!shImageFilterLoadSource(s, context->filterFormatLinear,
-                               context->filterFormatPremultiplied,
-                               &source))
+  if (!shImageFilterCreateFloatKernelTexture(kernelX,
+                                             sizeX,
+                                             &kernelXTexture) ||
+      !shImageFilterCreateFloatKernelTexture(kernelY,
+                                             sizeY,
+                                             &kernelYTexture) ||
+      !shImageFilterEnsureScratch(context, s->width, s->height))
     goto gaussian_out_of_memory;
 
-  horizontal = shImageFilterAllocColors(s->width, s->height);
-  if (!horizontal)
+  shImageFilterInitPass(context, s, NULL, &pass);
+  pass.mode = SH_IMAGE_FILTER_GAUSSIAN_X;
+  pass.kernelWidth = sizeX;
+  pass.kernelHeight = 1;
+  pass.shiftX = radiusX;
+  pass.tilingMode = tilingMode;
+  pass.dstStorageMode = SH_IMAGE_FILTER_STORE_FLOAT;
+
+  if (!shImageFilterRunPass(context, NULL, context->filterScratchTexture,
+                            s->width, s->height,
+                            s->texture, kernelXTexture,
+                            VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA,
+                            &pass))
     goto gaussian_out_of_memory;
-
-  edge = context->tileFillColor;
-  if (context->filterFormatPremultiplied)
-    shImageFilterPremultiply(&edge);
-
-  for (y=0; y<s->height; ++y) {
-    for (x=0; x<s->width; ++x) {
-      SHColor filtered;
-
-      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
-      for (k=0; k<sizeX; ++k) {
-        const SHColor *sample = shImageFilterTiledColor(
-          source, s->width, s->height,
-          x + k - radiusX, y, tilingMode, &edge);
-
-        shImageFilterAddScaled(&filtered, sample, kernelX[k]);
-      }
-      horizontal[y * s->width + x] = filtered;
-    }
-  }
 
   width = SH_MIN(d->width, s->width);
   height = SH_MIN(d->height, s->height);
-  for (y=0; y<height; ++y) {
-    for (x=0; x<width; ++x) {
-      SHColor filtered;
+  shImageFilterInitPass(context, s, d, &pass);
+  pass.mode = SH_IMAGE_FILTER_GAUSSIAN_Y;
+  pass.sourceWidth = s->width;
+  pass.sourceHeight = s->height;
+  pass.kernelWidth = 1;
+  pass.kernelHeight = sizeY;
+  pass.shiftY = radiusY;
+  pass.tilingMode = tilingMode;
+  pass.premultiplyInput = VG_FALSE;
 
-      CSET(filtered, 0.0f, 0.0f, 0.0f, 0.0f);
-      for (k=0; k<sizeY; ++k) {
-        const SHColor *sample = shImageFilterTiledColor(
-          horizontal, s->width, s->height,
-          x, y + k - radiusY, tilingMode, &edge);
+  if (!shImageFilterRunPass(context, d, d->texture,
+                            width, height,
+                            context->filterScratchTexture,
+                            kernelYTexture,
+                            context->filterChannelMask,
+                            &pass))
+    goto gaussian_out_of_memory;
 
-        shImageFilterAddScaled(&filtered, sample, kernelY[k]);
-      }
-      shImageFilterFinishColor(&filtered,
-                               context->filterFormatPremultiplied);
-      shImageFilterStoreMergedColor(d, x, y, &filtered,
-                                    context->filterChannelMask,
-                                    context->filterFormatLinear);
-    }
-  }
-
-  free(horizontal);
-  free(source);
+  glDeleteTextures(1, &kernelYTexture);
+  glDeleteTextures(1, &kernelXTexture);
   free(kernelY);
   free(kernelX);
-  shUpdateImageTexture(d, context);
+  d->gpuDataDirty = VG_TRUE;
   VG_RETURN(VG_NO_RETVAL);
 
 gaussian_out_of_memory:
-  free(horizontal);
-  free(source);
+  if (kernelYTexture != 0)
+    glDeleteTextures(1, &kernelYTexture);
+  if (kernelXTexture != 0)
+    glDeleteTextures(1, &kernelXTexture);
   free(kernelY);
   free(kernelX);
   VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
@@ -3621,10 +3836,10 @@ VG_API_CALL void vgLookup(VGImage dst, VGImage src,
 {
   SHImage *s, *d;
   SHint width, height;
-  SHint x, y;
+  GLuint lookupTexture = 0;
+  SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  (void)outputLinear;
   VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
                    !shIsValidImage(context, dst),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
@@ -3641,37 +3856,32 @@ VG_API_CALL void vgLookup(VGImage dst, VGImage src,
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
-                   !shImageSyncDataFromTexture(d),
+
+  VG_RETURN_ERR_IF(!shImageFilterCreateLookupTexture(redLUT,
+                                                     greenLUT,
+                                                     blueLUT,
+                                                     alphaLUT,
+                                                     &lookupTexture),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   width = SH_MIN(d->width, s->width);
   height = SH_MIN(d->height, s->height);
-  for (y=0; y<height; ++y) {
-    for (x=0; x<width; ++x) {
-      SHColor source;
-      SHColor filtered;
+  shImageFilterInitPass(context, s, d, &pass);
+  pass.mode = SH_IMAGE_FILTER_LOOKUP;
+  pass.outputLinear = outputLinear ? VG_TRUE : VG_FALSE;
+  pass.unpremultiplyOutput = outputPremultiplied ? VG_TRUE : VG_FALSE;
 
-      shImageFilterLoadImageColor(s, x, y,
-                                  context->filterFormatLinear,
-                                  context->filterFormatPremultiplied,
-                                  &source);
-      filtered.r = shImageFilterByteToColor(
-        redLUT[shImageFilterColorToByte(source.r)]);
-      filtered.g = shImageFilterByteToColor(
-        greenLUT[shImageFilterColorToByte(source.g)]);
-      filtered.b = shImageFilterByteToColor(
-        blueLUT[shImageFilterColorToByte(source.b)]);
-      filtered.a = shImageFilterByteToColor(
-        alphaLUT[shImageFilterColorToByte(source.a)]);
-      shImageFilterFinishColor(&filtered, outputPremultiplied);
-      shImageFilterStoreMergedColor(d, x, y, &filtered,
-                                    context->filterChannelMask,
-                                    outputLinear);
-    }
+  if (!shImageFilterRunPass(context, d, d->texture,
+                            width, height,
+                            s->texture, lookupTexture,
+                            context->filterChannelMask,
+                            &pass)) {
+    glDeleteTextures(1, &lookupTexture);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   }
 
-  shUpdateImageTexture(d, context);
+  glDeleteTextures(1, &lookupTexture);
+  d->gpuDataDirty = VG_TRUE;
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -3683,10 +3893,10 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
 {
   SHImage *s, *d;
   SHint width, height;
-  SHint x, y;
+  GLuint lookupTexture = 0;
+  SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  (void)outputLinear;
   VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
                    !shIsValidImage(context, dst),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
@@ -3706,8 +3916,9 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
-                   !shImageSyncDataFromTexture(d),
+
+  VG_RETURN_ERR_IF(!shImageFilterCreateSingleLookupTexture(lookupTable,
+                                                           &lookupTexture),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   if (shImageFilterIsLuminanceFormat(s->fd.vgformat))
@@ -3717,46 +3928,38 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
 
   width = SH_MIN(d->width, s->width);
   height = SH_MIN(d->height, s->height);
-  for (y=0; y<height; ++y) {
-    for (x=0; x<width; ++x) {
-      SHColor source;
-      SHColor filtered;
-      SHuint8 index;
-      VGuint packed;
 
-      shImageFilterLoadImageColor(s, x, y,
-                                  context->filterFormatLinear,
-                                  context->filterFormatPremultiplied,
-                                  &source);
-      switch (sourceChannel) {
-      case VG_GREEN:
-        index = shImageFilterColorToByte(source.g);
-        break;
-      case VG_BLUE:
-        index = shImageFilterColorToByte(source.b);
-        break;
-      case VG_ALPHA:
-        index = shImageFilterColorToByte(source.a);
-        break;
-      case VG_RED:
-      default:
-        index = shImageFilterColorToByte(source.r);
-        break;
-      }
-
-      packed = lookupTable[index];
-      filtered.r = shImageFilterByteToColor(packed >> 24);
-      filtered.g = shImageFilterByteToColor(packed >> 16);
-      filtered.b = shImageFilterByteToColor(packed >> 8);
-      filtered.a = shImageFilterByteToColor(packed);
-      shImageFilterFinishColor(&filtered, outputPremultiplied);
-      shImageFilterStoreMergedColor(d, x, y, &filtered,
-                                    context->filterChannelMask,
-                                    outputLinear);
-    }
+  shImageFilterInitPass(context, s, d, &pass);
+  pass.mode = SH_IMAGE_FILTER_LOOKUP_SINGLE;
+  pass.outputLinear = outputLinear ? VG_TRUE : VG_FALSE;
+  pass.unpremultiplyOutput = outputPremultiplied ? VG_TRUE : VG_FALSE;
+  switch (sourceChannel) {
+  case VG_GREEN:
+    pass.lookupSourceChannel = 1;
+    break;
+  case VG_BLUE:
+    pass.lookupSourceChannel = 2;
+    break;
+  case VG_ALPHA:
+    pass.lookupSourceChannel = 3;
+    break;
+  case VG_RED:
+  default:
+    pass.lookupSourceChannel = 0;
+    break;
   }
 
-  shUpdateImageTexture(d, context);
+  if (!shImageFilterRunPass(context, d, d->texture,
+                            width, height,
+                            s->texture, lookupTexture,
+                            context->filterChannelMask,
+                            &pass)) {
+    glDeleteTextures(1, &lookupTexture);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+
+  glDeleteTextures(1, &lookupTexture);
+  d->gpuDataDirty = VG_TRUE;
   VG_RETURN(VG_NO_RETVAL);
 }
 

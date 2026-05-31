@@ -193,10 +193,40 @@ typedef struct
       GLint pixelSpan;
   } locationColorRamp;
 
+  struct {
+      GLint pos;
+      GLint mode;
+      GLint sourceSampler;
+      GLint auxSampler;
+      GLint targetSize;
+      GLint sourceSize;
+      GLint kernelSize;
+      GLint shift;
+      GLint scale;
+      GLint bias;
+      GLint tilingMode;
+      GLint colorMatrix;
+      GLint colorBias;
+      GLint tileFillColor;
+      GLint sourceLinear;
+      GLint filterLinear;
+      GLint outputLinear;
+      GLint dstLinear;
+      GLint premultiplyInput;
+      GLint unpremultiplyOutput;
+      GLint dstStorageMode;
+      GLint lookupSourceChannel;
+  } locationImageFilter;
+
   /* GL programs */
   GLuint progDraw;
   GLuint progColorRamp;
   GLuint progMask;
+  GLuint progImageFilter;
+  GLuint filterFramebuffer;
+  GLuint filterScratchTexture;
+  SHint filterScratchWidth;
+  SHint filterScratchHeight;
   GLuint arrayObject;
   GLuint arrayBuffer;
 
