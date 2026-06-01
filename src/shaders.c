@@ -265,6 +265,7 @@ static const char* vgShaderFragmentImageFilterA =
 "#define FILTER_GAUSSIAN_Y 5\n"
 "#define FILTER_LOOKUP 6\n"
 "#define FILTER_LOOKUP_SINGLE 7\n"
+"#define FILTER_TRANSFER 8\n"
 "\n"
 "#define STORAGE_RGBA 0\n"
 "#define STORAGE_ALPHA 1\n"
@@ -280,6 +281,8 @@ static const char* vgShaderFragmentImageFilterA =
 "uniform sampler2D sourceSampler;\n"
 "uniform sampler2D auxSampler;\n"
 "uniform ivec2 sourceSize;\n"
+"uniform ivec2 sourceOrigin;\n"
+"uniform ivec2 targetOrigin;\n"
 "uniform ivec2 kernelSize;\n"
 "uniform ivec2 shift;\n"
 "uniform float scale;\n"
@@ -504,7 +507,11 @@ static const char* vgShaderFragmentImageFilterC =
 "    vec4 source;\n"
 "    vec4 result;\n"
 "\n"
-"    if (mode == FILTER_COLOR_MATRIX) {\n"
+"    if (mode == FILTER_TRANSFER) {\n"
+"        result = texelFetch(sourceSampler,\n"
+"                            sourceOrigin + pixel - targetOrigin,\n"
+"                            0);\n"
+"    } else if (mode == FILTER_COLOR_MATRIX) {\n"
 "        source = loadSource(pixel);\n"
 "        result = vec4(dot(colorMatrix[0], source),\n"
 "                      dot(colorMatrix[1], source),\n"
@@ -705,6 +712,10 @@ void shInitImageFilterShaders(void) {
     glGetUniformLocation(context->progImageFilter, "targetSize");
   context->locationImageFilter.sourceSize =
     glGetUniformLocation(context->progImageFilter, "sourceSize");
+  context->locationImageFilter.sourceOrigin =
+    glGetUniformLocation(context->progImageFilter, "sourceOrigin");
+  context->locationImageFilter.targetOrigin =
+    glGetUniformLocation(context->progImageFilter, "targetOrigin");
   context->locationImageFilter.kernelSize =
     glGetUniformLocation(context->progImageFilter, "kernelSize");
   context->locationImageFilter.shift =

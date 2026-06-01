@@ -1033,6 +1033,7 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   VGImage dstImage = VG_INVALID_HANDLE;
   VGImage alphaImage = VG_INVALID_HANDLE;
   VGImage lumaImage = VG_INVALID_HANDLE;
+  VGImage rgbxImage = VG_INVALID_HANDLE;
   VGubyte writeData[8 * 5 * 4];
   VGubyte imageData[5 * 5 * 4];
   VGubyte stridedImageData[7 * 4 * 4];
@@ -1040,8 +1041,10 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   VGubyte alphaRead[4 * 4];
   VGubyte lumaRead[4 * 4];
   VGubyte lumaWrite[3 * 3];
+  VGubyte alphaWrite[3 * 3];
   VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGfloat blue[] = {0.0f, 0.0f, 1.0f, 1.0f};
+  VGfloat translucentRed[] = {1.0f, 0.0f, 0.0f, 0.25f};
   VGfloat transparent[] = {0.0f, 0.0f, 0.0f, 0.0f};
   VGfloat opaqueAlpha[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGint scissor[] = {12, 9, 2, 2};
@@ -1055,7 +1058,9 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   memset(alphaRead, 0, sizeof(alphaRead));
   memset(lumaRead, 0, sizeof(lumaRead));
   memset(lumaWrite, 0, sizeof(lumaWrite));
+  memset(alphaWrite, 0, sizeof(alphaWrite));
   lumaWrite[1 * 3 + 1] = 96;
+  alphaWrite[1 * 3 + 1] = 128;
 
   for (i=0; i<6 * 5; ++i) {
     VGint x = i % 6;
@@ -1077,10 +1082,12 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   dstImage = vgCreateImage(VG_lABGR_8888, 5, 5, VG_IMAGE_QUALITY_BETTER);
   alphaImage = vgCreateImage(VG_A_8, 4, 4, VG_IMAGE_QUALITY_BETTER);
   lumaImage = vgCreateImage(VG_sL_8, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  rgbxImage = vgCreateImage(VG_sRGBX_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
   if (image == VG_INVALID_HANDLE ||
       dstImage == VG_INVALID_HANDLE ||
       alphaImage == VG_INVALID_HANDLE ||
-      lumaImage == VG_INVALID_HANDLE) {
+      lumaImage == VG_INVALID_HANDLE ||
+      rgbxImage == VG_INVALID_HANDLE) {
     result = fail_vg("OpenVG pixel transfer test setup failed");
     goto cleanup;
   }
@@ -1148,6 +1155,50 @@ static int run_pixel_transfer_test(unsigned char *pixels,
     goto cleanup;
   }
 
+  vgSetfv(VG_CLEAR_COLOR, 4, translucentRed);
+  vgClearImage(rgbxImage, 0, 0, 4, 4);
+  vgGetImageSubData(rgbxImage, imageRead, 6 * 4,
+                    VG_lABGR_8888, 0, 0, 1, 1);
+  if (expect_no_vg_error("OpenVG RGBX image clear/readback failed") ||
+      expect_rgba_at(imageRead, 6 * 4, 0, 0, 255, 0, 0, 255,
+                     "OpenVG RGBX image did not read back with opaque alpha")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSetPixels(52, 8, rgbxImage, 0, 0, 1, 1);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG RGBX vgSetPixels failed") ||
+      expect_rgba_at(pixels, width * 4, 52, 8, 255, 0, 0, 255,
+                     "OpenVG RGBX vgSetPixels did not sample alpha as opaque")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgImageSubData(lumaImage, imageData, 5 * 4, VG_lABGR_8888, 1, 1, 1, 1);
+  vgGetImageSubData(lumaImage, lumaRead, 4, VG_sL_8, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG converted luminance image upload failed") ||
+      lumaRead[1 * 4 + 1] < 50 ||
+      lumaRead[1 * 4 + 1] > 58) {
+    fprintf(stderr, "OpenVG converted vgImageSubData used the wrong luma value (%u)\n",
+            lumaRead[1 * 4 + 1]);
+    result = 1;
+    goto cleanup;
+  }
+
+  memset(imageRead, 0, sizeof(imageRead));
+  vgGetImageSubData(lumaImage, imageRead, 6 * 4,
+                    VG_lABGR_8888, 1, 1, 1, 1);
+  if (expect_no_vg_error("OpenVG converted luminance image readback failed") ||
+      expect_rgba_at(imageRead, 6 * 4, 0, 0, 54, 54, 54, 255,
+                     "OpenVG converted vgGetImageSubData did not expand luma")) {
+    result = 1;
+    goto cleanup;
+  }
+
   memset(imageRead, 0, sizeof(imageRead));
   vgImageSubData(dstImage, imageRead, 5 * 4, VG_lABGR_8888, 0, 0, 5, 5);
   vgCopyImage(dstImage, 1, 1, image, 2, 1, 2, 2, VG_FALSE);
@@ -1155,6 +1206,17 @@ static int run_pixel_transfer_test(unsigned char *pixels,
                     VG_lABGR_8888, 0, 0, 5, 5);
   if (expect_rgba_at(imageRead, 5 * 4, 1, 1, 0, 0, 255, 255,
                      "OpenVG vgCopyImage did not copy the source subrectangle")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgCopyImage(lumaImage, 2, 2, image, 2, 2, 1, 1, VG_FALSE);
+  vgGetImageSubData(lumaImage, lumaRead, 4, VG_sL_8, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG converted vgCopyImage failed") ||
+      lumaRead[2 * 4 + 2] < 15 ||
+      lumaRead[2 * 4 + 2] > 22) {
+    fprintf(stderr, "OpenVG converted vgCopyImage used the wrong luma value (%u)\n",
+            lumaRead[2 * 4 + 2]);
     result = 1;
     goto cleanup;
   }
@@ -1212,6 +1274,18 @@ static int run_pixel_transfer_test(unsigned char *pixels,
 
   vgSetfv(VG_CLEAR_COLOR, 4, black);
   vgClear(0, 0, width, height);
+  vgWritePixels(alphaWrite, 3, VG_A_8, 54, 8, 3, 3);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG alpha vgWritePixels failed") ||
+      expect_rgba_at(pixels, width * 4, 55, 9, 255, 255, 255, 128,
+                     "OpenVG alpha vgWritePixels did not expand coverage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
   vgSetPixels(20, 8, image, 2, 1, 2, 2);
   vgFinish();
   vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
@@ -1260,16 +1334,27 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   glPixelStorei(GL_PACK_SKIP_ROWS, 0);
   vgGetPixels(alphaImage, 0, 0, 32, 10, 1, 1);
   vgGetImageSubData(alphaImage, alphaRead, 4, VG_A_8, 0, 0, 1, 1);
-  if (expect_no_vg_error("OpenVG fallback vgGetPixels failed") ||
+  if (expect_no_vg_error("OpenVG alpha vgGetPixels failed") ||
       alphaRead[0] < 250 ||
       expect_gl_pack_state(8, 1, 0, 0,
-                           "OpenVG fallback vgGetPixels leaked GL pack state")) {
-    fprintf(stderr, "OpenVG fallback vgGetPixels did not copy alpha coverage\n");
+                           "OpenVG alpha vgGetPixels leaked GL pack state")) {
+    fprintf(stderr, "OpenVG alpha vgGetPixels did not copy alpha coverage\n");
     result = 1;
     goto cleanup;
   }
   glPixelStorei(GL_PACK_ALIGNMENT, 4);
   glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+
+  vgGetPixels(lumaImage, 0, 0, 32, 10, 1, 1);
+  vgGetImageSubData(lumaImage, lumaRead, 4, VG_sL_8, 0, 0, 1, 1);
+  if (expect_no_vg_error("OpenVG luminance vgGetPixels failed") ||
+      lumaRead[0] < 178 ||
+      lumaRead[0] > 186) {
+    fprintf(stderr, "OpenVG luminance vgGetPixels used the wrong luma value (%u)\n",
+            lumaRead[0]);
+    result = 1;
+    goto cleanup;
+  }
 
   vgSetfv(VG_CLEAR_COLOR, 4, black);
   vgClear(0, 0, width, height);
@@ -1334,6 +1419,8 @@ cleanup:
   vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
   if (lumaImage != VG_INVALID_HANDLE)
     vgDestroyImage(lumaImage);
+  if (rgbxImage != VG_INVALID_HANDLE)
+    vgDestroyImage(rgbxImage);
   if (alphaImage != VG_INVALID_HANDLE)
     vgDestroyImage(alphaImage);
   if (dstImage != VG_INVALID_HANDLE)

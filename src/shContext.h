@@ -200,6 +200,8 @@ typedef struct
       GLint auxSampler;
       GLint targetSize;
       GLint sourceSize;
+      GLint sourceOrigin;
+      GLint targetOrigin;
       GLint kernelSize;
       GLint shift;
       GLint scale;

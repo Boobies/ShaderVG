@@ -107,7 +107,6 @@ VGboolean shImageIsEGLPbufferBound(SHImage *i);
 VGboolean shImageIsRenderTarget(SHImage *i);
 VGboolean shImageIsRenderTargetEligible(SHImage *i);
 void shImageMarkGpuDataDirty(SHImage *i);
-VGboolean shImageSyncDataFromTexture(SHImage *i);
 int shIsValidImageFormat(VGImageFormat format);
 
 #define _ITEM_T SHImage*

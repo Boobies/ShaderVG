@@ -378,6 +378,13 @@ static void shApplyImageTextureSwizzle(VGImageFormat format)
   } else if (baseFormat == VG_sL_8 || baseFormat == VG_lL_8) {
     GLint swizzle[4] = {GL_RED, GL_RED, GL_RED, GL_ONE};
     glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+  } else if (baseFormat == VG_sRGBX_8888 ||
+             baseFormat == VG_lRGBX_8888) {
+    GLint swizzle[4] = {GL_RED, GL_GREEN, GL_BLUE, GL_ONE};
+    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+  } else {
+    GLint swizzle[4] = {GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA};
+    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
   }
 }
 
@@ -586,53 +593,6 @@ void shImageMarkGpuDataDirty(SHImage *i)
 {
   if (i)
     i->gpuDataDirty = VG_TRUE;
-}
-
-VGboolean shImageSyncDataFromTexture(SHImage *i)
-{
-  GLint activeTexture;
-  GLint previousTexture;
-  GLint packAlignment;
-  GLint packRowLength;
-  GLint packSkipPixels;
-  GLint packSkipRows;
-  GLenum error;
-
-  if (!i || !i->gpuDataDirty)
-    return VG_TRUE;
-
-  if (i->texture == 0 || !i->data)
-    return VG_FALSE;
-
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
-  glActiveTexture(GL_TEXTURE0);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
-  glGetIntegerv(GL_PACK_ALIGNMENT, &packAlignment);
-  glGetIntegerv(GL_PACK_ROW_LENGTH, &packRowLength);
-  glGetIntegerv(GL_PACK_SKIP_PIXELS, &packSkipPixels);
-  glGetIntegerv(GL_PACK_SKIP_ROWS, &packSkipRows);
-
-  glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-  glBindTexture(GL_TEXTURE_2D, i->texture);
-  glGetTexImage(GL_TEXTURE_2D, 0, i->fd.glformat, i->fd.gltype, i->data);
-
-  error = glGetError();
-
-  glPixelStorei(GL_PACK_ALIGNMENT, packAlignment);
-  glPixelStorei(GL_PACK_ROW_LENGTH, packRowLength);
-  glPixelStorei(GL_PACK_SKIP_PIXELS, packSkipPixels);
-  glPixelStorei(GL_PACK_SKIP_ROWS, packSkipRows);
-  glBindTexture(GL_TEXTURE_2D, previousTexture);
-  glActiveTexture(activeTexture);
-
-  if (error != GL_NO_ERROR)
-    return VG_FALSE;
-
-  i->gpuDataDirty = VG_FALSE;
-  return VG_TRUE;
 }
 
 /*--------------------------------------------------------
@@ -860,6 +820,23 @@ static VGboolean shTryDirectClearImage(SHImage *image,
                                        VGint y,
                                        VGint width,
                                        VGint height);
+static VGboolean shTryTransferCopyImage(VGContext *context,
+                                        SHImage *dst,
+                                        VGint dx,
+                                        VGint dy,
+                                        SHImage *src,
+                                        VGint sx,
+                                        VGint sy,
+                                        VGint width,
+                                        VGint height);
+static VGboolean shTryTransferGetPixels(VGContext *context,
+                                        SHImage *image,
+                                        VGint dx,
+                                        VGint dy,
+                                        VGint sx,
+                                        VGint sy,
+                                        VGint width,
+                                        VGint height);
 
 /*---------------------------------------------------
  * Clear given rectangle area in the image data with
@@ -871,8 +848,6 @@ VG_API_CALL void vgClearImage(VGImage image,
 {
   SHImage *i;
   SHColor clear;
-  SHuint8 *data;
-  SHint X,Y, ix, iy, dx, dy, stride;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!shIsValidImage(context, image),
@@ -885,35 +860,8 @@ VG_API_CALL void vgClearImage(VGImage image,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   clear = context->clearColor;
-  if (shTryDirectClearImage(i, &clear, x, y, width, height))
-    VG_RETURN(VG_NO_RETVAL);
-  
-  /* Nothing to do if target rectangle out of bounds */
-  if (x >= i->width || y >= i->height)
-    VG_RETURN(VG_NO_RETVAL);
-  if (x + width < 0 || y + height < 0)
-    VG_RETURN(VG_NO_RETVAL);
-
-  /* Clamp to image bounds */
-  ix = SH_MAX(x, 0); dx = ix - x;
-  iy = SH_MAX(y, 0); dy = iy - y;
-  width  = SH_MIN( width  - dx, i->width  - ix);
-  height = SH_MIN( height - dy, i->height - iy);
-  stride = i->texwidth * i->fd.bytes;
-
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+  VG_RETURN_ERR_IF(!shTryDirectClearImage(i, &clear, x, y, width, height),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-  
-  /* Walk pixels and clear*/
-  for (Y=iy; Y<iy+height; ++Y) {
-    data = i->data + ( Y*stride + ix * i->fd.bytes );
-    
-    for (X=ix; X<ix+width; ++X) {
-      shStoreColor(&clear, data, &i->fd);
-      data += i->fd.bytes;
-    }}
-  
-  shUpdateImageTexture(i, context);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1372,7 +1320,7 @@ static VGboolean shCanDirectClearImage(const SHImage *image)
 
   internalFormat = image->fd.glintformat;
   if (internalFormat == GL_RGBA)
-    return image->fd.amask != 0 ? VG_TRUE : VG_FALSE;
+    return VG_TRUE;
   return (internalFormat == GL_RGB ||
           internalFormat == GL_R8) ? VG_TRUE : VG_FALSE;
 }
@@ -1399,7 +1347,7 @@ static void shGetImageClearColor(const SHImage *image,
     out[0] = clear->r;
     out[1] = clear->g;
     out[2] = clear->b;
-    out[3] = clear->a;
+    out[3] = image->fd.amask == 0 ? 1.0f : clear->a;
   }
 }
 
@@ -1514,6 +1462,147 @@ cleanup:
   return success;
 }
 
+static VGboolean shTryConvertedImageSubData(SHImage *image,
+                                            const void *data,
+                                            VGint dataStride,
+                                            VGImageFormat dataFormat,
+                                            VGint x,
+                                            VGint y,
+                                            VGint width,
+                                            VGint height)
+{
+  SHImageFormatDesc sourceFormat;
+  SHint copyDx = x;
+  SHint copyDy = y;
+  SHint copySx = 0;
+  SHint copySy = 0;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  SHint resolvedStride;
+  SHuint8 *converted = NULL;
+  size_t convertedBytes;
+  VGboolean success = VG_FALSE;
+  SHImageUploadGLState state;
+
+  if (!data || !image || image->texture == 0)
+    return VG_FALSE;
+
+  if (!shClipImageTransfer(image->width, image->height,
+                           width, height,
+                           &copyDx, &copyDy,
+                           &copySx, &copySy,
+                           &copyWidth, &copyHeight))
+    return VG_TRUE;
+
+  shSetupImageFormat(dataFormat, &sourceFormat);
+  if (!shResolveTransferStride(dataStride, width, sourceFormat.bytes,
+                               &resolvedStride, NULL) ||
+      !shPixelBufferSize(copyWidth, copyHeight,
+                         image->fd.bytes, &convertedBytes))
+    return VG_FALSE;
+
+  converted = (SHuint8*)malloc(convertedBytes);
+  if (!converted)
+    return VG_FALSE;
+
+  shCopyPixels(converted, image->fd.vgformat,
+               copyWidth * image->fd.bytes,
+               (const SHuint8*)data, dataFormat, resolvedStride,
+               copyWidth, copyHeight, width, height,
+               0, 0, copySx, copySy, copyWidth, copyHeight);
+
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, image->texture);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+  glTexSubImage2D(GL_TEXTURE_2D, 0,
+                  copyDx, copyDy, copyWidth, copyHeight,
+                  image->fd.glformat, image->fd.gltype, converted);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+  shRestoreImageUploadGLState(&state);
+
+  free(converted);
+
+  if (success)
+    image->gpuDataDirty = VG_TRUE;
+  return success;
+}
+
+static VGboolean shTryConvertedGetImageSubData(SHImage *image,
+                                               void *data,
+                                               VGint dataStride,
+                                               VGImageFormat dataFormat,
+                                               VGint x,
+                                               VGint y,
+                                               VGint width,
+                                               VGint height)
+{
+  SHImageFormatDesc destFormat;
+  SHint copyDx = 0;
+  SHint copyDy = 0;
+  SHint copySx = x;
+  SHint copySy = y;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  SHint resolvedStride;
+  SHuint8 *nativePixels = NULL;
+  size_t nativeBytes;
+  GLuint framebuffer = 0;
+  VGboolean success = VG_FALSE;
+  SHImageReadGLState state;
+
+  if (!data || !image || image->texture == 0)
+    return VG_FALSE;
+
+  if (!shClipImageTransfer(width, height,
+                           image->width, image->height,
+                           &copyDx, &copyDy,
+                           &copySx, &copySy,
+                           &copyWidth, &copyHeight))
+    return VG_TRUE;
+
+  shSetupImageFormat(dataFormat, &destFormat);
+  if (!shResolveTransferStride(dataStride, width, destFormat.bytes,
+                               &resolvedStride, NULL) ||
+      !shPixelBufferSize(copyWidth, copyHeight,
+                         image->fd.bytes, &nativeBytes))
+    return VG_FALSE;
+
+  nativePixels = (SHuint8*)malloc(nativeBytes);
+  if (!nativePixels)
+    return VG_FALSE;
+
+  shSaveImageReadGLState(&state);
+  if (!shBindTextureReadFramebuffer(image->texture, &framebuffer))
+    goto cleanup;
+
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+  glReadPixels(copySx, copySy, copyWidth, copyHeight,
+               image->fd.glformat, image->fd.gltype, nativePixels);
+  if (glGetError() != GL_NO_ERROR)
+    goto cleanup;
+
+  shCopyPixels((SHuint8*)data, dataFormat, resolvedStride,
+               nativePixels, image->fd.vgformat,
+               copyWidth * image->fd.bytes,
+               width, height, copyWidth, copyHeight,
+               copyDx, copyDy, 0, 0, copyWidth, copyHeight);
+  success = VG_TRUE;
+
+cleanup:
+  shRestoreImageReadGLState(&state);
+  if (framebuffer != 0)
+    glDeleteFramebuffers(1, &framebuffer);
+  free(nativePixels);
+  return success;
+}
+
 typedef struct
 {
   GLint packAlignment;
@@ -1586,144 +1675,6 @@ static VGboolean shTryDirectReadPixels(VGContext *context,
   shRestoreSurfaceReadGLState(&state);
 
   return glGetError() == GL_NO_ERROR ? VG_TRUE : VG_FALSE;
-}
-
-static VGboolean shCanDirectCopyToImage(const SHImage *image)
-{
-  GLenum internalFormat;
-
-  if (!image ||
-      image->texture == 0 ||
-      image->texwidth != image->width ||
-      image->texheight != image->height ||
-      !shFormatHasDirectGLStorage(&image->fd))
-    return VG_FALSE;
-
-  internalFormat = image->fd.glintformat;
-  if (internalFormat == GL_RGBA)
-    return image->fd.amask != 0 ? VG_TRUE : VG_FALSE;
-  return internalFormat == GL_RGB ? VG_TRUE : VG_FALSE;
-}
-
-static VGboolean shTryDirectGetPixels(VGContext *context,
-                                      SHImage *image,
-                                      VGint dx,
-                                      VGint dy,
-                                      VGint sx,
-                                      VGint sy,
-                                      VGint width,
-                                      VGint height)
-{
-  SHint copyDx = dx;
-  SHint copyDy = dy;
-  SHint copySx = sx;
-  SHint copySy = sy;
-  SHint copyWidth = width;
-  SHint copyHeight = height;
-  SHImageUploadGLState state;
-
-  if (!shCanDirectCopyToImage(image))
-    return VG_FALSE;
-
-  if (!shClipSurfaceRead(context,
-                         &copyDx, &copyDy,
-                         &copySx, &copySy,
-                         &copyWidth, &copyHeight,
-                         image->width, image->height))
-    return VG_TRUE;
-
-  shSaveImageUploadGLState(&state);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, image->texture);
-  glCopyTexSubImage2D(GL_TEXTURE_2D, 0,
-                      copyDx, copyDy,
-                      copySx, copySy,
-                      copyWidth, copyHeight);
-  shRestoreImageUploadGLState(&state);
-
-  if (glGetError() != GL_NO_ERROR)
-    return VG_FALSE;
-
-  image->gpuDataDirty = VG_TRUE;
-  return VG_TRUE;
-}
-
-static VGboolean shCanDirectCopyImagePair(const SHImage *dst,
-                                          const SHImage *src)
-{
-  GLenum internalFormat;
-
-  if (!dst ||
-      !src ||
-      dst == src ||
-      dst->texture == 0 ||
-      src->texture == 0 ||
-      dst->texwidth != dst->width ||
-      dst->texheight != dst->height ||
-      src->texwidth != src->width ||
-      src->texheight != src->height ||
-      dst->fd.vgformat != src->fd.vgformat ||
-      !shFormatHasDirectGLStorage(&dst->fd))
-    return VG_FALSE;
-
-  internalFormat = dst->fd.glintformat;
-  if (internalFormat == GL_RGBA)
-    return dst->fd.amask != 0 ? VG_TRUE : VG_FALSE;
-  return (internalFormat == GL_RGB ||
-          internalFormat == GL_R8) ? VG_TRUE : VG_FALSE;
-}
-
-static VGboolean shTryDirectCopyImage(SHImage *dst,
-                                      VGint dx,
-                                      VGint dy,
-                                      SHImage *src,
-                                      VGint sx,
-                                      VGint sy,
-                                      VGint width,
-                                      VGint height)
-{
-  SHint copyDx = dx;
-  SHint copyDy = dy;
-  SHint copySx = sx;
-  SHint copySy = sy;
-  SHint copyWidth = width;
-  SHint copyHeight = height;
-  GLuint framebuffer = 0;
-  VGboolean success = VG_FALSE;
-  SHImageReadGLState readState;
-  SHImageUploadGLState textureState;
-
-  if (!shClipImageTransfer(dst->width, dst->height,
-                           src->width, src->height,
-                           &copyDx, &copyDy,
-                           &copySx, &copySy,
-                           &copyWidth, &copyHeight))
-    return VG_TRUE;
-
-  if (!shCanDirectCopyImagePair(dst, src))
-    return VG_FALSE;
-
-  shSaveImageReadGLState(&readState);
-  shSaveImageUploadGLState(&textureState);
-  if (!shBindTextureReadFramebuffer(src->texture, &framebuffer))
-    goto cleanup;
-
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, dst->texture);
-  glCopyTexSubImage2D(GL_TEXTURE_2D, 0,
-                      copyDx, copyDy,
-                      copySx, copySy,
-                      copyWidth, copyHeight);
-  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
-
-cleanup:
-  shRestoreImageUploadGLState(&textureState);
-  shRestoreImageReadGLState(&readState);
-  if (framebuffer != 0)
-    glDeleteFramebuffers(1, &framebuffer);
-  if (success)
-    dst->gpuDataDirty = VG_TRUE;
-  return success;
 }
 
 typedef struct
@@ -1925,64 +1876,6 @@ static VGboolean shClipSurfaceRead(VGContext *context,
   return (*width > 0 && *height > 0) ? VG_TRUE : VG_FALSE;
 }
 
-static void shCopyPixelsToRGBA(SHuint8 *dst,
-                               const SHuint8 *src,
-                               VGImageFormat srcFormat,
-                               SHint srcStride,
-                               SHint srcWidth,
-                               SHint sx, SHint sy,
-                               SHint width, SHint height)
-{
-  SHImageFormatDesc sfd;
-  SHint x, y;
-
-  shSetupImageFormat(srcFormat, &sfd);
-  if (srcStride == -1)
-    srcStride = srcWidth * sfd.bytes;
-
-  for (y=0; y<height; ++y) {
-    const SHuint8 *srcRow = src + (sy + y) * srcStride + sx * sfd.bytes;
-    SHuint8 *dstRow = dst + y * width * 4;
-    for (x=0; x<width; ++x) {
-      SHColor color;
-      shLoadColor(&color, srcRow + x * sfd.bytes, &sfd);
-      dstRow[x * 4 + 0] = (SHuint8)(color.r * 255.0f + 0.5f);
-      dstRow[x * 4 + 1] = (SHuint8)(color.g * 255.0f + 0.5f);
-      dstRow[x * 4 + 2] = (SHuint8)(color.b * 255.0f + 0.5f);
-      dstRow[x * 4 + 3] = (SHuint8)(color.a * 255.0f + 0.5f);
-    }
-  }
-}
-
-static void shCopyRGBAToPixels(SHuint8 *dst,
-                               VGImageFormat dstFormat,
-                               SHint dstStride,
-                               SHint dstWidth,
-                               SHint dx, SHint dy,
-                               const SHuint8 *src,
-                               SHint width, SHint height)
-{
-  SHImageFormatDesc dfd;
-  SHint x, y;
-
-  shSetupImageFormat(dstFormat, &dfd);
-  if (dstStride == -1)
-    dstStride = dstWidth * dfd.bytes;
-
-  for (y=0; y<height; ++y) {
-    SHuint8 *dstRow = dst + (dy + y) * dstStride + dx * dfd.bytes;
-    const SHuint8 *srcRow = src + y * width * 4;
-    for (x=0; x<width; ++x) {
-      SHColor color;
-      color.r = (SHfloat)srcRow[x * 4 + 0] / 255.0f;
-      color.g = (SHfloat)srcRow[x * 4 + 1] / 255.0f;
-      color.b = (SHfloat)srcRow[x * 4 + 2] / 255.0f;
-      color.a = (SHfloat)srcRow[x * 4 + 3] / 255.0f;
-      shStoreColor(&color, dstRow + x * dfd.bytes, &dfd);
-    }
-  }
-}
-
 static VGboolean shCanDrawSurfaceTextureFormat(const SHImageFormatDesc *format)
 {
   GLenum internalFormat;
@@ -1991,9 +1884,8 @@ static VGboolean shCanDrawSurfaceTextureFormat(const SHImageFormatDesc *format)
     return VG_FALSE;
 
   internalFormat = format->glintformat;
-  if (internalFormat == GL_RGBA)
-    return format->amask != 0 ? VG_TRUE : VG_FALSE;
-  return (internalFormat == GL_RGB ||
+  return (internalFormat == GL_RGBA ||
+          internalFormat == GL_RGB ||
           internalFormat == GL_R8) ? VG_TRUE : VG_FALSE;
 }
 
@@ -2121,50 +2013,6 @@ static VGboolean shDrawSurfaceTexture(VGContext *context,
 
   if (success)
     shMarkRenderTargetDirty(context);
-  return success;
-}
-
-static VGboolean shDrawSurfacePixels(VGContext *context,
-                                     const SHuint8 *pixels,
-                                     SHint dx, SHint dy,
-                                     SHint width, SHint height)
-{
-  GLuint texture = 0;
-  VGboolean success = VG_FALSE;
-  SHImageUploadGLState state;
-
-  if (width <= 0 || height <= 0)
-    return VG_TRUE;
-  if (!context || !pixels)
-    return VG_FALSE;
-
-  glGenTextures(1, &texture);
-  if (texture == 0)
-    return VG_FALSE;
-
-  shSaveImageUploadGLState(&state);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, texture);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-  glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-  glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-               width, height, 0,
-               GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
-  shRestoreImageUploadGLState(&state);
-
-  if (success)
-    success = shDrawSurfaceTexture(context, texture,
-                                   dx, dy, width, height,
-                                   width, height, 0, 0);
-
-  glDeleteTextures(1, &texture);
   return success;
 }
 
@@ -2374,15 +2222,10 @@ VG_API_CALL void vgImageSubData(VGImage image,
                               x, y, width, height))
     VG_RETURN(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+  VG_RETURN_ERR_IF(!shTryConvertedImageSubData(i, data, dataStride,
+                                               dataFormat,
+                                               x, y, width, height),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-  
-  shCopyPixels(i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
-               data, dataFormat,dataStride,
-               i->width, i->height, width, height,
-               x, y, 0, 0, width, height);
-  
-  shUpdateImageTexture(i, context);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2426,14 +2269,10 @@ VG_API_CALL void vgGetImageSubData(VGImage image,
                                  x, y, width, height))
     VG_RETURN(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+  VG_RETURN_ERR_IF(!shTryConvertedGetImageSubData(i, data, dataStride,
+                                                  dataFormat,
+                                                  x, y, width, height),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-  
-  shCopyPixels(data, dataFormat, dataStride,
-               i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
-               width, height, i->width, i->height,
-               0, 0, x, y, width, height);
-  
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2449,8 +2288,6 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
                              VGboolean dither)
 {
   SHImage *s, *d;
-  SHuint8 *pixels;
-  size_t pixelBytes;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   
@@ -2465,40 +2302,9 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  if (shTryDirectCopyImage(d, dx, dy, s, sx, sy, width, height))
-    VG_RETURN(VG_NO_RETVAL);
-
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(s) ||
-                   !shImageSyncDataFromTexture(d),
+  VG_RETURN_ERR_IF(!shTryTransferCopyImage(context, d, dx, dy, s, sx, sy,
+                                           width, height),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  /* In order to perform copying in a cosistent fashion
-     we first copy to a temporary buffer and only then to
-     destination image */
-  
-  /* TODO: rather check first if the image is really
-     the same and whether the regions overlap. if not
-     we can copy directly */
-
-  if (!shPixelBufferSize(width, height, s->fd.bytes, &pixelBytes))
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  pixels = (SHuint8*)malloc(pixelBytes);
-  SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
-
-  shCopyPixels(pixels, s->fd.vgformat, width * s->fd.bytes,
-               s->data, s->fd.vgformat, s->texwidth * s->fd.bytes,
-               width, height, s->width, s->height,
-               0, 0, sx, sy, width, height);
-
-  shCopyPixels(d->data, d->fd.vgformat, d->texwidth * d->fd.bytes,
-               pixels, s->fd.vgformat, width * s->fd.bytes,
-               d->width, d->height, width, height,
-               dx, dy, 0, 0, width, height);
-  
-  free(pixels);
-  
-  shUpdateImageTexture(d, context);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2513,14 +2319,6 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
                              VGint width, VGint height)
 {
   SHImage *i;
-  SHuint8 *pixels;
-  size_t pixelBytes;
-  SHint copyDx = dx;
-  SHint copyDy = dy;
-  SHint copySx = sx;
-  SHint copySy = sy;
-  SHint copyWidth = width;
-  SHint copyHeight = height;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   
@@ -2533,39 +2331,9 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  if (shTryDirectSetPixels(context, i, dx, dy, sx, sy, width, height))
-    VG_RETURN(VG_NO_RETVAL);
-
-  if (!shClipSurfaceTransfer(context,
-                             &copyDx, &copyDy,
-                             &copySx, &copySy,
-                             &copyWidth, &copyHeight,
-                             i->width, i->height))
-    VG_RETURN(VG_NO_RETVAL);
-
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+  VG_RETURN_ERR_IF(!shTryDirectSetPixels(context, i, dx, dy, sx, sy,
+                                         width, height),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  if (!shPixelBufferSize(copyWidth, copyHeight, 4, &pixelBytes))
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  pixels = (SHuint8*)malloc(pixelBytes);
-  SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
-
-  shCopyPixelsToRGBA(pixels,
-                     i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
-                     i->width, copySx, copySy,
-                     copyWidth, copyHeight);
-
-  if (!shDrawSurfacePixels(context, pixels,
-                           copyDx, copyDy,
-                           copyWidth, copyHeight)) {
-    free(pixels);
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-  }
-  
-  free(pixels);
-
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2580,15 +2348,6 @@ VG_API_CALL void vgWritePixels(const void * data, VGint dataStride,
                                VGint dx, VGint dy,
                                VGint width, VGint height)
 {
-  SHuint8 *pixels;
-  size_t pixelBytes;
-  SHint copyDx = dx;
-  SHint copyDy = dy;
-  SHint copySx = 0;
-  SHint copySy = 0;
-  SHint copyWidth = width;
-  SHint copyHeight = height;
-
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   /* Reject invalid formats */
@@ -2610,34 +2369,7 @@ VG_API_CALL void vgWritePixels(const void * data, VGint dataStride,
                              dx, dy, width, height))
     VG_RETURN(VG_NO_RETVAL);
 
-  if (!shClipSurfaceTransfer(context,
-                             &copyDx, &copyDy,
-                             &copySx, &copySy,
-                             &copyWidth, &copyHeight,
-                             width, height))
-    VG_RETURN(VG_NO_RETVAL);
-
-  if (!shPixelBufferSize(copyWidth, copyHeight, 4, &pixelBytes))
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  pixels = (SHuint8*)malloc(pixelBytes);
-  SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
-  
-  shCopyPixelsToRGBA(pixels,
-                     (const SHuint8*)data, dataFormat, dataStride,
-                     width, copySx, copySy,
-                     copyWidth, copyHeight);
-
-  if (!shDrawSurfacePixels(context, pixels,
-                           copyDx, copyDy,
-                           copyWidth, copyHeight)) {
-    free(pixels);
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-  }
-  
-  free(pixels);
-
-  VG_RETURN(VG_NO_RETVAL); 
+  VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 }
 
 /*-----------------------------------------------------------
@@ -2651,15 +2383,6 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
                              VGint width, VGint height)
 {
   SHImage *i;
-  SHuint8 *pixels;
-  size_t pixelBytes;
-  SHSurfaceReadGLState state;
-  SHint copyDx = dx;
-  SHint copyDy = dy;
-  SHint copySx = sx;
-  SHint copySy = sy;
-  SHint copyWidth = width;
-  SHint copyHeight = height;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!shIsValidImage(context, dst),
@@ -2671,41 +2394,9 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  if (!shClipSurfaceRead(context,
-                         &copyDx, &copyDy,
-                         &copySx, &copySy,
-                         &copyWidth, &copyHeight,
-                         i->width, i->height))
-    VG_RETURN(VG_NO_RETVAL);
-
-  if (shTryDirectGetPixels(context, i, dx, dy, sx, sy, width, height))
-    VG_RETURN(VG_NO_RETVAL);
-
-  VG_RETURN_ERR_IF(!shImageSyncDataFromTexture(i),
+  VG_RETURN_ERR_IF(!shTryTransferGetPixels(context, i, dx, dy, sx, sy,
+                                           width, height),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  if (!shPixelBufferSize(copyWidth, copyHeight, 4, &pixelBytes))
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  pixels = (SHuint8*)malloc(pixelBytes);
-  SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
-
-  shSaveSurfaceReadGLState(&state);
-  glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-  glReadPixels(copySx, copySy, copyWidth, copyHeight,
-               GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-  shRestoreSurfaceReadGLState(&state);
-  
-  shCopyRGBAToPixels(i->data, i->fd.vgformat, i->texwidth * i->fd.bytes,
-                     i->width, copyDx, copyDy,
-                     pixels, copyWidth, copyHeight);
-
-  free(pixels);
-  
-  shUpdateImageTexture(i, context);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2799,15 +2490,6 @@ VG_API_CALL void vgCopyPixels(VGint dx, VGint dy,
                               VGint sx, VGint sy,
                               VGint width, VGint height)
 {
-  SHuint8 *pixels;
-  size_t pixelBytes;
-  SHSurfaceReadGLState state;
-  SHint copyDx = dx;
-  SHint copyDy = dy;
-  SHint copySx = sx;
-  SHint copySy = sy;
-  SHint copyWidth = width;
-  SHint copyHeight = height;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
@@ -2816,39 +2498,7 @@ VG_API_CALL void vgCopyPixels(VGint dx, VGint dy,
   if (shTryDirectCopyPixels(context, dx, dy, sx, sy, width, height))
     VG_RETURN(VG_NO_RETVAL);
 
-  if (!shClipSurfaceTransfer(context,
-                             &copyDx, &copyDy,
-                             &copySx, &copySy,
-                             &copyWidth, &copyHeight,
-                             context->surfaceWidth,
-                             context->surfaceHeight))
-    VG_RETURN(VG_NO_RETVAL);
-
-  if (!shPixelBufferSize(copyWidth, copyHeight, 4, &pixelBytes))
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-
-  pixels = (SHuint8*)malloc(pixelBytes);
-  SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
-
-  shSaveSurfaceReadGLState(&state);
-  glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-  glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-  glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-  glReadPixels(copySx, copySy, copyWidth, copyHeight,
-               GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-  shRestoreSurfaceReadGLState(&state);
-
-  if (!shDrawSurfacePixels(context, pixels,
-                           copyDx, copyDy,
-                           copyWidth, copyHeight)) {
-    free(pixels);
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
-  }
-
-  free(pixels);
-  
-  VG_RETURN(VG_NO_RETVAL);
+  VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 }
 
 VG_API_CALL VGImage vgChildImage(VGImage parent,
@@ -2914,7 +2564,8 @@ enum
   SH_IMAGE_FILTER_GAUSSIAN_X = 4,
   SH_IMAGE_FILTER_GAUSSIAN_Y = 5,
   SH_IMAGE_FILTER_LOOKUP = 6,
-  SH_IMAGE_FILTER_LOOKUP_SINGLE = 7
+  SH_IMAGE_FILTER_LOOKUP_SINGLE = 7,
+  SH_IMAGE_FILTER_TRANSFER = 8
 };
 
 enum
@@ -3083,7 +2734,7 @@ static void shImageFilterSetColorMask(const SHImage *dst,
     glColorMask((channelMask & VG_RED) ? GL_TRUE : GL_FALSE,
                 (channelMask & VG_GREEN) ? GL_TRUE : GL_FALSE,
                 (channelMask & VG_BLUE) ? GL_TRUE : GL_FALSE,
-                (dst && dst->fd.amask != 0 &&
+                ((!dst || dst->fd.amask != 0) &&
                  (channelMask & VG_ALPHA)) ? GL_TRUE : GL_FALSE);
   }
 }
@@ -3409,6 +3060,8 @@ static VGboolean shImageFilterRunPass(VGContext *context,
               (GLfloat)targetWidth, (GLfloat)targetHeight);
   glUniform2i(context->locationImageFilter.sourceSize,
               pass->sourceWidth, pass->sourceHeight);
+  glUniform2i(context->locationImageFilter.sourceOrigin, 0, 0);
+  glUniform2i(context->locationImageFilter.targetOrigin, 0, 0);
   glUniform2i(context->locationImageFilter.kernelSize,
               pass->kernelWidth, pass->kernelHeight);
   glUniform2i(context->locationImageFilter.shift,
@@ -3458,6 +3111,295 @@ static VGboolean shImageFilterRunPass(VGContext *context,
 
 cleanup:
   shRestoreImageFilterGLState(&glState);
+  return success;
+}
+
+static VGboolean shImageTransferCanUseImage(const SHImage *image)
+{
+  return (image &&
+          image->texture != 0 &&
+          image->texwidth == image->width &&
+          image->texheight == image->height &&
+          shFormatHasDirectGLStorage(&image->fd)) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shImageTransferCreateTexture(GLuint *texture,
+                                              SHint width,
+                                              SHint height)
+{
+  SHImageUploadGLState state;
+  VGboolean success;
+
+  *texture = 0;
+  if (width <= 0 || height <= 0)
+    return VG_FALSE;
+
+  glGenTextures(1, texture);
+  if (*texture == 0)
+    return VG_FALSE;
+
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, *texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  shApplyImageTextureSwizzle(VG_sRGBA_8888);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+  glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+               width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+  shRestoreImageUploadGLState(&state);
+
+  if (!success) {
+    glDeleteTextures(1, texture);
+    *texture = 0;
+  }
+  return success;
+}
+
+static VGboolean shImageTransferCopySurfaceToTexture(GLuint texture,
+                                                     SHint sx,
+                                                     SHint sy,
+                                                     SHint width,
+                                                     SHint height)
+{
+  SHImageUploadGLState state;
+  VGboolean success;
+
+  if (texture == 0 || width <= 0 || height <= 0)
+    return VG_FALSE;
+
+  shSaveImageUploadGLState(&state);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                      sx, sy, width, height);
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+  shRestoreImageUploadGLState(&state);
+  return success;
+}
+
+static VGboolean shImageTransferRunPass(VGContext *context,
+                                        SHImage *dst,
+                                        GLuint targetTexture,
+                                        SHint targetWidth,
+                                        SHint targetHeight,
+                                        GLuint sourceTexture,
+                                        SHint sourceWidth,
+                                        SHint sourceHeight,
+                                        SHint dx,
+                                        SHint dy,
+                                        SHint sx,
+                                        SHint sy,
+                                        SHint width,
+                                        SHint height,
+                                        SHint dstStorageMode)
+{
+  typedef struct
+  {
+    GLfloat x;
+    GLfloat y;
+  } SHImageTransferVertex;
+
+  SHImageTransferVertex vertices[4];
+  SHImageFilterGLState glState;
+  SHVertexState vertexState;
+  VGboolean success = VG_FALSE;
+
+  if (width <= 0 || height <= 0)
+    return VG_TRUE;
+  if (!context || targetTexture == 0 || sourceTexture == 0 ||
+      targetWidth <= 0 || targetHeight <= 0 ||
+      sourceWidth <= 0 || sourceHeight <= 0)
+    return VG_FALSE;
+
+  vertices[0].x = (GLfloat)dx;
+  vertices[0].y = (GLfloat)dy;
+  vertices[1].x = (GLfloat)(dx + width);
+  vertices[1].y = (GLfloat)dy;
+  vertices[2].x = (GLfloat)dx;
+  vertices[2].y = (GLfloat)(dy + height);
+  vertices[3].x = (GLfloat)(dx + width);
+  vertices[3].y = (GLfloat)(dy + height);
+
+  shSaveImageFilterGLState(&glState);
+
+  if (!shImageFilterAttachTarget(context, targetTexture))
+    goto cleanup;
+
+  glViewport(0, 0, targetWidth, targetHeight);
+  glDisable(GL_BLEND);
+  glDisable(GL_SCISSOR_TEST);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_STENCIL_TEST);
+  shImageFilterSetColorMask(dst,
+                            VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA,
+                            dstStorageMode);
+
+  glUseProgram(context->progImageFilter);
+  glUniform1i(context->locationImageFilter.mode, SH_IMAGE_FILTER_TRANSFER);
+  glUniform1i(context->locationImageFilter.sourceSampler, 0);
+  glUniform1i(context->locationImageFilter.auxSampler, 1);
+  glUniform2f(context->locationImageFilter.targetSize,
+              (GLfloat)targetWidth, (GLfloat)targetHeight);
+  glUniform2i(context->locationImageFilter.sourceSize,
+              sourceWidth, sourceHeight);
+  glUniform2i(context->locationImageFilter.sourceOrigin, sx, sy);
+  glUniform2i(context->locationImageFilter.targetOrigin, dx, dy);
+  glUniform1i(context->locationImageFilter.outputLinear, 0);
+  glUniform1i(context->locationImageFilter.dstLinear, 0);
+  glUniform1i(context->locationImageFilter.premultiplyInput, 0);
+  glUniform1i(context->locationImageFilter.unpremultiplyOutput, 0);
+  glUniform1i(context->locationImageFilter.dstStorageMode,
+              dstStorageMode);
+
+  glActiveTexture(GL_TEXTURE0);
+  shImageFilterSetTextureParams(sourceTexture);
+
+  shBindContextVertexState(context, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(context->locationImageFilter.pos);
+  glVertexAttribPointer(context->locationImageFilter.pos, 2, GL_FLOAT,
+                        GL_FALSE, sizeof(SHImageTransferVertex),
+                        (const GLvoid*)0);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  glDisableVertexAttribArray(context->locationImageFilter.pos);
+  shRestoreVertexState(&vertexState);
+
+  success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
+
+cleanup:
+  shRestoreImageFilterGLState(&glState);
+  return success;
+}
+
+static VGboolean shTryTransferCopyImage(VGContext *context,
+                                        SHImage *dst,
+                                        VGint dx,
+                                        VGint dy,
+                                        SHImage *src,
+                                        VGint sx,
+                                        VGint sy,
+                                        VGint width,
+                                        VGint height)
+{
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  GLuint sourceTexture;
+  SHint sourceWidth;
+  SHint sourceHeight;
+  GLuint tempTexture = 0;
+  VGboolean success;
+
+  if (!shClipImageTransfer(dst->width, dst->height,
+                           src->width, src->height,
+                           &copyDx, &copyDy,
+                           &copySx, &copySy,
+                           &copyWidth, &copyHeight))
+    return VG_TRUE;
+
+  if (!shImageTransferCanUseImage(dst) ||
+      !shImageTransferCanUseImage(src))
+    return VG_FALSE;
+
+  sourceTexture = src->texture;
+  sourceWidth = src->width;
+  sourceHeight = src->height;
+
+  if (shImageFilterImagesOverlap(dst, src)) {
+    if (!shImageTransferCreateTexture(&tempTexture,
+                                      copyWidth, copyHeight))
+      return VG_FALSE;
+
+    if (!shImageTransferRunPass(context, NULL, tempTexture,
+                                copyWidth, copyHeight,
+                                src->texture, src->width, src->height,
+                                0, 0, copySx, copySy,
+                                copyWidth, copyHeight,
+                                SH_IMAGE_FILTER_STORE_RGBA)) {
+      glDeleteTextures(1, &tempTexture);
+      return VG_FALSE;
+    }
+
+    sourceTexture = tempTexture;
+    sourceWidth = copyWidth;
+    sourceHeight = copyHeight;
+    copySx = 0;
+    copySy = 0;
+  }
+
+  success = shImageTransferRunPass(context, dst, dst->texture,
+                                   dst->width, dst->height,
+                                   sourceTexture,
+                                   sourceWidth, sourceHeight,
+                                   copyDx, copyDy, copySx, copySy,
+                                   copyWidth, copyHeight,
+                                   shImageFilterStorageMode(dst));
+
+  if (tempTexture != 0)
+    glDeleteTextures(1, &tempTexture);
+  if (success)
+    dst->gpuDataDirty = VG_TRUE;
+  return success;
+}
+
+static VGboolean shTryTransferGetPixels(VGContext *context,
+                                        SHImage *image,
+                                        VGint dx,
+                                        VGint dy,
+                                        VGint sx,
+                                        VGint sy,
+                                        VGint width,
+                                        VGint height)
+{
+  SHint copyDx = dx;
+  SHint copyDy = dy;
+  SHint copySx = sx;
+  SHint copySy = sy;
+  SHint copyWidth = width;
+  SHint copyHeight = height;
+  GLuint tempTexture = 0;
+  VGboolean success;
+
+  if (!shClipSurfaceRead(context,
+                         &copyDx, &copyDy,
+                         &copySx, &copySy,
+                         &copyWidth, &copyHeight,
+                         image->width, image->height))
+    return VG_TRUE;
+
+  if (!shImageTransferCanUseImage(image))
+    return VG_FALSE;
+
+  if (!shImageTransferCreateTexture(&tempTexture,
+                                    copyWidth, copyHeight))
+    return VG_FALSE;
+
+  if (!shImageTransferCopySurfaceToTexture(tempTexture, copySx, copySy,
+                                           copyWidth, copyHeight)) {
+    glDeleteTextures(1, &tempTexture);
+    return VG_FALSE;
+  }
+
+  success = shImageTransferRunPass(context, image, image->texture,
+                                   image->width, image->height,
+                                   tempTexture, copyWidth, copyHeight,
+                                   copyDx, copyDy, 0, 0,
+                                   copyWidth, copyHeight,
+                                   shImageFilterStorageMode(image));
+
+  glDeleteTextures(1, &tempTexture);
+  if (success)
+    image->gpuDataDirty = VG_TRUE;
   return success;
 }
 
