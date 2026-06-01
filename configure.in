@@ -65,6 +65,11 @@ AC_ARG_WITH(
 	[build_test_blend=$withval], [build_test_blend="$build_test_all"])
 
 AC_ARG_WITH(
+	[example-alpha],
+	[  --with-example-alpha          Build Alpha Blending example (default=yes)],
+	[build_test_alpha=$withval], [build_test_alpha="$build_test_all"])
+
+AC_ARG_WITH(
 	[example-tiger-shader],
 	[  --with-example-tiger-shader   Build tiger shader example (default=yes)],
 	[build_test_tiger_shader=$withval], [build_test_tiger_shader="$build_test_all"])
@@ -319,6 +324,7 @@ AM_CONDITIONAL([BUILD_TIGER],       [test "x$build_test_tiger" = "xyes"])
 AM_CONDITIONAL([BUILD_IMAGE],       [test "x$build_test_image" = "xyes"])
 AM_CONDITIONAL([BUILD_PATTERN],     [test "x$build_test_pattern" = "xyes"])
 AM_CONDITIONAL([BUILD_BLEND],       [test "x$build_test_blend" = "xyes"])
+AM_CONDITIONAL([BUILD_ALPHA],       [test "x$build_test_alpha" = "xyes"])
 AM_CONDITIONAL([BUILD_TIGER_SHADER],[test "x$build_test_tiger_shader" = "xyes"])
 AM_CONDITIONAL([BUILD_FONT],        [test "x$build_test_font" = "xyes"])
 
@@ -355,6 +361,7 @@ ShaderVG will be compiled with the following example programs
   Images                    ${build_test_image}
   Pattern paint             ${build_test_pattern}
   Blending                  ${build_test_blend}
+  Alpha Blending            ${build_test_alpha}
   Tiger Shader              ${build_test_tiger_shader}
   OpenVG Font/Glyph         ${build_test_font}
   Pbuffer smoke             yes

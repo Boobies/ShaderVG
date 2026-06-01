@@ -971,26 +971,184 @@ cleanup:
   return result;
 }
 
-static int run_standard_blend_mode_test(unsigned char *pixels,
-                                        EGLint width,
-                                        EGLint height)
+static VGfloat clamp_unit(VGfloat value)
+{
+  if (value < 0.0f)
+    return 0.0f;
+  if (value > 1.0f)
+    return 1.0f;
+  return value;
+}
+
+static VGfloat min_float(VGfloat a, VGfloat b)
+{
+  return (a < b) ? a : b;
+}
+
+static VGfloat max_float(VGfloat a, VGfloat b)
+{
+  return (a > b) ? a : b;
+}
+
+static VGubyte unit_to_byte(VGfloat value)
+{
+  return (VGubyte)(clamp_unit(value) * 255.0f + 0.5f);
+}
+
+static void premultiply_color(const VGfloat in[4], VGfloat out[4])
+{
+  out[0] = in[0] * in[3];
+  out[1] = in[1] * in[3];
+  out[2] = in[2] * in[3];
+  out[3] = in[3];
+}
+
+static void store_straight_rgba(const VGfloat color[4], VGubyte out[4])
+{
+  if (color[3] <= 0.0f) {
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = 0;
+  } else {
+    out[0] = unit_to_byte(color[0] / color[3]);
+    out[1] = unit_to_byte(color[1] / color[3]);
+    out[2] = unit_to_byte(color[2] / color[3]);
+  }
+  out[3] = unit_to_byte(color[3]);
+}
+
+static void expected_blend_pixel(VGBlendMode mode,
+                                 const VGfloat srcStraight[4],
+                                 const VGfloat dstStraight[4],
+                                 VGubyte expected[4])
+{
+  VGfloat src[4];
+  VGfloat dst[4];
+  VGfloat out[4];
+  int channel;
+
+  premultiply_color(srcStraight, src);
+  premultiply_color(dstStraight, dst);
+
+  switch (mode) {
+  case VG_BLEND_SRC:
+    out[0] = src[0];
+    out[1] = src[1];
+    out[2] = src[2];
+    out[3] = src[3];
+    break;
+
+  case VG_BLEND_DST_OVER:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = src[channel] * (1.0f - dst[3]) + dst[channel];
+    out[3] = src[3] * (1.0f - dst[3]) + dst[3];
+    break;
+
+  case VG_BLEND_SRC_IN:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = src[channel] * dst[3];
+    out[3] = src[3] * dst[3];
+    break;
+
+  case VG_BLEND_DST_IN:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = dst[channel] * src[3];
+    out[3] = dst[3] * src[3];
+    break;
+
+  case VG_BLEND_MULTIPLY:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = src[channel] * (1.0f - dst[3]) +
+                     dst[channel] * (1.0f - src[3]) +
+                     src[channel] * dst[channel];
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_SCREEN:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = src[channel] + dst[channel] -
+                     src[channel] * dst[channel];
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_DARKEN:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = min_float(src[channel] +
+                               dst[channel] * (1.0f - src[3]),
+                               dst[channel] +
+                               src[channel] * (1.0f - dst[3]));
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_LIGHTEN:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = max_float(src[channel] +
+                               dst[channel] * (1.0f - src[3]),
+                               dst[channel] +
+                               src[channel] * (1.0f - dst[3]));
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_ADDITIVE:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = min_float(src[channel] + dst[channel], 1.0f);
+    out[3] = min_float(src[3] + dst[3], 1.0f);
+    break;
+
+  case VG_BLEND_SRC_OVER:
+  default:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = src[channel] + dst[channel] * (1.0f - src[3]);
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+  }
+
+  store_straight_rgba(out, expected);
+}
+
+static const char *blend_mode_name(VGBlendMode mode)
+{
+  switch (mode) {
+  case VG_BLEND_SRC: return "VG_BLEND_SRC";
+  case VG_BLEND_SRC_OVER: return "VG_BLEND_SRC_OVER";
+  case VG_BLEND_DST_OVER: return "VG_BLEND_DST_OVER";
+  case VG_BLEND_SRC_IN: return "VG_BLEND_SRC_IN";
+  case VG_BLEND_DST_IN: return "VG_BLEND_DST_IN";
+  case VG_BLEND_MULTIPLY: return "VG_BLEND_MULTIPLY";
+  case VG_BLEND_SCREEN: return "VG_BLEND_SCREEN";
+  case VG_BLEND_DARKEN: return "VG_BLEND_DARKEN";
+  case VG_BLEND_LIGHTEN: return "VG_BLEND_LIGHTEN";
+  case VG_BLEND_ADDITIVE: return "VG_BLEND_ADDITIVE";
+  default: return "unknown blend mode";
+  }
+}
+
+static int run_core_blend_mode_test(unsigned char *pixels,
+                                    EGLint width,
+                                    EGLint height)
 {
   struct {
     VGBlendMode mode;
-    VGubyte r;
-    VGubyte g;
-    VGubyte b;
   } cases[] = {
-    { VG_BLEND_MULTIPLY, 32, 32, 143 },
-    { VG_BLEND_SCREEN, 159, 159, 239 },
-    { VG_BLEND_DARKEN, 64, 64, 191 },
-    { VG_BLEND_LIGHTEN, 128, 128, 191 },
-    { VG_BLEND_ADDITIVE, 191, 191, 255 }
+    { VG_BLEND_SRC },
+    { VG_BLEND_SRC_OVER },
+    { VG_BLEND_DST_OVER },
+    { VG_BLEND_SRC_IN },
+    { VG_BLEND_DST_IN },
+    { VG_BLEND_MULTIPLY },
+    { VG_BLEND_SCREEN },
+    { VG_BLEND_DARKEN },
+    { VG_BLEND_LIGHTEN },
+    { VG_BLEND_ADDITIVE }
   };
   VGPath rect = VG_INVALID_HANDLE;
   VGPaint paint = VG_INVALID_HANDLE;
-  VGfloat dstColor[] = {0.25f, 0.50f, 0.75f, 1.0f};
-  VGfloat srcColor[] = {0.50f, 0.25f, 0.75f, 1.0f};
+  VGfloat dstColor[] = {0.25f, 0.70f, 0.40f, 0.625f};
+  VGfloat srcColor[] = {0.80f, 0.20f, 0.60f, 0.50f};
+  VGubyte expected[4];
   int i;
   int result = 0;
 
@@ -1009,6 +1167,7 @@ static int run_standard_blend_mode_test(unsigned char *pixels,
   vgSetParameterfv(paint, VG_PAINT_COLOR, 4, srcColor);
 
   for (i=0; i<(int)(sizeof(cases) / sizeof(cases[0])); ++i) {
+    expected_blend_pixel(cases[i].mode, srcColor, dstColor, expected);
     vgSetfv(VG_CLEAR_COLOR, 4, dstColor);
     vgClear(0, 0, width, height);
     vgSeti(VG_BLEND_MODE, cases[i].mode);
@@ -1017,14 +1176,17 @@ static int run_standard_blend_mode_test(unsigned char *pixels,
     vgReadPixels(pixels, width * 4, VG_sRGBA_8888,
                  0, 0, width, height);
 
-    if (expect_no_vg_error("OpenVG standard blend mode test failed")) {
+    if (expect_no_vg_error("OpenVG core blend mode test failed")) {
       result = 1;
       goto cleanup;
     }
 
     if (expect_rgba_at(pixels, width * 4, width / 2, height / 2,
-                       cases[i].r, cases[i].g, cases[i].b, 255,
-                       "OpenVG standard blend mode produced an unexpected pixel")) {
+                       expected[0], expected[1], expected[2], expected[3],
+                       "OpenVG core blend mode produced an unexpected pixel")) {
+      fprintf(stderr, "%s expected %u,%u,%u,%u\n",
+              blend_mode_name(cases[i].mode),
+              expected[0], expected[1], expected[2], expected[3]);
       result = 1;
       goto cleanup;
     }
@@ -2665,7 +2827,7 @@ int main(void)
       if (result == 0)
         result = run_src_over_alpha_test(pixels, width, height);
       if (result == 0)
-        result = run_standard_blend_mode_test(pixels, width, height);
+        result = run_core_blend_mode_test(pixels, width, height);
       if (result == 0)
         result = run_shared_context_test(display, config, surface,
                                          context, pixels, width, height);

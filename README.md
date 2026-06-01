@@ -85,6 +85,10 @@ $ ./test_tiger_shader
   Loads PNG source and destination images and draws them with the standard
   OpenVG blend modes.
 
+#### test_alpha
+  Shows source-over alpha blending with overlapping translucent red, green,
+  and blue circles.
+
 #### test_pbuffer
   Minimal EGL/OpenVG pbuffer smoke test that clears an offscreen surface
   and reads one pixel back. It also covers OpenVG image-backed pbuffers
