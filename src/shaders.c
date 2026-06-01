@@ -77,6 +77,7 @@ static const char* vgShaderFragmentPipeline =
 "\n"
 "uniform int drawMode;\n"
 "uniform sampler2D imageSampler;\n"
+"uniform int imagePremultiplied;\n"
 "uniform int imageMode;\n"
 "uniform int paintType;\n"
 "uniform vec4 paintColor;\n"
@@ -93,6 +94,22 @@ static const char* vgShaderFragmentPipeline =
 "\n"
 "out vec4 fragColor;\n"
 "vec4 sh_Color;\n"
+"\n"
+"vec4 premultiplyColor(vec4 color)\n"
+"{\n"
+"    color = clamp(color, 0.0, 1.0);\n"
+"    color.rgb *= color.a;\n"
+"    return color;\n"
+"}\n"
+"\n"
+"vec4 unpremultiplyColor(vec4 color)\n"
+"{\n"
+"    color = clamp(color, 0.0, 1.0);\n"
+"    if (color.a <= 0.0)\n"
+"        return vec4(0.0);\n"
+"    color.rgb = min(color.rgb, vec3(color.a)) / color.a;\n"
+"    return color;\n"
+"}\n"
 "\n"
 "float linearGradient(vec2 fragCoord, vec2 p0, vec2 p1){\n"
 "    float x  = fragCoord.x;\n"
@@ -159,8 +176,10 @@ static const char* vgShaderFragmentPipeline =
 "        break;\n"
 "    }\n"
 "    if(drawMode == DRAW_MODE_IMAGE) {\n"
-"        col = texture(imageSampler, texImageCoord)\n"
-"            * (imageMode == DRAW_IMAGE_MULTIPLY ? col : vec4(1.0, 1.0, 1.0, 1.0));\n"
+"        vec4 imageColor = texture(imageSampler, texImageCoord);\n"
+"        if (imagePremultiplied != 0)\n"
+"            imageColor = unpremultiplyColor(imageColor);\n"
+"        col = imageColor * (imageMode == DRAW_IMAGE_MULTIPLY ? col : vec4(1.0));\n"
 "    }\n"
 "    sh_Color = col * scaleFactorBias[0] + scaleFactorBias[1];\n"
 "    shMain();\n"
@@ -168,6 +187,7 @@ static const char* vgShaderFragmentPipeline =
 "        float maskValue = texture(maskSampler, gl_FragCoord.xy / maskSurfaceSize).r;\n"
 "        fragColor.a *= maskValue;\n"
 "    }\n"
+"    fragColor = premultiplyColor(fragColor);\n"
 "    fragColor = applyBlendMode(fragColor);\n"
 "}\n";
 
@@ -178,7 +198,7 @@ static const char* vgShaderFragmentBlendPipeline =
 "        return src;\n"
 "\n"
 "    vec4 dst = texture(blendSampler, gl_FragCoord.xy / blendSurfaceSize);\n"
-"    vec3 sp = clamp(src.rgb * src.a, 0.0, 1.0);\n"
+"    vec3 sp = clamp(src.rgb, 0.0, 1.0);\n"
 "    vec3 dp = clamp(dst.rgb, 0.0, 1.0);\n"
 "    float sa = clamp(src.a, 0.0, 1.0);\n"
 "    float da = clamp(dst.a, 0.0, 1.0);\n"
@@ -283,6 +303,7 @@ static const char* vgShaderFragmentImageFilterA =
 "uniform ivec2 sourceSize;\n"
 "uniform ivec2 sourceOrigin;\n"
 "uniform ivec2 targetOrigin;\n"
+"uniform int sourcePremultiplied;\n"
 "uniform ivec2 kernelSize;\n"
 "uniform ivec2 shift;\n"
 "uniform float scale;\n"
@@ -501,6 +522,17 @@ static const char* vgShaderFragmentImageFilterC =
 "                texelFetch(auxSampler, ivec2(index.a, 0), 0).a);\n"
 "}\n"
 "\n"
+"vec4 unpremultiplySource(vec4 color)\n"
+"{\n"
+"    if (sourcePremultiplied == 0)\n"
+"        return color;\n"
+"    color = clamp(color, 0.0, 1.0);\n"
+"    if (color.a <= 0.0)\n"
+"        return vec4(0.0);\n"
+"    color.rgb = min(color.rgb, vec3(color.a)) / color.a;\n"
+"    return color;\n"
+"}\n"
+"\n"
 "void main()\n"
 "{\n"
 "    ivec2 pixel = ivec2(gl_FragCoord.xy);\n"
@@ -508,9 +540,9 @@ static const char* vgShaderFragmentImageFilterC =
 "    vec4 result;\n"
 "\n"
 "    if (mode == FILTER_TRANSFER) {\n"
-"        result = texelFetch(sourceSampler,\n"
-"                            sourceOrigin + pixel - targetOrigin,\n"
-"                            0);\n"
+"        result = unpremultiplySource(texelFetch(sourceSampler,\n"
+"                                                sourceOrigin + pixel - targetOrigin,\n"
+"                                                0));\n"
 "    } else if (mode == FILTER_COLOR_MATRIX) {\n"
 "        source = loadSource(pixel);\n"
 "        result = vec4(dot(colorMatrix[0], source),\n"
@@ -587,6 +619,8 @@ void shInitPiplelineShaders(void) {
   context->locationDraw.paintInverted  = glGetUniformLocation(context->progDraw, "paintInverted");
   context->locationDraw.drawMode       = glGetUniformLocation(context->progDraw, "drawMode");
   context->locationDraw.imageSampler   = glGetUniformLocation(context->progDraw, "imageSampler");
+  context->locationDraw.imagePremultiplied =
+    glGetUniformLocation(context->progDraw, "imagePremultiplied");
   context->locationDraw.imageMode      = glGetUniformLocation(context->progDraw, "imageMode");
   context->locationDraw.paintType      = glGetUniformLocation(context->progDraw, "paintType");
   context->locationDraw.rampSampler    = glGetUniformLocation(context->progDraw, "rampSampler");
@@ -610,6 +644,7 @@ void shInitPiplelineShaders(void) {
   glUniform1i(context->locationDraw.maskSampler, SH_TEXTURE_MASK_INDEX);
   glUniform1i(context->locationDraw.blendMode, 0);
   glUniform1i(context->locationDraw.blendSampler, SH_TEXTURE_BLEND_INDEX);
+  glUniform1i(context->locationDraw.imagePremultiplied, 0);
   GL_CHECK_ERROR;
 
   /* Initialize uniform variables */
@@ -716,6 +751,8 @@ void shInitImageFilterShaders(void) {
     glGetUniformLocation(context->progImageFilter, "sourceOrigin");
   context->locationImageFilter.targetOrigin =
     glGetUniformLocation(context->progImageFilter, "targetOrigin");
+  context->locationImageFilter.sourcePremultiplied =
+    glGetUniformLocation(context->progImageFilter, "sourcePremultiplied");
   context->locationImageFilter.kernelSize =
     glGetUniformLocation(context->progImageFilter, "kernelSize");
   context->locationImageFilter.shift =

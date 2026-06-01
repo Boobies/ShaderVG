@@ -473,6 +473,20 @@ static void shDestroyImageSurfaceResources(SHEGLSurface *surface)
   }
 }
 
+static EGLBoolean shNormalizeImageSurface(SHEGLSurface *surface)
+{
+  if (!surface || surface->type != SH_EGL_SURFACE_OPENVG_IMAGE)
+    return EGL_TRUE;
+
+  if (!shImageNormalizeSurfaceData(surface->vgContext,
+                                   surface->vgImage)) {
+    shSetEGLError(EGL_BAD_ALLOC);
+    return EGL_FALSE;
+  }
+
+  return EGL_TRUE;
+}
+
 static EGLint *shTranslateConfigAttribs(const EGLint *attribs,
                                         EGLBoolean *emptyResult)
 {
@@ -923,6 +937,9 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
   if (!display || !s)
     return EGL_FALSE;
 
+  if (t_currentDraw == s && !shNormalizeImageSurface(s))
+    return EGL_FALSE;
+
   result = g_egl.DestroySurface(display->realDisplay, s->realSurface);
   if (result) {
     if (t_currentDraw == s) {
@@ -1067,8 +1084,11 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
 
   if (t_currentContext == context &&
       t_currentDraw &&
-      t_currentDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+      t_currentDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE) {
+    if (!shNormalizeImageSurface(t_currentDraw))
+      return EGL_FALSE;
     shImageEndRenderTarget(t_currentDraw->vgImage);
+  }
 
   if (context->vgContext) {
     shDestroyContext(context->vgContext);
@@ -1193,6 +1213,9 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
   }
 
   if (context && context->api == EGL_OPENVG_API && !g_egl.BindAPI(EGL_OPENGL_API))
+    return EGL_FALSE;
+
+  if (oldDraw != drawSurface && !shNormalizeImageSurface(oldDraw))
     return EGL_FALSE;
 
   if (!g_egl.MakeCurrent(display->realDisplay, realDraw, realRead, realContext))

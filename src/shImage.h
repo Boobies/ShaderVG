@@ -61,6 +61,8 @@ typedef struct
   
 } SHColor;
 
+typedef struct VGContext VGContext;
+
 void SHColor_ctor(SHColor *c);
 void SHColor_dtor(SHColor *c);
 
@@ -88,6 +90,7 @@ typedef struct
   SHint paintPatternRefs;
   SHint glyphRefs;
   VGboolean gpuDataDirty;
+  VGboolean surfaceDataPremultiplied;
   
 } SHImage;
 
@@ -107,6 +110,8 @@ VGboolean shImageIsEGLPbufferBound(SHImage *i);
 VGboolean shImageIsRenderTarget(SHImage *i);
 VGboolean shImageIsRenderTargetEligible(SHImage *i);
 void shImageMarkGpuDataDirty(SHImage *i);
+void shImageMarkSurfaceDataPremultiplied(SHImage *i);
+VGboolean shImageNormalizeSurfaceData(VGContext *context, SHImage *i);
 int shIsValidImageFormat(VGImageFormat format);
 
 #define _ITEM_T SHImage*

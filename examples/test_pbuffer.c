@@ -18,6 +18,16 @@
 
 #define WARP_TEST_EPSILON 0.001f
 
+static int expect_rgba_at(const VGubyte *data,
+                          VGint stride,
+                          VGint x,
+                          VGint y,
+                          VGubyte r,
+                          VGubyte g,
+                          VGubyte b,
+                          VGubyte a,
+                          const char *message);
+
 static int fail_egl(const char *message)
 {
   fprintf(stderr, "%s (EGL error 0x%04x)\n", message, eglGetError());
@@ -418,7 +428,11 @@ static int run_src_over_alpha_test(unsigned char *pixels,
     goto cleanup;
   }
 
-  if (pixels[sample + 3] < 100) {
+  if (expect_rgba_at(pixels, width * 4, width / 2, height / 2,
+                     255, 0, 0, 147,
+                     "OpenVG source-over alpha did not read back straight color")) {
+    result = 1;
+  } else if (pixels[sample + 3] < 100) {
     fprintf(stderr,
             "OpenVG source-over alpha stayed too low: %u\n",
             pixels[sample + 3]);
@@ -1042,6 +1056,7 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   VGubyte lumaRead[4 * 4];
   VGubyte lumaWrite[3 * 3];
   VGubyte alphaWrite[3 * 3];
+  VGubyte translucentPixel[4];
   VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGfloat blue[] = {0.0f, 0.0f, 1.0f, 1.0f};
   VGfloat translucentRed[] = {1.0f, 0.0f, 0.0f, 0.25f};
@@ -1059,8 +1074,10 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   memset(lumaRead, 0, sizeof(lumaRead));
   memset(lumaWrite, 0, sizeof(lumaWrite));
   memset(alphaWrite, 0, sizeof(alphaWrite));
+  memset(translucentPixel, 0, sizeof(translucentPixel));
   lumaWrite[1 * 3 + 1] = 96;
   alphaWrite[1 * 3 + 1] = 128;
+  set_rgba(translucentPixel, 4, 0, 0, 255, 0, 0, 128);
 
   for (i=0; i<6 * 5; ++i) {
     VGint x = i % 6;
@@ -1280,6 +1297,41 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   if (expect_no_vg_error("OpenVG alpha vgWritePixels failed") ||
       expect_rgba_at(pixels, width * 4, 55, 9, 255, 255, 255, 128,
                      "OpenVG alpha vgWritePixels did not expand coverage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSetfv(VG_CLEAR_COLOR, 4, transparent);
+  vgClear(0, 0, width, height);
+  vgWritePixels(translucentPixel, 4, VG_lABGR_8888, 56, 8, 1, 1);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG translucent vgWritePixels failed") ||
+      expect_rgba_at(pixels, width * 4, 56, 8, 255, 0, 0, 128,
+                     "OpenVG vgReadPixels exposed premultiplied surface bytes")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  memset(imageRead, 0, sizeof(imageRead));
+  vgGetPixels(dstImage, 0, 0, 56, 8, 1, 1);
+  vgGetImageSubData(dstImage, imageRead, 5 * 4,
+                    VG_lABGR_8888, 0, 0, 1, 1);
+  if (expect_no_vg_error("OpenVG translucent vgGetPixels failed") ||
+      expect_rgba_at(imageRead, 5 * 4, 0, 0, 255, 0, 0, 128,
+                     "OpenVG vgGetPixels stored premultiplied surface bytes")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgCopyPixels(57, 8, 56, 8, 1, 1);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG translucent vgCopyPixels failed") ||
+      expect_rgba_at(pixels, width * 4, 57, 8, 255, 0, 0, 128,
+                     "OpenVG vgCopyPixels double-premultiplied surface pixels")) {
     result = 1;
     goto cleanup;
   }
@@ -1616,7 +1668,7 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
   EGLSurface imageSurface = EGL_NO_SURFACE;
   VGImage image = VG_INVALID_HANDLE;
   VGubyte imageData[16 * 16 * 4];
-  VGfloat red[] = {1.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat translucentRed[] = {1.0f, 0.0f, 0.0f, 0.5f};
   VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
   EGLint textureAttribs[] = {
     EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
@@ -1728,14 +1780,16 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
     goto cleanup;
   }
 
-  vgSetfv(VG_CLEAR_COLOR, 4, red);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSetfv(VG_CLEAR_COLOR, 4, translucentRed);
   vgClear(0, 0, imageWidth, imageHeight);
   vgFinish();
   vgReadPixels(pixels, imageWidth * 4,
                VG_sRGBA_8888, 0, 0, imageWidth, imageHeight);
   if (expect_no_vg_error("OpenVG image pbuffer rendering failed") ||
-      expect_pixel(pixels, imageWidth, 8, 8, 192, 32, 32,
-                   "OpenVG image pbuffer readback did not see rendered pixels")) {
+      expect_rgba_at(pixels, imageWidth * 4, 8, 8, 255, 0, 0, 128,
+                     "OpenVG image pbuffer readback exposed premultiplied bytes")) {
     result = 1;
     goto cleanup;
   }
@@ -1748,14 +1802,17 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
   vgGetImageSubData(image, imageData, imageWidth * 4,
                     VG_sRGBA_8888, 0, 0, imageWidth, imageHeight);
   if (expect_no_vg_error("OpenVG could not read back a rendered image pbuffer") ||
-      expect_pixel(imageData, imageWidth, 8, 8, 192, 32, 32,
-                   "OpenVG image data did not reflect image pbuffer rendering")) {
+      expect_rgba_at(imageData, imageWidth * 4, 8, 8, 128, 0, 0, 255,
+                     "OpenVG image data did not use straight sRGBA pbuffer bytes")) {
     result = 1;
     goto cleanup;
   }
 
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MASKING, VG_FALSE);
   vgSetfv(VG_CLEAR_COLOR, 4, black);
   vgClear(0, 0, width, height);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC);
   vgSeti(VG_MATRIX_MODE, VG_MATRIX_IMAGE_USER_TO_SURFACE);
   vgLoadIdentity();
   vgSeti(VG_IMAGE_MODE, VG_DRAW_IMAGE_NORMAL);
@@ -1763,8 +1820,8 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
   vgFinish();
   vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
   if (expect_no_vg_error("OpenVG could not draw an image-backed pbuffer") ||
-      expect_pixel(pixels, width, 8, 8, 192, 32, 32,
-                   "OpenVG drawing did not sample the image-backed pbuffer")) {
+      expect_rgba_at(pixels, width * 4, 8, 8, 255, 0, 0, 128,
+                     "OpenVG drawing double-premultiplied an image-backed pbuffer")) {
     result = 1;
     goto cleanup;
   }

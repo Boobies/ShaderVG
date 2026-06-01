@@ -70,7 +70,7 @@ typedef struct
   SHMaskLayerArray maskLayers;
 } SHResourceGroup;
 
-typedef struct
+typedef struct VGContext
 {
   /* Surface info supplied by the EGL frontend */
   SHint surfaceWidth;
@@ -160,6 +160,7 @@ typedef struct
       GLint paintInverted  ;
       GLint drawMode       ;
       GLint imageSampler   ;
+      GLint imagePremultiplied;
       GLint imageMode      ;
       GLint paintType      ;
       GLint rampSampler    ;
@@ -202,6 +203,7 @@ typedef struct
       GLint sourceSize;
       GLint sourceOrigin;
       GLint targetOrigin;
+      GLint sourcePremultiplied;
       GLint kernelSize;
       GLint shift;
       GLint scale;

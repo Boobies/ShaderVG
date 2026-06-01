@@ -623,8 +623,10 @@ void shResizeCurrentSurface(VGint width, VGint height)
 
 void shMarkRenderTargetDirty(VGContext *context)
 {
-  if (context && context->renderTargetImage)
+  if (context && context->renderTargetImage) {
     shImageMarkGpuDataDirty(context->renderTargetImage);
+    shImageMarkSurfaceDataPremultiplied(context->renderTargetImage);
+  }
 }
 
 /*-----------------------------------------------------
@@ -1440,9 +1442,9 @@ VG_API_CALL void vgClear(VGint x, VGint y, VGint width, VGint height)
      we would need some kind of special "begin" function at
      beginning of each drawing or clear the planes prior to each
      drawing where it takes places */
-  glClearColor(context->clearColor.r,
-               context->clearColor.g,
-               context->clearColor.b,
+  glClearColor(context->clearColor.r * context->clearColor.a,
+               context->clearColor.g * context->clearColor.a,
+               context->clearColor.b * context->clearColor.a,
                context->clearColor.a);
   
   glClear(GL_COLOR_BUFFER_BIT |

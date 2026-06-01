@@ -145,7 +145,8 @@ static VGboolean updateBlendingStateGL(VGContext *c, int alphaIsOne)
   {
   case VG_BLEND_SRC:
     if (c->masking == VG_TRUE) {
-      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA,
+                          GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
       glEnable(GL_BLEND);
     } else {
       glBlendFunc(GL_ONE, GL_ZERO);
@@ -178,12 +179,12 @@ static VGboolean updateBlendingStateGL(VGContext *c, int alphaIsOne)
     glEnable(GL_BLEND); break;
 
   case VG_BLEND_DST_OVER:
-    glBlendFunc(GL_ONE_MINUS_DST_ALPHA, GL_DST_ALPHA);
+    glBlendFunc(GL_ONE_MINUS_DST_ALPHA, GL_ONE);
     glEnable(GL_BLEND); break;
 
   case VG_BLEND_SRC_OVER: default:
-    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
-                        GL_ONE_MINUS_DST_ALPHA, GL_ONE);
+    glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA,
+                        GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     if (alphaIsOne && c->masking == VG_FALSE) glDisable(GL_BLEND);
     else glEnable(GL_BLEND); break;
   };
@@ -1028,6 +1029,7 @@ void shDrawImage(VGContext *context, SHImage *i)
   glUseProgram(context->progDraw);
   glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, mgl);
   glUniform1i(context->locationDraw.drawMode, 1); /* drawMode: image */
+  glUniform1i(context->locationDraw.imagePremultiplied, 0);
   GL_CHECK_ERROR;
   
   /* Clamp to edge for proper filtering, modulate for multiply mode */
