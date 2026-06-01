@@ -10,7 +10,7 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
-#include "openvg.h"
+#include <VG/openvg.h>
 #include "shContext.h"
 
 #include <stdlib.h>

@@ -17,8 +17,8 @@
 #include <EGL/egl.h>
 #include "GL/glext.h"
 
-#include <vg/openvg.h>
-#include <vg/vgu.h>
+#include <VG/openvg.h>
+#include <VG/vgu.h>
 
 typedef enum {
     TEST_CALLBACK_DISPLAY      = 0,

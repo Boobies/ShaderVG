@@ -18,7 +18,7 @@
  *
  */
 
-#include "openvg.h"
+#include <VG/openvg.h>
 #include "shContext.h"
 #include "shDefs.h"
 #include "shaders.h"

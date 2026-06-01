@@ -13,8 +13,8 @@
 #endif
 
 #include <EGL/egl.h>
-#include <vg/openvg.h>
-#include <vg/vgu.h>
+#include <VG/openvg.h>
+#include <VG/vgu.h>
 
 #define WARP_TEST_EPSILON 0.001f
 
