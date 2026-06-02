@@ -89,6 +89,11 @@ $ ./test_tiger_shader
   Shows source-over alpha blending with overlapping translucent red, green,
   and blue circles.
 
+#### test_antialias
+  Compares `VG_RENDERING_QUALITY_NONANTIALIASED`,
+  `VG_RENDERING_QUALITY_FASTER`, and `VG_RENDERING_QUALITY_BETTER` side by
+  side using filled curves and strokes.
+
 #### test_pbuffer
   Minimal EGL/OpenVG pbuffer smoke test that clears an offscreen surface
   and reads one pixel back. It also covers OpenVG image-backed pbuffers
@@ -289,6 +294,11 @@ creation to the platform EGL implementation. ShaderVG only supplies the OpenVG
 implementation and the glue needed for `EGL_OPENVG_API` / `EGL_OPENVG_BIT` to
 select a ShaderVG OpenVG context. OpenVG-capable configs advertise
 `EGL_ALPHA_MASK_SIZE == 8`, matching ShaderVG's 8-bit GPU mask surface.
+
+ShaderVG supports antialiasing through `VG_RENDERING_QUALITY` on single-sample
+surfaces, but applications should prefer EGL multisampled surfaces when
+available by requesting `EGL_SAMPLE_BUFFERS` and `EGL_SAMPLES`. Native EGL MSAA
+is generally the best-quality and most efficient antialiasing path.
 
 `eglCreatePbufferFromClientBuffer` supports `EGL_OPENVG_IMAGE` client buffers.
 The resulting pbuffer renders directly into the supplied `VGImage`, can only be

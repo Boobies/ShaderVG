@@ -51,7 +51,7 @@ static const char* vgShaderVertexPipeline =
 static const char* vgShaderVertexUserDefault =
 "void shMain(){ gl_Position = sh_Ortho * sh_Model * sh_Vertex; }\n";
 
-static const char* vgShaderFragmentPipeline =
+static const char* vgShaderFragmentPipelineA =
 "#version 330\n"
 "\n"
 "#define PAINT_TYPE_COLOR           0x1B00\n"
@@ -66,11 +66,20 @@ static const char* vgShaderFragmentPipeline =
 "#define DRAW_MODE_IMAGE            1\n"
 "\n"
 "#define BLEND_MODE_NONE            0\n"
+"#define BLEND_SRC                  0x2000\n"
+"#define BLEND_SRC_OVER             0x2001\n"
+"#define BLEND_DST_OVER             0x2002\n"
+"#define BLEND_SRC_IN               0x2003\n"
+"#define BLEND_DST_IN               0x2004\n"
 "#define BLEND_MULTIPLY             0x2005\n"
 "#define BLEND_SCREEN               0x2006\n"
 "#define BLEND_DARKEN               0x2007\n"
 "#define BLEND_LIGHTEN              0x2008\n"
 "#define BLEND_ADDITIVE             0x2009\n"
+"#define BLEND_SRC_OUT              0x200A\n"
+"#define BLEND_DST_OUT              0x200B\n"
+"#define BLEND_SRC_ATOP             0x200C\n"
+"#define BLEND_DST_ATOP             0x200D\n"
 "\n"
 "in vec2 texImageCoord;\n"
 "in vec2 paintCoord;\n"
@@ -91,6 +100,10 @@ static const char* vgShaderFragmentPipeline =
 "uniform int blendMode;\n"
 "uniform sampler2D blendSampler;\n"
 "uniform vec2 blendSurfaceSize;\n"
+"uniform int coverageEnabled;\n"
+"uniform sampler2D coverageSampler;\n"
+"uniform vec2 coverageSurfaceSize;\n"
+"uniform int coveragePass;\n"
 "\n"
 "out vec4 fragColor;\n"
 "vec4 sh_Color;\n"
@@ -122,6 +135,9 @@ static const char* vgShaderFragmentPipeline =
 "    float dy = y1 - y0;\n"
 "    return ( dx * (x - x0) + dy * (y - y0) ) / ( dx*dx + dy*dy );\n"
 "}\n"
+"\n";
+
+static const char* vgShaderFragmentPipelineB =
 "\n"
 "float radialGradient(vec2 fragCoord, vec2 centerCoord, vec2 focalCoord, float r){\n"
 "    float x   = fragCoord.x;\n"
@@ -138,12 +154,17 @@ static const char* vgShaderFragmentPipeline =
 "         / ( r*r - (dfx*dfx + dfy*dfy) );\n"
 "}\n"
 "\n"
-"vec4 applyBlendMode(vec4 src);\n"
+"vec4 applyBlendMode(vec4 src, vec4 coveredSrc, float coverage);\n"
 "void shMain(void);\n"
 "\n"
 "void main()\n"
 "{\n"
 "    vec4 col;\n"
+"    float coverageValue = 1.0;\n"
+"    if(coveragePass != 0) {\n"
+"        fragColor = vec4(1.0);\n"
+"        return;\n"
+"    }\n"
 "    switch(paintType){\n"
 "    case PAINT_TYPE_LINEAR_GRADIENT:\n"
 "        {\n"
@@ -183,29 +204,51 @@ static const char* vgShaderFragmentPipeline =
 "    }\n"
 "    sh_Color = col * scaleFactorBias[0] + scaleFactorBias[1];\n"
 "    shMain();\n"
+"    if(coverageEnabled != 0) {\n"
+"        coverageValue *= texture(coverageSampler, gl_FragCoord.xy / coverageSurfaceSize).r;\n"
+"    }\n"
 "    if(maskEnabled != 0) {\n"
-"        float maskValue = texture(maskSampler, gl_FragCoord.xy / maskSurfaceSize).r;\n"
-"        fragColor.a *= maskValue;\n"
+"        coverageValue *= texture(maskSampler, gl_FragCoord.xy / maskSurfaceSize).r;\n"
 "    }\n"
 "    fragColor = premultiplyColor(fragColor);\n"
-"    fragColor = applyBlendMode(fragColor);\n"
+"    fragColor = applyBlendMode(fragColor, fragColor * coverageValue, coverageValue);\n"
 "}\n";
 
 static const char* vgShaderFragmentBlendPipeline =
-"vec4 applyBlendMode(vec4 src)\n"
+"vec4 applyBlendMode(vec4 src, vec4 coveredSrc, float coverage)\n"
 "{\n"
 "    if (blendMode == BLEND_MODE_NONE)\n"
-"        return src;\n"
+"        return coveredSrc;\n"
 "\n"
 "    vec4 dst = texture(blendSampler, gl_FragCoord.xy / blendSurfaceSize);\n"
 "    vec3 sp = clamp(src.rgb, 0.0, 1.0);\n"
 "    vec3 dp = clamp(dst.rgb, 0.0, 1.0);\n"
 "    float sa = clamp(src.a, 0.0, 1.0);\n"
 "    float da = clamp(dst.a, 0.0, 1.0);\n"
-"    vec3 outRgb = sp;\n"
-"    float outA = sa;\n"
+"    vec3 outRgb = coveredSrc.rgb;\n"
+"    float outA = coveredSrc.a;\n"
 "\n"
 "    switch (blendMode) {\n"
+"    case BLEND_SRC:\n"
+"        outRgb = sp;\n"
+"        outA = sa;\n"
+"        break;\n"
+"    case BLEND_SRC_OVER:\n"
+"        outRgb = sp + dp * (1.0 - sa);\n"
+"        outA = sa + da * (1.0 - sa);\n"
+"        break;\n"
+"    case BLEND_DST_OVER:\n"
+"        outRgb = sp * (1.0 - da) + dp;\n"
+"        outA = sa * (1.0 - da) + da;\n"
+"        break;\n"
+"    case BLEND_SRC_IN:\n"
+"        outRgb = sp * da;\n"
+"        outA = sa * da;\n"
+"        break;\n"
+"    case BLEND_DST_IN:\n"
+"        outRgb = dp * sa;\n"
+"        outA = da * sa;\n"
+"        break;\n"
 "    case BLEND_MULTIPLY:\n"
 "        outRgb = sp * (1.0 - da) + dp * (1.0 - sa) + sp * dp;\n"
 "        outA = sa + da * (1.0 - sa);\n"
@@ -226,11 +269,28 @@ static const char* vgShaderFragmentBlendPipeline =
 "        outRgb = min(sp + dp, vec3(1.0));\n"
 "        outA = min(sa + da, 1.0);\n"
 "        break;\n"
+"    case BLEND_SRC_OUT:\n"
+"        outRgb = sp * (1.0 - da);\n"
+"        outA = sa * (1.0 - da);\n"
+"        break;\n"
+"    case BLEND_DST_OUT:\n"
+"        outRgb = dp * (1.0 - sa);\n"
+"        outA = da * (1.0 - sa);\n"
+"        break;\n"
+"    case BLEND_SRC_ATOP:\n"
+"        outRgb = sp * da + dp * (1.0 - sa);\n"
+"        outA = da;\n"
+"        break;\n"
+"    case BLEND_DST_ATOP:\n"
+"        outRgb = dp * sa + sp * (1.0 - da);\n"
+"        outA = sa;\n"
+"        break;\n"
 "    default:\n"
-"        return src;\n"
+"        return coveredSrc;\n"
 "    }\n"
 "\n"
-"    return vec4(clamp(outRgb, 0.0, 1.0), clamp(outA, 0.0, 1.0));\n"
+"    vec4 blended = vec4(clamp(outRgb, 0.0, 1.0), clamp(outA, 0.0, 1.0));\n"
+"    return mix(dst, blended, clamp(coverage, 0.0, 1.0));\n"
 "}\n";
 
 static const char* vgShaderFragmentUserDefault =
@@ -259,6 +319,40 @@ static const char* vgShaderFragmentColorRamp =
 "{\n"
 "    float k = (gl_FragCoord.x - 0.5 - startPixel) / pixelSpan;\n"
 "    fragColor = mix(startColor, endColor, clamp(k, 0.0, 1.0));\n"
+"}\n";
+
+static const char* vgShaderVertexCoverage =
+"#version 330\n"
+"\n"
+"in vec2 pos;\n"
+"uniform vec2 targetSize;\n"
+"\n"
+"void main()\n"
+"{\n"
+"    vec2 clip = vec2(pos.x / targetSize.x * 2.0 - 1.0,\n"
+"                     pos.y / targetSize.y * 2.0 - 1.0);\n"
+"    gl_Position = vec4(clip, 0.0, 1.0);\n"
+"}\n";
+
+static const char* vgShaderFragmentCoverage =
+"#version 330\n"
+"\n"
+"uniform sampler2D sourceSampler;\n"
+"uniform int scale;\n"
+"out vec4 fragColor;\n"
+"\n"
+"void main()\n"
+"{\n"
+"    ivec2 base = ivec2(gl_FragCoord.xy) * scale;\n"
+"    float sum = 0.0;\n"
+"    for (int y = 0; y < 4; ++y) {\n"
+"        for (int x = 0; x < 4; ++x) {\n"
+"            if (x < scale && y < scale)\n"
+"                sum += texelFetch(sourceSampler, base + ivec2(x, y), 0).r;\n"
+"        }\n"
+"    }\n"
+"    float coverage = sum / float(scale * scale);\n"
+"    fragColor = vec4(coverage, coverage, coverage, coverage);\n"
 "}\n";
 
 static const char* vgShaderVertexImageFilter =
@@ -571,8 +665,8 @@ void shInitPiplelineShaders(void) {
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   const char* extendedStage;
-  const char* buf[3];
-  GLint size[3];
+  const char* buf[4];
+  GLint size[4];
 
   context->vs = glCreateShader(GL_VERTEX_SHADER);
   if(context->userShaderVertex){
@@ -595,13 +689,15 @@ void shInitPiplelineShaders(void) {
   } else {
     extendedStage = vgShaderFragmentUserDefault;
   }
-  buf[0] = vgShaderFragmentPipeline;
-  buf[1] = vgShaderFragmentBlendPipeline;
-  buf[2] = extendedStage;
-  size[0] = strlen(vgShaderFragmentPipeline);
-  size[1] = strlen(vgShaderFragmentBlendPipeline);
-  size[2] = strlen(extendedStage);
-  glShaderSource(context->fs, 3, buf, size);
+  buf[0] = vgShaderFragmentPipelineA;
+  buf[1] = vgShaderFragmentPipelineB;
+  buf[2] = vgShaderFragmentBlendPipeline;
+  buf[3] = extendedStage;
+  size[0] = strlen(vgShaderFragmentPipelineA);
+  size[1] = strlen(vgShaderFragmentPipelineB);
+  size[2] = strlen(vgShaderFragmentBlendPipeline);
+  size[3] = strlen(extendedStage);
+  glShaderSource(context->fs, 4, buf, size);
   glCompileShader(context->fs);
   SH_CHECK_SHADER_COMPILE(context->fs, "pipeline fragment");
   GL_CHECK_ERROR;
@@ -634,6 +730,10 @@ void shInitPiplelineShaders(void) {
   context->locationDraw.blendMode      = glGetUniformLocation(context->progDraw, "blendMode");
   context->locationDraw.blendSampler   = glGetUniformLocation(context->progDraw, "blendSampler");
   context->locationDraw.blendSurfaceSize= glGetUniformLocation(context->progDraw, "blendSurfaceSize");
+  context->locationDraw.coverageEnabled= glGetUniformLocation(context->progDraw, "coverageEnabled");
+  context->locationDraw.coverageSampler= glGetUniformLocation(context->progDraw, "coverageSampler");
+  context->locationDraw.coverageSurfaceSize= glGetUniformLocation(context->progDraw, "coverageSurfaceSize");
+  context->locationDraw.coveragePass   = glGetUniformLocation(context->progDraw, "coveragePass");
   GL_CHECK_ERROR;
 
   // TODO: Support color transform to remove this from here
@@ -644,6 +744,9 @@ void shInitPiplelineShaders(void) {
   glUniform1i(context->locationDraw.maskSampler, SH_TEXTURE_MASK_INDEX);
   glUniform1i(context->locationDraw.blendMode, 0);
   glUniform1i(context->locationDraw.blendSampler, SH_TEXTURE_BLEND_INDEX);
+  glUniform1i(context->locationDraw.coverageEnabled, 0);
+  glUniform1i(context->locationDraw.coverageSampler, SH_TEXTURE_COVERAGE_INDEX);
+  glUniform1i(context->locationDraw.coveragePass, 0);
   glUniform1i(context->locationDraw.imagePremultiplied, 0);
   GL_CHECK_ERROR;
 
@@ -656,6 +759,9 @@ void shInitPiplelineShaders(void) {
               (GLfloat)context->surfaceWidth,
               (GLfloat)context->surfaceHeight);
   glUniform2f(context->locationDraw.blendSurfaceSize,
+              (GLfloat)context->surfaceWidth,
+              (GLfloat)context->surfaceHeight);
+  glUniform2f(context->locationDraw.coverageSurfaceSize,
               (GLfloat)context->surfaceWidth,
               (GLfloat)context->surfaceHeight);
   GL_CHECK_ERROR;
@@ -705,6 +811,50 @@ void shInitRampShaders(void) {
 void shDeinitRampShaders(void){
   VG_GETCONTEXT(VG_NO_RETVAL);
   glDeleteProgram(context->progColorRamp);
+}
+
+void shInitCoverageShaders(void) {
+
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+  glShaderSource(vs, 1, &vgShaderVertexCoverage, NULL);
+  glCompileShader(vs);
+  SH_CHECK_SHADER_COMPILE(vs, "coverage vertex");
+  GL_CHECK_ERROR;
+
+  GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+  glShaderSource(fs, 1, &vgShaderFragmentCoverage, NULL);
+  glCompileShader(fs);
+  SH_CHECK_SHADER_COMPILE(fs, "coverage fragment");
+  GL_CHECK_ERROR;
+
+  context->progCoverage = glCreateProgram();
+  glAttachShader(context->progCoverage, vs);
+  glAttachShader(context->progCoverage, fs);
+  glLinkProgram(context->progCoverage);
+  glDeleteShader(vs);
+  glDeleteShader(fs);
+  GL_CHECK_ERROR;
+
+  context->locationCoverage.pos =
+    glGetAttribLocation(context->progCoverage, "pos");
+  context->locationCoverage.targetSize =
+    glGetUniformLocation(context->progCoverage, "targetSize");
+  context->locationCoverage.sourceSampler =
+    glGetUniformLocation(context->progCoverage, "sourceSampler");
+  context->locationCoverage.scale =
+    glGetUniformLocation(context->progCoverage, "scale");
+  GL_CHECK_ERROR;
+
+  glUseProgram(context->progCoverage);
+  glUniform1i(context->locationCoverage.sourceSampler, 0);
+  GL_CHECK_ERROR;
+}
+
+void shDeinitCoverageShaders(void){
+  VG_GETCONTEXT(VG_NO_RETVAL);
+  glDeleteProgram(context->progCoverage);
 }
 
 void shInitImageFilterShaders(void) {

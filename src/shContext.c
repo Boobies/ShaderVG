@@ -404,6 +404,11 @@ static void shResizeSurface(VGContext *context, VGint width, VGint height)
 
   context->surfaceWidth = width;
   context->surfaceHeight = height;
+  glGetIntegerv(GL_SAMPLE_BUFFERS, &context->surfaceSampleBuffers);
+  glGetIntegerv(GL_SAMPLES, &context->surfaceSamples);
+  if (context->surfaceSampleBuffers > 0 && context->surfaceSamples > 1)
+    glEnable(GL_MULTISAMPLE);
+
   if ((context->maskTexture != 0 ||
        context->maskFramebuffer != 0 ||
        context->maskWidth > 0 ||
@@ -421,6 +426,8 @@ static void shResizeSurface(VGContext *context, VGint width, VGint height)
     glUniform2f(context->locationDraw.maskSurfaceSize,
                 (GLfloat)width, (GLfloat)height);
     glUniform2f(context->locationDraw.blendSurfaceSize,
+                (GLfloat)width, (GLfloat)height);
+    glUniform2f(context->locationDraw.coverageSurfaceSize,
                 (GLfloat)width, (GLfloat)height);
     GL_CHECK_ERROR;
   }
@@ -457,6 +464,7 @@ static void shDeinitContextGL(VGContext *context)
   shDeinitMaskProgram(context);
   shDeinitPiplelineShaders();
   shDeinitRampShaders();
+  shDeinitCoverageShaders();
   shDeinitImageFilterShaders();
 
   if (context->maskTexture != 0) {
@@ -483,6 +491,36 @@ static void shDeinitContextGL(VGContext *context)
     glDeleteRenderbuffers(1, &context->renderToMaskStencil);
     context->renderToMaskStencil = 0;
   }
+
+  if (context->coverageTexture != 0) {
+    glDeleteTextures(1, &context->coverageTexture);
+    context->coverageTexture = 0;
+  }
+
+  if (context->coverageFramebuffer != 0) {
+    glDeleteFramebuffers(1, &context->coverageFramebuffer);
+    context->coverageFramebuffer = 0;
+  }
+  context->coverageWidth = 0;
+  context->coverageHeight = 0;
+
+  if (context->coverageSupersampleTexture != 0) {
+    glDeleteTextures(1, &context->coverageSupersampleTexture);
+    context->coverageSupersampleTexture = 0;
+  }
+
+  if (context->coverageSupersampleFramebuffer != 0) {
+    glDeleteFramebuffers(1, &context->coverageSupersampleFramebuffer);
+    context->coverageSupersampleFramebuffer = 0;
+  }
+
+  if (context->coverageSupersampleStencil != 0) {
+    glDeleteRenderbuffers(1, &context->coverageSupersampleStencil);
+    context->coverageSupersampleStencil = 0;
+  }
+  context->coverageSupersampleWidth = 0;
+  context->coverageSupersampleHeight = 0;
+  context->coverageSupersampleScale = 0;
 
   if (context->blendTexture != 0) {
     glDeleteTextures(1, &context->blendTexture);
@@ -522,6 +560,7 @@ static VGboolean shInitContextGL(VGContext *context, VGint width, VGint height)
     return VG_FALSE;
   shInitPiplelineShaders();
   shInitRampShaders();
+  shInitCoverageShaders();
   shInitImageFilterShaders();
   context->glInitialized = VG_TRUE;
   shResizeSurface(context, width, height);
@@ -638,6 +677,8 @@ void VGContext_ctor(VGContext *c)
   /* Surface info */
   c->surfaceWidth = 0;
   c->surfaceHeight = 0;
+  c->surfaceSampleBuffers = 0;
+  c->surfaceSamples = 0;
   
   /* GetString info */
   strncpy(c->vendor, "Takuma Hayashi", sizeof(c->vendor));
@@ -666,6 +707,16 @@ void VGContext_ctor(VGContext *c)
   c->renderToMaskTexture = 0;
   c->renderToMaskFramebuffer = 0;
   c->renderToMaskStencil = 0;
+  c->coverageWidth = 0;
+  c->coverageHeight = 0;
+  c->coverageTexture = 0;
+  c->coverageFramebuffer = 0;
+  c->coverageSupersampleWidth = 0;
+  c->coverageSupersampleHeight = 0;
+  c->coverageSupersampleScale = 0;
+  c->coverageSupersampleTexture = 0;
+  c->coverageSupersampleFramebuffer = 0;
+  c->coverageSupersampleStencil = 0;
   
   /* Stroke parameters */
   c->strokeLineWidth = 1.0f;
@@ -718,6 +769,7 @@ void VGContext_ctor(VGContext *c)
   c->progDraw = 0;
   c->progColorRamp = 0;
   c->progMask = 0;
+  c->progCoverage = 0;
   c->progImageFilter = 0;
   c->filterFramebuffer = 0;
   c->filterScratchTexture = 0;

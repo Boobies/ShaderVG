@@ -28,6 +28,15 @@ static int expect_rgba_at(const VGubyte *data,
                           VGubyte a,
                           const char *message);
 
+static int expect_channel_between(const VGubyte *data,
+                                  VGint stride,
+                                  VGint x,
+                                  VGint y,
+                                  int channel,
+                                  VGubyte minValue,
+                                  VGubyte maxValue,
+                                  const char *message);
+
 static int fail_egl(const char *message)
 {
   fprintf(stderr, "%s (EGL error 0x%04x)\n", message, eglGetError());
@@ -2443,6 +2452,203 @@ cleanup:
   return result;
 }
 
+static int run_rendering_quality_antialias_test(unsigned char *pixels,
+                                                EGLint width, EGLint height)
+{
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGPath rect = VG_INVALID_HANDLE;
+  VGPath fullRect = VG_INVALID_HANDLE;
+  VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat red[] = {1.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat green[] = {0.0f, 1.0f, 0.0f, 1.0f};
+  VGint edgeX = 16;
+  VGint fullX = 17;
+  VGint sampleY = 32;
+  int result = 0;
+
+  paint = vgCreatePaint();
+  rect = create_rect_path(32.0f, 32.0f);
+  fullRect = create_rect_path((VGfloat)width, (VGfloat)height);
+  if (paint == VG_INVALID_HANDLE ||
+      rect == VG_INVALID_HANDLE ||
+      fullRect == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG antialiasing test setup failed");
+    goto cleanup;
+  }
+
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSetPaint(paint, VG_FILL_PATH);
+
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, red);
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_NONANTIALIASED);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgTranslate(16.30f, 16.0f);
+  vgDrawPath(rect, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888,
+               0, 0, width, height);
+  if (expect_channel_between(pixels, width * 4, edgeX, sampleY, 0,
+                             248, 255,
+                             "OpenVG non-antialiased edge was not binary")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_FASTER);
+  vgClear(0, 0, width, height);
+  vgLoadIdentity();
+  vgTranslate(16.30f, 16.0f);
+  vgDrawPath(rect, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888,
+               0, 0, width, height);
+  if (expect_channel_between(pixels, width * 4, edgeX, sampleY, 0,
+                             32, 224,
+                             "OpenVG faster antialiasing did not produce partial coverage") ||
+      expect_channel_between(pixels, width * 4, fullX, sampleY, 0,
+                             248, 255,
+                             "OpenVG faster antialiasing lost full interior coverage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_BETTER);
+  vgClear(0, 0, width, height);
+  vgLoadIdentity();
+  vgTranslate(16.30f, 16.0f);
+  vgDrawPath(rect, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888,
+               0, 0, width, height);
+  if (expect_channel_between(pixels, width * 4, edgeX, sampleY, 0,
+                             32, 240,
+                             "OpenVG better antialiasing did not produce partial coverage") ||
+      expect_channel_between(pixels, width * 4, fullX, sampleY, 0,
+                             248, 255,
+                             "OpenVG better antialiasing lost full interior coverage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, green);
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgLoadIdentity();
+  vgRenderToMask(fullRect, VG_FILL_PATH, VG_CLEAR_MASK);
+  vgLoadIdentity();
+  vgTranslate(16.30f, 16.0f);
+  vgRenderToMask(rect, VG_FILL_PATH, VG_SET_MASK);
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MASKING, VG_TRUE);
+  vgLoadIdentity();
+  vgDrawPath(fullRect, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888,
+               0, 0, width, height);
+  if (expect_channel_between(pixels, width * 4, edgeX, sampleY, 1,
+                             32, 240,
+                             "OpenVG vgRenderToMask antialiasing did not produce partial mask coverage") ||
+      expect_channel_between(pixels, width * 4, fullX, sampleY, 1,
+                             248, 255,
+                             "OpenVG vgRenderToMask antialiasing lost full mask coverage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (expect_no_vg_error("OpenVG antialiasing test produced an unexpected error"))
+    result = 1;
+
+cleanup:
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_BETTER);
+  if (fullRect != VG_INVALID_HANDLE)
+    vgDestroyPath(fullRect);
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  return result;
+}
+
+static int run_user_fragment_antialias_coverage_test(unsigned char *pixels,
+                                                     EGLint width,
+                                                     EGLint height)
+{
+  static const VGbyte fragmentShader[] =
+    "void shMain(){\n"
+    "    fragColor = vec4(0.0, 1.0, 0.0, 1.0);\n"
+    "}\n";
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGPath rect = VG_INVALID_HANDLE;
+  VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat red[] = {1.0f, 0.0f, 0.0f, 1.0f};
+  VGint fullX = 17;
+  VGint sampleY = 32;
+  int result = 0;
+
+  vgShaderSourceSH(VG_VERTEX_SHADER_SH, NULL);
+  vgShaderSourceSH(VG_FRAGMENT_SHADER_SH, fragmentShader);
+  vgCompileShaderSH();
+
+  paint = vgCreatePaint();
+  rect = create_rect_path(32.0f, 32.0f);
+  if (paint == VG_INVALID_HANDLE || rect == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG user fragment antialiasing setup failed");
+    goto cleanup;
+  }
+
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_BETTER);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, red);
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgTranslate(16.30f, 16.0f);
+  vgDrawPath(rect, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888,
+               0, 0, width, height);
+
+  if (expect_channel_between(pixels, width * 4, fullX, sampleY, 1,
+                             248, 255,
+                             "OpenVG antialiasing coverage used the user fragment shader") ||
+      expect_channel_between(pixels, width * 4, fullX, sampleY, 0,
+                             0, 8,
+                             "OpenVG user fragment shader did not control final color")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (expect_no_vg_error("OpenVG user fragment antialiasing test failed"))
+    result = 1;
+
+cleanup:
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_BETTER);
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  vgShaderSourceSH(VG_VERTEX_SHADER_SH, NULL);
+  vgShaderSourceSH(VG_FRAGMENT_SHADER_SH, NULL);
+  vgCompileShaderSH();
+  return result;
+}
+
 static int expect_hardware_query(const char *message,
                                  VGHardwareQueryType key,
                                  VGint setting)
@@ -2488,6 +2694,28 @@ static int run_hardware_query_test(void)
     return 1;
 
   return 0;
+}
+
+static int expect_channel_between(const VGubyte *data,
+                                  VGint stride,
+                                  VGint x,
+                                  VGint y,
+                                  int channel,
+                                  VGubyte minValue,
+                                  VGubyte maxValue,
+                                  const char *message)
+{
+  size_t sample = (size_t)y * (size_t)stride + (size_t)x * 4u +
+                  (size_t)channel;
+  VGubyte value = data[sample];
+
+  if (value >= minValue && value <= maxValue)
+    return 0;
+
+  fprintf(stderr,
+          "%s (channel %d at %d,%d got %u, expected %u..%u)\n",
+          message, channel, x, y, value, minValue, maxValue);
+  return 1;
 }
 
 static int warp_close(VGfloat a, VGfloat b)
@@ -2828,6 +3056,11 @@ int main(void)
         result = run_src_over_alpha_test(pixels, width, height);
       if (result == 0)
         result = run_core_blend_mode_test(pixels, width, height);
+      if (result == 0)
+        result = run_rendering_quality_antialias_test(pixels, width, height);
+      if (result == 0)
+        result = run_user_fragment_antialias_coverage_test(pixels,
+                                                           width, height);
       if (result == 0)
         result = run_shared_context_test(display, config, surface,
                                          context, pixels, width, height);

@@ -82,6 +82,9 @@ void testCallback(TestCallbackType type, CallbackFunc func);
 void testInit(int argc, char **argv,
               int w, int h, const char *title);
 
+void testInitSingleSample(int argc, char **argv,
+                          int w, int h, const char *title);
+
 void testRun();
 
 VGint testWidth();

@@ -353,11 +353,54 @@ EGLConfig testEGLConfig()
   return eglConfig;
 }
 
-void testInit(int argc, char **argv,
-              int w, int h, const char *title)
+static EGLBoolean testChooseEGLConfig(const EGLint *attribs,
+                                      EGLConfig *config,
+                                      EGLint *error)
+{
+  EGLConfig chosenConfig = NULL;
+  EGLint chosenCount = 0;
+
+  if (!eglChooseConfig(eglDisplay, attribs,
+                       &chosenConfig, 1, &chosenCount)) {
+    if (error)
+      *error = eglGetError();
+    return EGL_FALSE;
+  }
+
+  if (chosenCount < 1) {
+    if (error)
+      *error = EGL_SUCCESS;
+    return EGL_FALSE;
+  }
+
+  *config = chosenConfig;
+  if (error)
+    *error = EGL_SUCCESS;
+
+  return EGL_TRUE;
+}
+
+static void testInitWithSamples(int argc, char **argv,
+                                int w, int h, const char *title,
+                                VGboolean preferMultisample)
 {
   int i;
-  EGLint major, minor, numConfigs, nativeVisual;
+  EGLint major, minor, nativeVisual;
+  EGLint chooseError = EGL_SUCCESS;
+  EGLint sampleBuffers = 0;
+  EGLint samples = 0;
+  EGLint msaaConfigAttribs[] = {
+    EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+    EGL_RENDERABLE_TYPE, EGL_OPENVG_BIT,
+    EGL_RED_SIZE, 8,
+    EGL_GREEN_SIZE, 8,
+    EGL_BLUE_SIZE, 8,
+    EGL_ALPHA_SIZE, 8,
+    EGL_STENCIL_SIZE, 8,
+    EGL_SAMPLE_BUFFERS, 1,
+    EGL_SAMPLES, 4,
+    EGL_NONE
+  };
   EGLint configAttribs[] = {
     EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
     EGL_RENDERABLE_TYPE, EGL_OPENVG_BIT,
@@ -386,10 +429,16 @@ void testInit(int argc, char **argv,
 
   if (eglDisplay == EGL_NO_DISPLAY ||
       !eglInitialize(eglDisplay, &major, &minor) ||
-      !eglBindAPI(EGL_OPENVG_API) ||
-      !eglChooseConfig(eglDisplay, configAttribs, &eglConfig, 1, &numConfigs) ||
-      numConfigs < 1) {
+      !eglBindAPI(EGL_OPENVG_API)) {
     fprintf(stderr, "Failed to initialize EGL/OpenVG path (EGL error 0x%x)\n", eglGetError());
+    exit(EXIT_FAILURE);
+  }
+
+  if ((!preferMultisample ||
+       !testChooseEGLConfig(msaaConfigAttribs, &eglConfig, &chooseError)) &&
+      !testChooseEGLConfig(configAttribs, &eglConfig, &chooseError)) {
+    fprintf(stderr, "Failed to choose an EGL/OpenVG config (EGL error 0x%x)\n",
+            chooseError);
     exit(EXIT_FAILURE);
   }
 
@@ -454,6 +503,13 @@ void testInit(int argc, char **argv,
 
   printf("EGL %d.%d client APIs: %s\n", major, minor,
          eglQueryString(eglDisplay, EGL_CLIENT_APIS));
+  if (!eglGetConfigAttrib(eglDisplay, eglConfig,
+                          EGL_SAMPLE_BUFFERS, &sampleBuffers))
+    sampleBuffers = 0;
+  if (!eglGetConfigAttrib(eglDisplay, eglConfig, EGL_SAMPLES, &samples))
+    samples = 0;
+  printf("EGL surface samples: buffers=%d samples=%d\n",
+         sampleBuffers, samples);
   printf("OpenGL renderer: %s\n", glGetString(GL_RENDERER));
   printf("OpenGL version: %s\n", glGetString(GL_VERSION));
   printf("GLSL version: %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
@@ -465,6 +521,18 @@ void testInit(int argc, char **argv,
   
   for (i=0; i<TEST_CALLBACK_COUNT; ++i)
     callbacks[i] = NULL;
+}
+
+void testInit(int argc, char **argv,
+              int w, int h, const char *title)
+{
+  testInitWithSamples(argc, argv, w, h, title, VG_TRUE);
+}
+
+void testInitSingleSample(int argc, char **argv,
+                          int w, int h, const char *title)
+{
+  testInitWithSamples(argc, argv, w, h, title, VG_FALSE);
 }
 
 void testRun()

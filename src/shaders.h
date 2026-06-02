@@ -27,6 +27,9 @@ void shDeinitPiplelineShaders(void);
 void shInitRampShaders(void);
 void shDeinitRampShaders(void);
 
+void shInitCoverageShaders(void);
+void shDeinitCoverageShaders(void);
+
 void shInitImageFilterShaders(void);
 void shDeinitImageFilterShaders(void);
 

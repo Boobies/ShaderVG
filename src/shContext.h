@@ -75,6 +75,8 @@ typedef struct VGContext
   /* Surface info supplied by the EGL frontend */
   SHint surfaceWidth;
   SHint surfaceHeight;
+  SHint surfaceSampleBuffers;
+  SHint surfaceSamples;
   
   /* GetString info */
   char vendor[256];
@@ -103,6 +105,16 @@ typedef struct VGContext
   GLuint             renderToMaskTexture;
   GLuint             renderToMaskFramebuffer;
   GLuint             renderToMaskStencil;
+  SHint              coverageWidth;
+  SHint              coverageHeight;
+  GLuint             coverageTexture;
+  GLuint             coverageFramebuffer;
+  SHint              coverageSupersampleWidth;
+  SHint              coverageSupersampleHeight;
+  SHint              coverageSupersampleScale;
+  GLuint             coverageSupersampleTexture;
+  GLuint             coverageSupersampleFramebuffer;
+  GLuint             coverageSupersampleStencil;
   
 	/* Stroke parameters */
   SHfloat           strokeLineWidth;
@@ -175,7 +187,18 @@ typedef struct VGContext
       GLint blendMode      ;
       GLint blendSampler   ;
       GLint blendSurfaceSize;
+      GLint coverageEnabled;
+      GLint coverageSampler;
+      GLint coverageSurfaceSize;
+      GLint coveragePass;
   } locationDraw;
+
+  struct {
+      GLint pos;
+      GLint targetSize;
+      GLint sourceSampler;
+      GLint scale;
+  } locationCoverage;
 
   struct {
       GLint pos;
@@ -226,6 +249,7 @@ typedef struct VGContext
   GLuint progDraw;
   GLuint progColorRamp;
   GLuint progMask;
+  GLuint progCoverage;
   GLuint progImageFilter;
   GLuint filterFramebuffer;
   GLuint filterScratchTexture;
