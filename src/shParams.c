@@ -21,6 +21,7 @@
 #define VG_API_EXPORT
 #include <stdio.h>
 #include <VG/openvg.h>
+#include <VG/vgext.h>
 #include "shContext.h"
 
 /*----------------------------------------------------
@@ -421,6 +422,9 @@ static void shSet(VGContext *context, VGParamType type, SHint count,
   case VG_MAX_IMAGE_BYTES:
   case VG_MAX_FLOAT:
   case VG_MAX_GAUSSIAN_STD_DEVIATION:
+  case VG_MAX_AVERAGE_BLUR_DIMENSION_KHR:
+  case VG_AVERAGE_BLUR_DIMENSION_RESOLUTION_KHR:
+  case VG_MAX_AVERAGE_BLUR_ITERATIONS_KHR:
     /* Read-only */ break;
     
   default:
@@ -706,6 +710,22 @@ static void shGet(VGContext *context, VGParamType type, SHint count, void *value
     SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
     shFloatToParam(SH_MAX_GAUSSIAN_STD_DEVIATION, count, values, floats, 0);
     break;
+
+  case VG_MAX_AVERAGE_BLUR_DIMENSION_KHR:
+    SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    shFloatToParam(SH_MAX_AVERAGE_BLUR_DIMENSION, count, values, floats, 0);
+    break;
+
+  case VG_AVERAGE_BLUR_DIMENSION_RESOLUTION_KHR:
+    SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    shIntToParam(SH_AVERAGE_BLUR_DIMENSION_RESOLUTION,
+                 count, values, floats, 0);
+    break;
+
+  case VG_MAX_AVERAGE_BLUR_ITERATIONS_KHR:
+    SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    shIntToParam(SH_MAX_AVERAGE_BLUR_ITERATIONS, count, values, floats, 0);
+    break;
     
   default:
     /* Invalid VGParamType */
@@ -824,6 +844,9 @@ VG_API_CALL VGint vgGetVectorSize(VGParamType type)
   case VG_MAX_IMAGE_BYTES:
   case VG_MAX_FLOAT:
   case VG_MAX_GAUSSIAN_STD_DEVIATION:
+  case VG_MAX_AVERAGE_BLUR_DIMENSION_KHR:
+  case VG_AVERAGE_BLUR_DIMENSION_RESOLUTION_KHR:
+  case VG_MAX_AVERAGE_BLUR_ITERATIONS_KHR:
     retval = 1;
     break;
     

@@ -684,7 +684,8 @@ void VGContext_ctor(VGContext *c)
   strncpy(c->vendor, "Takuma Hayashi", sizeof(c->vendor));
   strncpy(c->renderer, "ShaderVG", sizeof(c->renderer));
   strncpy(c->version, "1.0.0", sizeof(c->version));
-  strncpy(c->extensions, "", sizeof(c->extensions));
+  strncpy(c->extensions, "VG_KHR_iterative_average_blur",
+          sizeof(c->extensions));
   
   /* Mode settings */
   c->matrixMode = VG_MATRIX_PATH_USER_TO_SURFACE;

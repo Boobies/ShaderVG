@@ -265,6 +265,46 @@ vguComputeWarpQuadToQuad   | FULLY implemented
         
 ## Extensions
 
+### OpenVG registry extension status
+
+The Khronos OpenVG registry lists these OpenVG extensions:
+https://registry.khronos.org/OpenVG/
+
+ShaderVG advertises only extensions marked as fully implemented through
+`vgGetString(VG_EXTENSIONS)`.
+
+Extension/API                         | status
+------------------------------------- | ---------------------
+VG_KHR_EGL_image                      | NOT implemented
+vgCreateEGLImageTargetKHR             | NOT implemented
+VG_KHR_iterative_average_blur         | FULLY implemented
+vgIterativeAverageBlurKHR             | FULLY implemented
+VG_KHR_advanced_blending              | NOT implemented
+VG_BLEND_*_KHR advanced blend modes   | NOT implemented
+VG_NDS_paint_generation               | NOT implemented
+VG_PAINT_COLOR_RAMP_LINEAR_NDS        | NOT implemented
+VG_COLOR_MATRIX_NDS                   | NOT implemented
+VG_PAINT_COLOR_TRANSFORM_LINEAR_NDS   | NOT implemented
+VG_DRAW_IMAGE_COLOR_MATRIX_NDS        | NOT implemented
+VG_KHR_parametric_filter              | NOT implemented
+vgParametricFilterKHR                 | NOT implemented
+vguDropShadowKHR                      | NOT implemented
+vguGlowKHR                            | NOT implemented
+vguBevelKHR                           | NOT implemented
+vguGradientGlowKHR                    | NOT implemented
+vguGradientBevelKHR                   | NOT implemented
+VG_NDS_projective_geometry            | NOT implemented
+vgProjectiveMatrixNDS                 | NOT implemented
+vguTransformClipLineNDS               | NOT implemented
+VG_CLIP_*_NDS state                   | NOT implemented
+VG_RQUAD_TO_*_NDS path commands       | NOT implemented
+VG_RCUBIC_TO_*_NDS path commands      | NOT implemented
+VG_KHR_EGL_sync                       | NOT implemented
+eglCreateSyncKHR                      | NOT implemented
+eglDestroySyncKHR                     | NOT implemented
+eglClientWaitSyncKHR                  | NOT implemented
+eglGetSyncAttribKHR                   | NOT implemented
+
 ### EGL OpenVG context binding
 
 ShaderVG clients create and bind OpenVG contexts through EGL:

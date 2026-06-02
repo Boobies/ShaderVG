@@ -20,6 +20,7 @@
 
 #define VG_API_EXPORT
 #include <VG/openvg.h>
+#include <VG/vgext.h>
 #include "shImage.h"
 #include "shContext.h"
 #include <string.h>
@@ -3734,6 +3735,83 @@ separable_out_of_memory:
   VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 }
 
+static VGboolean shImageFilterRunFloatSeparable(VGContext *context,
+                                                SHImage *dst,
+                                                SHImage *src,
+                                                const GLfloat *kernelX,
+                                                SHint kernelWidth,
+                                                SHint shiftX,
+                                                const GLfloat *kernelY,
+                                                SHint kernelHeight,
+                                                SHint shiftY,
+                                                VGTilingMode tilingMode,
+                                                VGbitfield channelMask)
+{
+  GLuint kernelXTexture = 0;
+  GLuint kernelYTexture = 0;
+  SHint width, height;
+  SHImageFilterPass pass;
+  VGboolean success = VG_FALSE;
+
+  if (!context || !dst || !src ||
+      !kernelX || !kernelY ||
+      kernelWidth <= 0 || kernelHeight <= 0)
+    return VG_FALSE;
+
+  if (!shImageFilterCreateFloatKernelTexture(kernelX,
+                                             kernelWidth,
+                                             &kernelXTexture) ||
+      !shImageFilterCreateFloatKernelTexture(kernelY,
+                                             kernelHeight,
+                                             &kernelYTexture) ||
+      !shImageFilterEnsureScratch(context, src->width, src->height))
+    goto cleanup;
+
+  shImageFilterInitPass(context, src, NULL, &pass);
+  pass.mode = SH_IMAGE_FILTER_SEPARABLE_X;
+  pass.kernelWidth = kernelWidth;
+  pass.kernelHeight = 1;
+  pass.shiftX = shiftX;
+  pass.tilingMode = tilingMode;
+  pass.dstStorageMode = SH_IMAGE_FILTER_STORE_FLOAT;
+
+  if (!shImageFilterRunPass(context, NULL, context->filterScratchTexture,
+                            src->width, src->height,
+                            src->texture, kernelXTexture,
+                            VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA,
+                            &pass))
+    goto cleanup;
+
+  width = SH_MIN(dst->width, src->width);
+  height = SH_MIN(dst->height, src->height);
+  shImageFilterInitPass(context, src, dst, &pass);
+  pass.mode = SH_IMAGE_FILTER_SEPARABLE_Y;
+  pass.sourceWidth = src->width;
+  pass.sourceHeight = src->height;
+  pass.kernelWidth = 1;
+  pass.kernelHeight = kernelHeight;
+  pass.shiftY = shiftY;
+  pass.tilingMode = tilingMode;
+  pass.premultiplyInput = VG_FALSE;
+
+  if (!shImageFilterRunPass(context, dst, dst->texture,
+                            width, height,
+                            context->filterScratchTexture,
+                            kernelYTexture,
+                            channelMask,
+                            &pass))
+    goto cleanup;
+
+  success = VG_TRUE;
+
+cleanup:
+  if (kernelYTexture != 0)
+    glDeleteTextures(1, &kernelYTexture);
+  if (kernelXTexture != 0)
+    glDeleteTextures(1, &kernelXTexture);
+  return success;
+}
+
 VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
                                 VGfloat stdDeviationX,
                                 VGfloat stdDeviationY,
@@ -3742,13 +3820,9 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
   SHImage *s, *d;
   SHfloat *kernelX = NULL;
   SHfloat *kernelY = NULL;
-  GLuint kernelXTexture = 0;
-  GLuint kernelYTexture = 0;
   SHint radiusX, radiusY;
   SHint sizeX, sizeY;
-  SHint width, height;
   SHint k;
-  SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
@@ -3804,62 +3878,191 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
       kernelY[k] /= sumY;
   }
 
-  if (!shImageFilterCreateFloatKernelTexture(kernelX,
-                                             sizeX,
-                                             &kernelXTexture) ||
-      !shImageFilterCreateFloatKernelTexture(kernelY,
-                                             sizeY,
-                                             &kernelYTexture) ||
-      !shImageFilterEnsureScratch(context, s->width, s->height))
+  if (!shImageFilterRunFloatSeparable(context,
+                                      d,
+                                      s,
+                                      kernelX,
+                                      sizeX,
+                                      radiusX,
+                                      kernelY,
+                                      sizeY,
+                                      radiusY,
+                                      tilingMode,
+                                      context->filterChannelMask))
     goto gaussian_out_of_memory;
 
-  shImageFilterInitPass(context, s, NULL, &pass);
-  pass.mode = SH_IMAGE_FILTER_GAUSSIAN_X;
-  pass.kernelWidth = sizeX;
-  pass.kernelHeight = 1;
-  pass.shiftX = radiusX;
-  pass.tilingMode = tilingMode;
-  pass.dstStorageMode = SH_IMAGE_FILTER_STORE_FLOAT;
-
-  if (!shImageFilterRunPass(context, NULL, context->filterScratchTexture,
-                            s->width, s->height,
-                            s->texture, kernelXTexture,
-                            VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA,
-                            &pass))
-    goto gaussian_out_of_memory;
-
-  width = SH_MIN(d->width, s->width);
-  height = SH_MIN(d->height, s->height);
-  shImageFilterInitPass(context, s, d, &pass);
-  pass.mode = SH_IMAGE_FILTER_GAUSSIAN_Y;
-  pass.sourceWidth = s->width;
-  pass.sourceHeight = s->height;
-  pass.kernelWidth = 1;
-  pass.kernelHeight = sizeY;
-  pass.shiftY = radiusY;
-  pass.tilingMode = tilingMode;
-  pass.premultiplyInput = VG_FALSE;
-
-  if (!shImageFilterRunPass(context, d, d->texture,
-                            width, height,
-                            context->filterScratchTexture,
-                            kernelYTexture,
-                            context->filterChannelMask,
-                            &pass))
-    goto gaussian_out_of_memory;
-
-  glDeleteTextures(1, &kernelYTexture);
-  glDeleteTextures(1, &kernelXTexture);
   free(kernelY);
   free(kernelX);
   d->gpuDataDirty = VG_TRUE;
   VG_RETURN(VG_NO_RETVAL);
 
 gaussian_out_of_memory:
-  if (kernelYTexture != 0)
-    glDeleteTextures(1, &kernelYTexture);
-  if (kernelXTexture != 0)
-    glDeleteTextures(1, &kernelXTexture);
+  free(kernelY);
+  free(kernelX);
+  VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+}
+
+static VGboolean shImageFilterCreateIdentityKernel(GLfloat **kernel,
+                                                   SHint *kernelSize,
+                                                   SHint *shift)
+{
+  *kernel = (GLfloat*)malloc(sizeof(GLfloat));
+  if (!*kernel)
+    return VG_FALSE;
+
+  (*kernel)[0] = 1.0f;
+  *kernelSize = 1;
+  *shift = 0;
+  return VG_TRUE;
+}
+
+static VGboolean shImageFilterCreateAverageKernel(VGfloat dim,
+                                                  VGuint iterative,
+                                                  GLfloat **kernel,
+                                                  SHint *kernelSize,
+                                                  SHint *shift)
+{
+  GLfloat *tap = NULL;
+  GLfloat *current = NULL;
+  SHint tapRadius;
+  SHint tapSize;
+  SHint currentSize;
+  SHint currentShift;
+  VGuint pass;
+  SHint i;
+
+  *kernel = NULL;
+  *kernelSize = 0;
+  *shift = 0;
+
+  if (iterative == 0 || dim <= 1.0f)
+    return shImageFilterCreateIdentityKernel(kernel, kernelSize, shift);
+
+  {
+    SHfloat radius = (dim - 1.0f) * 0.5f;
+    SHfloat fraction = radius - SH_FLOOR(radius);
+    tapRadius = (SHint)SH_FLOOR(1.0f + radius);
+    tapSize = tapRadius * 2 + 1;
+
+    tap = (GLfloat*)malloc((size_t)tapSize * sizeof(GLfloat));
+    if (!tap)
+      return VG_FALSE;
+
+    for (i=0; i<tapSize; ++i) {
+      SHint offset = i - tapRadius;
+      SHfloat weight = 1.0f;
+
+      if (offset == -tapRadius || offset == tapRadius)
+        weight = fraction;
+      tap[i] = weight / dim;
+    }
+  }
+
+  current = (GLfloat*)malloc(sizeof(GLfloat));
+  if (!current) {
+    free(tap);
+    return VG_FALSE;
+  }
+  current[0] = 1.0f;
+  currentSize = 1;
+  currentShift = 0;
+
+  for (pass=0; pass<iterative; ++pass) {
+    SHint nextSize = currentSize + tapSize - 1;
+    GLfloat *next = (GLfloat*)calloc((size_t)nextSize, sizeof(GLfloat));
+    SHint j;
+
+    if (!next) {
+      free(current);
+      free(tap);
+      return VG_FALSE;
+    }
+
+    for (i=0; i<currentSize; ++i)
+      for (j=0; j<tapSize; ++j)
+        next[i + j] += current[i] * tap[j];
+
+    free(current);
+    current = next;
+    currentSize = nextSize;
+    currentShift += tapRadius;
+  }
+
+  free(tap);
+  *kernel = current;
+  *kernelSize = currentSize;
+  *shift = currentShift;
+  return VG_TRUE;
+}
+
+VG_API_CALL void vgIterativeAverageBlurKHR(VGImage dst,
+                                           VGImage src,
+                                           VGfloat dimX,
+                                           VGfloat dimY,
+                                           VGuint iterative,
+                                           VGTilingMode tilingMode)
+{
+  SHImage *s, *d;
+  GLfloat *kernelX = NULL;
+  GLfloat *kernelY = NULL;
+  SHint kernelWidth = 0;
+  SHint kernelHeight = 0;
+  SHint shiftX = 0;
+  SHint shiftY = 0;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
+                   !shIsValidImage(context, dst),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode) ||
+                   SH_ISNAN(dimX) ||
+                   SH_ISNAN(dimY) ||
+                   dimX < 0.0f ||
+                   dimY < 0.0f ||
+                   dimX > SH_MAX_AVERAGE_BLUR_DIMENSION ||
+                   dimY > SH_MAX_AVERAGE_BLUR_DIMENSION ||
+                   iterative > SH_MAX_AVERAGE_BLUR_ITERATIONS,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  s = (SHImage*)src;
+  d = (SHImage*)dst;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
+                   shImageIsRenderTarget(d),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  if (!shImageFilterCreateAverageKernel(dimX,
+                                        iterative,
+                                        &kernelX,
+                                        &kernelWidth,
+                                        &shiftX) ||
+      !shImageFilterCreateAverageKernel(dimY,
+                                        iterative,
+                                        &kernelY,
+                                        &kernelHeight,
+                                        &shiftY))
+    goto average_out_of_memory;
+
+  if (!shImageFilterRunFloatSeparable(context,
+                                      d,
+                                      s,
+                                      kernelX,
+                                      kernelWidth,
+                                      shiftX,
+                                      kernelY,
+                                      kernelHeight,
+                                      shiftY,
+                                      tilingMode,
+                                      context->filterChannelMask))
+    goto average_out_of_memory;
+
+  free(kernelY);
+  free(kernelX);
+  d->gpuDataDirty = VG_TRUE;
+  VG_RETURN(VG_NO_RETVAL);
+
+average_out_of_memory:
   free(kernelY);
   free(kernelX);
   VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);

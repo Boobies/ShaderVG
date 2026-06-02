@@ -14,6 +14,7 @@
 
 #include <EGL/egl.h>
 #include <VG/openvg.h>
+#include <VG/vgext.h>
 #include <VG/vgu.h>
 
 #define WARP_TEST_EPSILON 0.001f
@@ -731,7 +732,11 @@ static int run_image_filter_test(void)
   VGshort separableKernelX[] = {1, 0};
   VGshort separableKernelY[] = {1};
   VGfloat tileFill[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  const char *extensions;
   VGint maxKernelSize;
+  VGint maxAverageDimension;
+  VGint averageDimensionResolution;
+  VGint maxAverageIterations;
   size_t center;
   size_t adjacent;
   int i;
@@ -781,6 +786,39 @@ static int run_image_filter_test(void)
   if (expect_no_vg_error("OpenVG image filter limit query failed") ||
       maxKernelSize < 2) {
     fprintf(stderr, "OpenVG reported an unusable convolution kernel limit\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  extensions = (const char*)vgGetString(VG_EXTENSIONS);
+  if (!extensions ||
+      !strstr(extensions, "VG_KHR_iterative_average_blur")) {
+    fprintf(stderr,
+            "OpenVG did not advertise VG_KHR_iterative_average_blur\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  maxAverageDimension = vgGeti(VG_MAX_AVERAGE_BLUR_DIMENSION_KHR);
+  averageDimensionResolution =
+    vgGeti(VG_AVERAGE_BLUR_DIMENSION_RESOLUTION_KHR);
+  maxAverageIterations = vgGeti(VG_MAX_AVERAGE_BLUR_ITERATIONS_KHR);
+  if (expect_no_vg_error("OpenVG iterative average blur limit query failed") ||
+      maxAverageDimension < 128 ||
+      averageDimensionResolution != -1 ||
+      maxAverageIterations < 3) {
+    fprintf(stderr,
+            "OpenVG reported unusable iterative average blur limits\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  if (vgGetVectorSize(VG_MAX_AVERAGE_BLUR_DIMENSION_KHR) != 1 ||
+      vgGetVectorSize(VG_AVERAGE_BLUR_DIMENSION_RESOLUTION_KHR) != 1 ||
+      vgGetVectorSize(VG_MAX_AVERAGE_BLUR_ITERATIONS_KHR) != 1 ||
+      expect_no_vg_error("OpenVG iterative average blur vector size query failed")) {
+    fprintf(stderr,
+            "OpenVG reported the wrong iterative average blur vector size\n");
     result = 1;
     goto cleanup;
   }
@@ -935,6 +973,94 @@ static int run_image_filter_test(void)
   }
 
   vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
+
+  memset(sourceData, 0, sizeof(sourceData));
+  for (i=0; i<16; ++i)
+    set_rgba(sourceData, 4 * 4, i % 4, i / 4, 0, 0, 0, 255);
+  set_rgba(sourceData, 4 * 4, 1, 1, 255, 0, 0, 255);
+  vgImageSubData(source, sourceData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 4);
+
+  vgIterativeAverageBlurKHR(dest, source, 3.0f, 1.0f, 1, VG_TILE_PAD);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgIterativeAverageBlurKHR horizontal blur failed") ||
+      expect_rgba_at(readData, 4 * 4, 0, 1, 85, 0, 0, 255,
+                     "OpenVG iterative average blur did not spread left") ||
+      expect_rgba_at(readData, 4 * 4, 1, 1, 85, 0, 0, 255,
+                     "OpenVG iterative average blur produced the wrong center") ||
+      expect_rgba_at(readData, 4 * 4, 2, 1, 85, 0, 0, 255,
+                     "OpenVG iterative average blur did not spread right") ||
+      expect_rgba_at(readData, 4 * 4, 3, 1, 0, 0, 0, 255,
+                     "OpenVG iterative average blur spread too far")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgIterativeAverageBlurKHR(dest, source, 1.0f, 3.0f, 1, VG_TILE_PAD);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgIterativeAverageBlurKHR vertical blur failed") ||
+      expect_rgba_at(readData, 4 * 4, 1, 0, 85, 0, 0, 255,
+                     "OpenVG iterative average blur did not spread down") ||
+      expect_rgba_at(readData, 4 * 4, 1, 2, 85, 0, 0, 255,
+                     "OpenVG iterative average blur did not spread up")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgIterativeAverageBlurKHR(dest, source, 1.0f, 1.0f, 0, VG_TILE_PAD);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgIterativeAverageBlurKHR identity blur failed") ||
+      expect_rgba_at(readData, 4 * 4, 1, 1, 255, 0, 0, 255,
+                     "OpenVG iterative average blur did not preserve identity") ||
+      expect_rgba_at(readData, 4 * 4, 0, 1, 0, 0, 0, 255,
+                     "OpenVG iterative average identity blur modified neighbors")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgIterativeAverageBlurKHR(dest, source, -1.0f, 1.0f, 1, VG_TILE_PAD);
+  if (expect_vg_error("OpenVG accepted a negative iterative average blur dimension",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgIterativeAverageBlurKHR(dest, source,
+                            (VGfloat)maxAverageDimension + 1.0f,
+                            1.0f, 1, VG_TILE_PAD);
+  if (expect_vg_error("OpenVG accepted an oversized iterative average blur dimension",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgIterativeAverageBlurKHR(dest, source, 1.0f, 1.0f,
+                            (VGuint)maxAverageIterations + 1u,
+                            VG_TILE_PAD);
+  if (expect_vg_error("OpenVG accepted too many iterative average blur iterations",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgIterativeAverageBlurKHR(dest, source, 1.0f, 1.0f, 1,
+                            (VGTilingMode)0x1234);
+  if (expect_vg_error("OpenVG accepted an invalid iterative average blur tiling mode",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgIterativeAverageBlurKHR(source, source, 1.0f, 1.0f, 1,
+                            VG_TILE_PAD);
+  if (expect_vg_error("OpenVG accepted overlapping iterative average blur operands",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
 
   vgGaussianBlur(dest, source, 0.0f, 1.0f, VG_TILE_PAD);
   if (expect_vg_error("OpenVG accepted zero Gaussian blur deviation",

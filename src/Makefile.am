@@ -36,4 +36,5 @@ libShaderVGEGL_la_LIBADD = libOpenVG.la @DLOPEN_LIBS@
 VG_includedir = $(includedir)/VG
 VG_include_HEADERS =\
 	$(top_builddir)/include/VG/openvg.h\
-	$(top_builddir)/include/VG/vgu.h
+	$(top_builddir)/include/VG/vgu.h\
+	$(top_builddir)/include/VG/vgext.h
