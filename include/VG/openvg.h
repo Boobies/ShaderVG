@@ -21,7 +21,9 @@
 #ifndef SH_OPENVG_H
 #define SH_OPENVG_H
 
+#define OPENVG_VERSION_1_0	1
 #define OPENVG_VERSION_1_0_1	1
+#define OPENVG_VERSION_1_1	2
 
 /* Type definitions */
 /* TODO: we can't use config.h in this header so there

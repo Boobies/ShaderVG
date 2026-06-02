@@ -23,7 +23,7 @@
 #include "openvg.h"
 
 #define VGU_VERSION_1_0		1
-#define VGU_VERSION_1_0_1	1
+#define VGU_VERSION_1_1		2
 
 #ifndef VGU_API_CALL
 #define VGU_API_CALL VG_API_CALL
