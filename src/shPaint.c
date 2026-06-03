@@ -269,6 +269,55 @@ VG_API_CALL void vgSetPaint(VGPaint paint, VGbitfield paintModes)
   VG_RETURN(VG_NO_RETVAL);
 }
 
+static SHfloat shColorByteToFloat(SHuint32 value)
+{
+  return (SHfloat)(value & 0xffu) / 255.0f;
+}
+
+static SHuint32 shColorFloatToByte(SHfloat value)
+{
+  if (value <= 0.0f)
+    return 0u;
+  if (value >= 1.0f)
+    return 255u;
+  return (SHuint32)(value * 255.0f + 0.5f);
+}
+
+VG_API_CALL void vgSetColor(VGPaint paint, VGuint rgba)
+{
+  SHPaint *p;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidPaint(context, paint),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+
+  p = (SHPaint*)paint;
+  p->color.r = shColorByteToFloat(rgba >> 24);
+  p->color.g = shColorByteToFloat(rgba >> 16);
+  p->color.b = shColorByteToFloat(rgba >> 8);
+  p->color.a = shColorByteToFloat(rgba);
+
+  VG_RETURN(VG_NO_RETVAL);
+}
+
+VG_API_CALL VGuint vgGetColor(VGPaint paint)
+{
+  SHPaint *p;
+  VGuint rgba;
+  VG_GETCONTEXT(0);
+
+  VG_RETURN_ERR_IF(!shIsValidPaint(context, paint),
+                   VG_BAD_HANDLE_ERROR, 0);
+
+  p = (SHPaint*)paint;
+  rgba = shColorFloatToByte(p->color.r) << 24;
+  rgba |= shColorFloatToByte(p->color.g) << 16;
+  rgba |= shColorFloatToByte(p->color.b) << 8;
+  rgba |= shColorFloatToByte(p->color.a);
+
+  VG_RETURN(rgba);
+}
+
 VG_API_CALL void vgPaintPattern(VGPaint paint, VGImage pattern)
 {
   SHPaint *p;

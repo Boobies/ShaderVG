@@ -21,6 +21,7 @@
 #define VG_API_EXPORT
 #include <VG/openvg.h>
 #include <VG/vgu.h>
+#include <VG/vgext.h>
 #include "shDefs.h"
 #include "shContext.h"
 #include <math.h>
@@ -540,4 +541,330 @@ VGU_API_CALL VGUErrorCode vguComputeWarpQuadToQuad(VGfloat dx0, VGfloat dy0,
 
   shWarpCopy(matrix, quadToQuad);
   return VGU_NO_ERROR;
+}
+
+static VGUErrorCode shVguMapFilterError(void)
+{
+  VGErrorCode error = vgGetError();
+
+  if (error == VG_BAD_HANDLE_ERROR)
+    return VGU_BAD_HANDLE_ERROR;
+  if (error == VG_IMAGE_IN_USE_ERROR)
+    return VGU_IMAGE_IN_USE_ERROR;
+  if (error == VG_ILLEGAL_ARGUMENT_ERROR)
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
+  if (error == VG_OUT_OF_MEMORY_ERROR)
+    return VGU_OUT_OF_MEMORY_ERROR;
+  return VGU_NO_ERROR;
+}
+
+static VGPaint shVguCreateColorPaint(VGuint rgba)
+{
+  VGPaint paint = vgCreatePaint();
+
+  if (paint != VG_INVALID_HANDLE)
+    vgSetColor(paint, rgba);
+  return paint;
+}
+
+static VGPaint shVguCreateGradientPaint(VGuint stopsCount,
+                                        const VGfloat *stops)
+{
+  VGPaint paint = vgCreatePaint();
+
+  if (paint == VG_INVALID_HANDLE)
+    return paint;
+
+  vgSetParameterfv(paint, VG_PAINT_COLOR_RAMP_STOPS,
+                   (VGint)(stopsCount * 5u), stops);
+  vgSetParameteri(paint, VG_PAINT_COLOR_RAMP_SPREAD_MODE,
+                  VG_COLOR_RAMP_SPREAD_PAD);
+  vgSetParameteri(paint, VG_PAINT_TYPE,
+                  VG_PAINT_TYPE_LINEAR_GRADIENT);
+  vgSetParameteri(paint, VG_PAINT_COLOR_RAMP_PREMULTIPLIED,
+                  VG_FALSE);
+  return paint;
+}
+
+static void shVguFilterWithPaints(VGImage dst,
+                                  VGImage src,
+                                  VGfloat dimX,
+                                  VGfloat dimY,
+                                  VGuint iterative,
+                                  VGfloat strength,
+                                  VGfloat offsetX,
+                                  VGfloat offsetY,
+                                  VGbitfield filterFlags,
+                                  VGbitfield allowedQuality,
+                                  VGPaint highlightPaint,
+                                  VGPaint shadowPaint)
+{
+  VGint width = vgGetParameteri(src, VG_IMAGE_WIDTH);
+  VGint height = vgGetParameteri(src, VG_IMAGE_HEIGHT);
+  VGImage blur = vgCreateImage(VG_A_8, width, height, allowedQuality);
+
+  if (blur != VG_INVALID_HANDLE) {
+    vgIterativeAverageBlurKHR(blur, src, dimX, dimY, iterative, VG_TILE_PAD);
+    vgParametricFilterKHR(dst, src, blur, strength,
+                          offsetX, offsetY, filterFlags,
+                          highlightPaint, shadowPaint);
+    vgDestroyImage(blur);
+  }
+}
+
+static VGUErrorCode shVguCheckStops(VGuint stopsCount,
+                                    const VGfloat *stops)
+{
+  if (stopsCount > (VGuint)(SH_MAX_INT / 5))
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
+  if (stopsCount > 0 && !stops)
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
+  return VGU_NO_ERROR;
+}
+
+VGU_API_CALL VGUErrorCode vguDropShadowKHR(VGImage dst,
+                                           VGImage src,
+                                           VGfloat dimX,
+                                           VGfloat dimY,
+                                           VGuint iterative,
+                                           VGfloat strength,
+                                           VGfloat distance,
+                                           VGfloat angle,
+                                           VGbitfield filterFlags,
+                                           VGbitfield allowedQuality,
+                                           VGuint shadowColorRGBA)
+{
+  VGPaint shadowPaint;
+  VGfloat radians = SH_DEG2RAD(angle);
+
+  vgGetError();
+  shadowPaint = shVguCreateColorPaint(shadowColorRGBA);
+  shVguFilterWithPaints(dst, src, dimX, dimY, iterative,
+                        strength,
+                        distance * SH_COS(radians),
+                        distance * SH_SIN(radians),
+                        filterFlags, allowedQuality,
+                        VG_INVALID_HANDLE, shadowPaint);
+  if (shadowPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(shadowPaint);
+  return shVguMapFilterError();
+}
+
+VGU_API_CALL VGUErrorCode vguGlowKHR(VGImage dst,
+                                     VGImage src,
+                                     VGfloat dimX,
+                                     VGfloat dimY,
+                                     VGuint iterative,
+                                     VGfloat strength,
+                                     VGbitfield filterFlags,
+                                     VGbitfield allowedQuality,
+                                     VGuint glowColorRGBA)
+{
+  VGPaint glowPaint;
+
+  vgGetError();
+  glowPaint = shVguCreateColorPaint(glowColorRGBA);
+  shVguFilterWithPaints(dst, src, dimX, dimY, iterative,
+                        strength, 0.0f, 0.0f,
+                        filterFlags, allowedQuality,
+                        VG_INVALID_HANDLE, glowPaint);
+  if (glowPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(glowPaint);
+  return shVguMapFilterError();
+}
+
+VGU_API_CALL VGUErrorCode vguBevelKHR(VGImage dst,
+                                      VGImage src,
+                                      VGfloat dimX,
+                                      VGfloat dimY,
+                                      VGuint iterative,
+                                      VGfloat strength,
+                                      VGfloat distance,
+                                      VGfloat angle,
+                                      VGbitfield filterFlags,
+                                      VGbitfield allowedQuality,
+                                      VGuint highlightColorRGBA,
+                                      VGuint shadowColorRGBA)
+{
+  VGPaint highlightPaint;
+  VGPaint shadowPaint;
+  VGfloat radians = SH_DEG2RAD(angle);
+
+  vgGetError();
+  highlightPaint = shVguCreateColorPaint(highlightColorRGBA);
+  shadowPaint = shVguCreateColorPaint(shadowColorRGBA);
+  shVguFilterWithPaints(dst, src, dimX, dimY, iterative,
+                        strength,
+                        distance * SH_COS(radians),
+                        distance * SH_SIN(radians),
+                        filterFlags, allowedQuality,
+                        highlightPaint, shadowPaint);
+  if (shadowPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(shadowPaint);
+  if (highlightPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(highlightPaint);
+  return shVguMapFilterError();
+}
+
+VGU_API_CALL VGUErrorCode vguGradientGlowKHR(VGImage dst,
+                                             VGImage src,
+                                             VGfloat dimX,
+                                             VGfloat dimY,
+                                             VGuint iterative,
+                                             VGfloat strength,
+                                             VGfloat distance,
+                                             VGfloat angle,
+                                             VGbitfield filterFlags,
+                                             VGbitfield allowedQuality,
+                                             VGuint stopsCount,
+                                             const VGfloat *glowColorRampStops)
+{
+  VGPaint glowPaint;
+  VGfloat radians;
+  VGUErrorCode error = shVguCheckStops(stopsCount, glowColorRampStops);
+
+  if (error != VGU_NO_ERROR)
+    return error;
+
+  vgGetError();
+  radians = SH_DEG2RAD(angle);
+  glowPaint = shVguCreateGradientPaint(stopsCount, glowColorRampStops);
+  shVguFilterWithPaints(dst, src, dimX, dimY, iterative,
+                        strength,
+                        -distance * SH_COS(radians),
+                        -distance * SH_SIN(radians),
+                        filterFlags, allowedQuality,
+                        glowPaint, VG_INVALID_HANDLE);
+  if (glowPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(glowPaint);
+  return shVguMapFilterError();
+}
+
+static void shVguSetStop(VGfloat *stops,
+                         VGint index,
+                         VGfloat offset,
+                         VGfloat r,
+                         VGfloat g,
+                         VGfloat b,
+                         VGfloat a)
+{
+  stops[index * 5 + 0] = offset;
+  stops[index * 5 + 1] = r;
+  stops[index * 5 + 2] = g;
+  stops[index * 5 + 3] = b;
+  stops[index * 5 + 4] = a;
+}
+
+VGU_API_CALL VGUErrorCode vguGradientBevelKHR(VGImage dst,
+                                              VGImage src,
+                                              VGfloat dimX,
+                                              VGfloat dimY,
+                                              VGuint iterative,
+                                              VGfloat strength,
+                                              VGfloat distance,
+                                              VGfloat angle,
+                                              VGbitfield filterFlags,
+                                              VGbitfield allowedQuality,
+                                              VGuint stopsCount,
+                                              const VGfloat *bevelColorRampStops)
+{
+  VGPaint highlightPaint = VG_INVALID_HANDLE;
+  VGPaint shadowPaint = VG_INVALID_HANDLE;
+  VGfloat *highlightStops = NULL;
+  VGfloat *shadowStops = NULL;
+  VGuint midPos;
+  VGboolean addStop = VG_FALSE;
+  VGuint shadowCount;
+  VGuint highlightCount;
+  VGuint j;
+  VGfloat radians;
+  VGUErrorCode error = shVguCheckStops(stopsCount, bevelColorRampStops);
+
+  if (error != VGU_NO_ERROR)
+    return error;
+
+  for (midPos=0; midPos<stopsCount; ++midPos) {
+    VGfloat offset = bevelColorRampStops[midPos * 5 + 0];
+    if (offset == 0.5f)
+      break;
+    if (offset > 0.5f) {
+      addStop = VG_TRUE;
+      break;
+    }
+  }
+
+  if (addStop)
+    shadowCount = midPos + 1u;
+  else
+    shadowCount = midPos < stopsCount ? midPos + 1u : stopsCount;
+  highlightCount = (addStop ? 1u : 0u) + stopsCount - midPos;
+  if (shadowCount > 0) {
+    shadowStops = (VGfloat*)malloc((size_t)shadowCount * 5u *
+                                   sizeof(VGfloat));
+    if (!shadowStops)
+      return VGU_OUT_OF_MEMORY_ERROR;
+  }
+  if (highlightCount > 0) {
+    highlightStops = (VGfloat*)malloc((size_t)highlightCount * 5u *
+                                      sizeof(VGfloat));
+    if (!highlightStops) {
+      free(shadowStops);
+      return VGU_OUT_OF_MEMORY_ERROR;
+    }
+  }
+
+  j = 0;
+  if (addStop) {
+    shVguSetStop(shadowStops, (VGint)j, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    ++j;
+  }
+  if (shadowCount > j) {
+    VGint i;
+    VGint first = addStop ? (VGint)midPos - 1 :
+                  (midPos < stopsCount ? (VGint)midPos :
+                   (VGint)stopsCount - 1);
+    for (i=first; i>=0; --i) {
+      shVguSetStop(shadowStops, (VGint)j,
+                   2.0f * (0.5f - bevelColorRampStops[i * 5 + 0]),
+                   bevelColorRampStops[i * 5 + 1],
+                   bevelColorRampStops[i * 5 + 2],
+                   bevelColorRampStops[i * 5 + 3],
+                   bevelColorRampStops[i * 5 + 4]);
+      ++j;
+    }
+  }
+
+  j = 0;
+  if (addStop) {
+    shVguSetStop(highlightStops, (VGint)j, 0.0f,
+                 0.0f, 0.0f, 0.0f, 0.0f);
+    ++j;
+  }
+  for (; midPos<stopsCount; ++midPos) {
+    shVguSetStop(highlightStops, (VGint)j,
+                 2.0f * (bevelColorRampStops[midPos * 5 + 0] - 0.5f),
+                 bevelColorRampStops[midPos * 5 + 1],
+                 bevelColorRampStops[midPos * 5 + 2],
+                 bevelColorRampStops[midPos * 5 + 3],
+                 bevelColorRampStops[midPos * 5 + 4]);
+    ++j;
+  }
+
+  vgGetError();
+  radians = SH_DEG2RAD(angle);
+  shadowPaint = shVguCreateGradientPaint(shadowCount, shadowStops);
+  highlightPaint = shVguCreateGradientPaint(highlightCount, highlightStops);
+  shVguFilterWithPaints(dst, src, dimX, dimY, iterative,
+                        strength,
+                        distance * SH_COS(radians),
+                        distance * SH_SIN(radians),
+                        filterFlags, allowedQuality,
+                        highlightPaint, shadowPaint);
+  if (highlightPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(highlightPaint);
+  if (shadowPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(shadowPaint);
+  free(highlightStops);
+  free(shadowStops);
+  return shVguMapFilterError();
 }

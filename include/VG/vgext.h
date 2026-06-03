@@ -22,6 +22,7 @@
 #define SH_VGEXT_H
 
 #include "openvg.h"
+#include "vgu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,6 +30,7 @@ extern "C" {
 
 #define VG_KHR_iterative_average_blur 1
 #define VG_KHR_advanced_blending 1
+#define VG_KHR_parametric_filter 1
 
 #define VG_MAX_AVERAGE_BLUR_DIMENSION_KHR        0x116B
 #define VG_AVERAGE_BLUR_DIMENSION_RESOLUTION_KHR 0x116C
@@ -58,12 +60,88 @@ extern "C" {
 #define VG_BLEND_DST_ATOP_KHR       0x2025
 #define VG_BLEND_XOR_KHR            0x2026
 
+#define VG_PF_OBJECT_VISIBLE_FLAG_KHR (1 << 0)
+#define VG_PF_KNOCKOUT_FLAG_KHR       (1 << 1)
+#define VG_PF_OUTER_FLAG_KHR          (1 << 2)
+#define VG_PF_INNER_FLAG_KHR          (1 << 3)
+
 VG_API_CALL void vgIterativeAverageBlurKHR(VGImage dst,
                                            VGImage src,
                                            VGfloat dimX,
                                            VGfloat dimY,
                                            VGuint iterative,
                                            VGTilingMode tilingMode);
+
+VG_API_CALL void vgParametricFilterKHR(VGImage dst,
+                                       VGImage src,
+                                       VGImage blur,
+                                       VGfloat strength,
+                                       VGfloat offsetX,
+                                       VGfloat offsetY,
+                                       VGbitfield filterFlags,
+                                       VGPaint highlightPaint,
+                                       VGPaint shadowPaint);
+
+VGU_API_CALL VGUErrorCode vguDropShadowKHR(VGImage dst,
+                                           VGImage src,
+                                           VGfloat dimX,
+                                           VGfloat dimY,
+                                           VGuint iterative,
+                                           VGfloat strength,
+                                           VGfloat distance,
+                                           VGfloat angle,
+                                           VGbitfield filterFlags,
+                                           VGbitfield allowedQuality,
+                                           VGuint shadowColorRGBA);
+
+VGU_API_CALL VGUErrorCode vguGlowKHR(VGImage dst,
+                                     VGImage src,
+                                     VGfloat dimX,
+                                     VGfloat dimY,
+                                     VGuint iterative,
+                                     VGfloat strength,
+                                     VGbitfield filterFlags,
+                                     VGbitfield allowedQuality,
+                                     VGuint glowColorRGBA);
+
+VGU_API_CALL VGUErrorCode vguBevelKHR(VGImage dst,
+                                      VGImage src,
+                                      VGfloat dimX,
+                                      VGfloat dimY,
+                                      VGuint iterative,
+                                      VGfloat strength,
+                                      VGfloat distance,
+                                      VGfloat angle,
+                                      VGbitfield filterFlags,
+                                      VGbitfield allowedQuality,
+                                      VGuint highlightColorRGBA,
+                                      VGuint shadowColorRGBA);
+
+VGU_API_CALL VGUErrorCode vguGradientGlowKHR(VGImage dst,
+                                             VGImage src,
+                                             VGfloat dimX,
+                                             VGfloat dimY,
+                                             VGuint iterative,
+                                             VGfloat strength,
+                                             VGfloat distance,
+                                             VGfloat angle,
+                                             VGbitfield filterFlags,
+                                             VGbitfield allowedQuality,
+                                             VGuint stopsCount,
+                                             const VGfloat *glowColorRampStops);
+
+VGU_API_CALL VGUErrorCode vguGradientBevelKHR(VGImage dst,
+                                              VGImage src,
+                                              VGfloat dimX,
+                                              VGfloat dimY,
+                                              VGuint iterative,
+                                              VGfloat strength,
+                                              VGfloat distance,
+                                              VGfloat angle,
+                                              VGbitfield filterFlags,
+                                              VGbitfield allowedQuality,
+                                              VGuint stopsCount,
+                                              const VGfloat *bevelColorRampStops);
 
 #ifdef __cplusplus
 }

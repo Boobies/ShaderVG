@@ -35,7 +35,8 @@ typedef enum {
   VGU_ILLEGAL_ARGUMENT_ERROR                   = 0xF001,
   VGU_OUT_OF_MEMORY_ERROR                      = 0xF002,
   VGU_PATH_CAPABILITY_ERROR                    = 0xF003,
-  VGU_BAD_WARP_ERROR                           = 0xF004
+  VGU_BAD_WARP_ERROR                           = 0xF004,
+  VGU_IMAGE_IN_USE_ERROR                       = 0xF010
 } VGUErrorCode;
 
 typedef enum {

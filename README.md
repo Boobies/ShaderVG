@@ -121,6 +121,10 @@ $ ./test_tiger_shader
 #### test_filters
   Shows the OpenVG image filter APIs on synthetic image data.
 
+#### test_parametric_filter
+  Shows `VG_KHR_parametric_filter` effects, including drop shadow, bevel, and
+  gradient-based variants.
+
 #### test_font
   Draws vector glyphs through the OpenVG font API, including glyphs whose
   source paths have already been destroyed by the application.
@@ -247,6 +251,7 @@ vgSeparableConvolve     | FULLY implemented
 vgGaussianBlur          | FULLY implemented
 vgLookup                | FULLY implemented
 vgLookupSingle          | FULLY implemented
+vgParametricFilterKHR   | FULLY implemented
                                                    
 #### Queries                                       
 API                     | status                   
@@ -266,6 +271,11 @@ vguArc                     | FULLY implemented
 vguComputeWarpQuadToSquare | FULLY implemented
 vguComputeWarpSquareToQuad | FULLY implemented
 vguComputeWarpQuadToQuad   | FULLY implemented
+vguDropShadowKHR           | FULLY implemented
+vguGlowKHR                 | FULLY implemented
+vguBevelKHR                | FULLY implemented
+vguGradientGlowKHR         | FULLY implemented
+vguGradientBevelKHR        | FULLY implemented
         
 ## Extensions
 
@@ -290,13 +300,13 @@ VG_PAINT_COLOR_RAMP_LINEAR_NDS        | NOT implemented
 VG_COLOR_MATRIX_NDS                   | NOT implemented
 VG_PAINT_COLOR_TRANSFORM_LINEAR_NDS   | NOT implemented
 VG_DRAW_IMAGE_COLOR_MATRIX_NDS        | NOT implemented
-VG_KHR_parametric_filter              | NOT implemented
-vgParametricFilterKHR                 | NOT implemented
-vguDropShadowKHR                      | NOT implemented
-vguGlowKHR                            | NOT implemented
-vguBevelKHR                           | NOT implemented
-vguGradientGlowKHR                    | NOT implemented
-vguGradientBevelKHR                   | NOT implemented
+VG_KHR_parametric_filter              | FULLY implemented
+vgParametricFilterKHR                 | FULLY implemented
+vguDropShadowKHR                      | FULLY implemented
+vguGlowKHR                            | FULLY implemented
+vguBevelKHR                           | FULLY implemented
+vguGradientGlowKHR                    | FULLY implemented
+vguGradientBevelKHR                   | FULLY implemented
 VG_NDS_projective_geometry            | NOT implemented
 vgProjectiveMatrixNDS                 | NOT implemented
 vguTransformClipLineNDS               | NOT implemented

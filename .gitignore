@@ -48,6 +48,7 @@ examples/test_font
 examples/test_warp
 examples/test_pixels
 examples/test_filters
+examples/test_parametric_filter
 *.libs
 *.la
 *.lo

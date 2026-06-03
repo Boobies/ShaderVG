@@ -616,11 +616,21 @@ static const char* vgShaderFragmentImageFilterA =
 "#define FILTER_LOOKUP 6\n"
 "#define FILTER_LOOKUP_SINGLE 7\n"
 "#define FILTER_TRANSFER 8\n"
+"#define FILTER_PARAMETRIC 9\n"
 "\n"
 "#define STORAGE_RGBA 0\n"
 "#define STORAGE_ALPHA 1\n"
 "#define STORAGE_LUMINANCE 2\n"
 "#define STORAGE_FLOAT 3\n"
+"\n"
+"#define PAINT_NONE 0\n"
+"#define PAINT_COLOR 1\n"
+"#define PAINT_LINEAR_GRADIENT 2\n"
+"\n"
+"#define VG_PF_OBJECT_VISIBLE_FLAG_KHR 1\n"
+"#define VG_PF_KNOCKOUT_FLAG_KHR 2\n"
+"#define VG_PF_OUTER_FLAG_KHR 4\n"
+"#define VG_PF_INNER_FLAG_KHR 8\n"
 "\n"
 "#define VG_TILE_FILL 0x1D00\n"
 "#define VG_TILE_PAD 0x1D01\n"
@@ -650,6 +660,16 @@ static const char* vgShaderFragmentImageFilterA =
 "uniform int unpremultiplyOutput;\n"
 "uniform int dstStorageMode;\n"
 "uniform int lookupSourceChannel;\n"
+"uniform ivec2 blurSize;\n"
+"uniform vec2 parametricOffset;\n"
+"uniform float parametricStrength;\n"
+"uniform int parametricFlags;\n"
+"uniform int highlightPaintMode;\n"
+"uniform int shadowPaintMode;\n"
+"uniform vec4 highlightColor;\n"
+"uniform vec4 shadowColor;\n"
+"uniform sampler2D highlightSampler;\n"
+"uniform sampler2D shadowSampler;\n"
 "out vec4 fragColor;\n"
 "\n"
 "float srgbToLinear(float value)\n"
@@ -838,6 +858,89 @@ static const char* vgShaderFragmentImageFilterB =
 "}\n"
 "\n";
 
+static const char* vgShaderFragmentImageFilterD =
+"\n"
+"bool parametricFlag(int flag)\n"
+"{\n"
+"    return (parametricFlags & flag) != 0;\n"
+"}\n"
+"\n"
+"float sampleBlurAlpha(vec2 coord)\n"
+"{\n"
+"    if (coord.x < 0.0 || coord.y < 0.0 ||\n"
+"        coord.x > float(blurSize.x - 1) ||\n"
+"        coord.y > float(blurSize.y - 1))\n"
+"        return 0.0;\n"
+"    return texture(auxSampler, (coord + vec2(0.5)) / vec2(blurSize)).a;\n"
+"}\n"
+"\n"
+"vec4 paintForAmount(int paintMode, vec4 paintColor,\n"
+"                    sampler2D paintSampler, float amount)\n"
+"{\n"
+"    vec4 color;\n"
+"\n"
+"    if (paintMode == PAINT_NONE)\n"
+"        return vec4(0.0);\n"
+"\n"
+"    if (paintMode == PAINT_COLOR) {\n"
+"        color = paintColor;\n"
+"        color.rgb = convertColorSpace(color.rgb, 0, filterLinear);\n"
+"        color.rgb *= color.a;\n"
+"        return color * amount;\n"
+"    }\n"
+"\n"
+"    color = texture(paintSampler, vec2(amount, 0.5));\n"
+"    color.rgb = convertColorSpace(color.rgb, 0, filterLinear);\n"
+"    color.rgb *= color.a;\n"
+"    return color;\n"
+"}\n"
+"\n"
+"vec4 applyParametric(ivec2 pixel)\n"
+"{\n"
+"    vec4 source = loadSource(pixel);\n"
+"    vec2 base = vec2(pixel);\n"
+"    float hblur = sampleBlurAlpha(base + parametricOffset);\n"
+"    float sblur = sampleBlurAlpha(base - parametricOffset);\n"
+"    float highlightAlpha = max(hblur - sblur, 0.0);\n"
+"    float shadowAlpha = max(sblur - hblur, 0.0);\n"
+"    vec4 highlightPixel = paintForAmount(highlightPaintMode,\n"
+"                                         highlightColor,\n"
+"                                         highlightSampler,\n"
+"                                         highlightAlpha * parametricStrength);\n"
+"    vec4 shadowPixel = paintForAmount(shadowPaintMode,\n"
+"                                      shadowColor,\n"
+"                                      shadowSampler,\n"
+"                                      shadowAlpha * parametricStrength);\n"
+"    vec4 inverseShadowPixel = paintForAmount(shadowPaintMode,\n"
+"                                             shadowColor,\n"
+"                                             shadowSampler,\n"
+"                                             (1.0 - shadowAlpha) *\n"
+"                                             parametricStrength);\n"
+"    vec4 outerEffect = highlightPixel + shadowPixel;\n"
+"    vec4 innerEffect = highlightPaintMode == PAINT_NONE ?\n"
+"                       inverseShadowPixel : outerEffect;\n"
+"    bool inner = parametricFlag(VG_PF_INNER_FLAG_KHR);\n"
+"    bool outer = parametricFlag(VG_PF_OUTER_FLAG_KHR);\n"
+"    bool knockout = parametricFlag(VG_PF_KNOCKOUT_FLAG_KHR);\n"
+"    bool objectVisible = parametricFlag(VG_PF_OBJECT_VISIBLE_FLAG_KHR);\n"
+"    float innerAlpha = inner ? source.a : 0.0;\n"
+"    float objectAlpha = 0.0;\n"
+"    float outerAlpha = 0.0;\n"
+"\n"
+"    source.rgb = min(source.rgb, vec3(source.a));\n"
+"\n"
+"    if (!knockout && objectVisible)\n"
+"        objectAlpha = inner ? (1.0 - innerEffect.a) : 1.0;\n"
+"    if (outer)\n"
+"        outerAlpha = (knockout || objectVisible) ?\n"
+"                     (1.0 - source.a) : 1.0;\n"
+"\n"
+"    return innerAlpha * innerEffect +\n"
+"           objectAlpha * source +\n"
+"           outerAlpha * outerEffect;\n"
+"}\n"
+"\n";
+
 static const char* vgShaderFragmentImageFilterC =
 "\n"
 "vec4 applyLookup(vec4 source)\n"
@@ -887,6 +990,8 @@ static const char* vgShaderFragmentImageFilterC =
 "        result = applySeparableY(pixel);\n"
 "    } else if (mode == FILTER_LOOKUP) {\n"
 "        result = applyLookup(loadSource(pixel));\n"
+"    } else if (mode == FILTER_PARAMETRIC) {\n"
+"        result = applyParametric(pixel);\n"
 "    } else {\n"
 "        source = loadSource(pixel);\n"
 "        result = texelFetch(auxSampler,\n"
@@ -1102,7 +1207,7 @@ void shDeinitCoverageShaders(void){
 void shInitImageFilterShaders(void) {
 
   VG_GETCONTEXT(VG_NO_RETVAL);
-  const char* fsSources[3];
+  const char* fsSources[4];
 
   GLuint vs = glCreateShader(GL_VERTEX_SHADER);
   glShaderSource(vs, 1, &vgShaderVertexImageFilter, NULL);
@@ -1113,8 +1218,9 @@ void shInitImageFilterShaders(void) {
   GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
   fsSources[0] = vgShaderFragmentImageFilterA;
   fsSources[1] = vgShaderFragmentImageFilterB;
-  fsSources[2] = vgShaderFragmentImageFilterC;
-  glShaderSource(fs, 3, fsSources, NULL);
+  fsSources[2] = vgShaderFragmentImageFilterD;
+  fsSources[3] = vgShaderFragmentImageFilterC;
+  glShaderSource(fs, 4, fsSources, NULL);
   glCompileShader(fs);
   SH_CHECK_SHADER_COMPILE(fs, "image filter fragment");
   GL_CHECK_ERROR;
@@ -1177,11 +1283,33 @@ void shInitImageFilterShaders(void) {
     glGetUniformLocation(context->progImageFilter, "dstStorageMode");
   context->locationImageFilter.lookupSourceChannel =
     glGetUniformLocation(context->progImageFilter, "lookupSourceChannel");
+  context->locationImageFilter.blurSize =
+    glGetUniformLocation(context->progImageFilter, "blurSize");
+  context->locationImageFilter.parametricOffset =
+    glGetUniformLocation(context->progImageFilter, "parametricOffset");
+  context->locationImageFilter.parametricStrength =
+    glGetUniformLocation(context->progImageFilter, "parametricStrength");
+  context->locationImageFilter.parametricFlags =
+    glGetUniformLocation(context->progImageFilter, "parametricFlags");
+  context->locationImageFilter.highlightPaintMode =
+    glGetUniformLocation(context->progImageFilter, "highlightPaintMode");
+  context->locationImageFilter.shadowPaintMode =
+    glGetUniformLocation(context->progImageFilter, "shadowPaintMode");
+  context->locationImageFilter.highlightColor =
+    glGetUniformLocation(context->progImageFilter, "highlightColor");
+  context->locationImageFilter.shadowColor =
+    glGetUniformLocation(context->progImageFilter, "shadowColor");
+  context->locationImageFilter.highlightSampler =
+    glGetUniformLocation(context->progImageFilter, "highlightSampler");
+  context->locationImageFilter.shadowSampler =
+    glGetUniformLocation(context->progImageFilter, "shadowSampler");
   GL_CHECK_ERROR;
 
   glUseProgram(context->progImageFilter);
   glUniform1i(context->locationImageFilter.sourceSampler, 0);
   glUniform1i(context->locationImageFilter.auxSampler, 1);
+  glUniform1i(context->locationImageFilter.highlightSampler, 2);
+  glUniform1i(context->locationImageFilter.shadowSampler, 3);
   GL_CHECK_ERROR;
 }
 

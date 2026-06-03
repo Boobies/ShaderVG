@@ -699,11 +699,17 @@ static int run_image_filter_test(void)
 {
   VGImage source = VG_INVALID_HANDLE;
   VGImage dest = VG_INVALID_HANDLE;
+  VGImage blur = VG_INVALID_HANDLE;
   VGImage alphaDest = VG_INVALID_HANDLE;
   VGImage lumaDest = VG_INVALID_HANDLE;
+  VGPaint highlightPaint = VG_INVALID_HANDLE;
+  VGPaint shadowPaint = VG_INVALID_HANDLE;
+  VGPaint gradientPaint = VG_INVALID_HANDLE;
+  VGPaint invalidFilterPaint = VG_INVALID_HANDLE;
   VGubyte sourceData[4 * 4 * 4];
   VGubyte destData[4 * 4 * 4];
   VGubyte readData[4 * 4 * 4];
+  VGubyte blurData[4 * 4];
   VGubyte alphaData[2 * 2];
   VGubyte alphaRead[2 * 2];
   VGubyte lumaData[2 * 2];
@@ -734,6 +740,15 @@ static int run_image_filter_test(void)
   VGshort separableKernelX[] = {1, 0};
   VGshort separableKernelY[] = {1};
   VGfloat tileFill[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat redPaintColor[] = {1.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat badGradientStops[] = {
+    0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+    1.0f, 1.0f, 0.0f, 0.0f, 1.0f
+  };
+  VGfloat goodGradientStops[] = {
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    1.0f, 1.0f, 0.0f, 0.0f, 1.0f
+  };
   const char *extensions;
   VGint maxKernelSize;
   VGint maxAverageDimension;
@@ -747,6 +762,7 @@ static int run_image_filter_test(void)
   memset(sourceData, 0, sizeof(sourceData));
   memset(destData, 0, sizeof(destData));
   memset(readData, 0, sizeof(readData));
+  memset(blurData, 0, sizeof(blurData));
   memset(alphaData, 64, sizeof(alphaData));
   memset(alphaRead, 0, sizeof(alphaRead));
   memset(lumaData, 0, sizeof(lumaData));
@@ -774,15 +790,40 @@ static int run_image_filter_test(void)
 
   source = vgCreateImage(VG_lABGR_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
   dest = vgCreateImage(VG_lABGR_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  blur = vgCreateImage(VG_A_8, 4, 4, VG_IMAGE_QUALITY_BETTER);
   alphaDest = vgCreateImage(VG_A_8, 2, 2, VG_IMAGE_QUALITY_BETTER);
   lumaDest = vgCreateImage(VG_lL_8, 2, 2, VG_IMAGE_QUALITY_BETTER);
+  highlightPaint = vgCreatePaint();
+  shadowPaint = vgCreatePaint();
+  gradientPaint = vgCreatePaint();
+  invalidFilterPaint = vgCreatePaint();
   if (source == VG_INVALID_HANDLE ||
       dest == VG_INVALID_HANDLE ||
+      blur == VG_INVALID_HANDLE ||
       alphaDest == VG_INVALID_HANDLE ||
-      lumaDest == VG_INVALID_HANDLE) {
+      lumaDest == VG_INVALID_HANDLE ||
+      highlightPaint == VG_INVALID_HANDLE ||
+      shadowPaint == VG_INVALID_HANDLE ||
+      gradientPaint == VG_INVALID_HANDLE ||
+      invalidFilterPaint == VG_INVALID_HANDLE) {
     result = fail_vg("OpenVG image filter test setup failed");
     goto cleanup;
   }
+
+  vgSetColor(highlightPaint, 0xff0000ff);
+  vgSetColor(shadowPaint, 0x00ff00ff);
+  if (vgGetColor(highlightPaint) != 0xff0000ff ||
+      expect_no_vg_error("OpenVG paint color helper test failed")) {
+    fprintf(stderr, "OpenVG vgSetColor/vgGetColor round trip failed\n");
+    result = 1;
+    goto cleanup;
+  }
+  vgSetParameteri(gradientPaint, VG_PAINT_TYPE,
+                  VG_PAINT_TYPE_LINEAR_GRADIENT);
+  vgSetParameterfv(gradientPaint, VG_PAINT_COLOR_RAMP_STOPS,
+                   10, goodGradientStops);
+  vgSetParameteri(invalidFilterPaint, VG_PAINT_TYPE,
+                  VG_PAINT_TYPE_RADIAL_GRADIENT);
 
   maxKernelSize = vgGeti(VG_MAX_KERNEL_SIZE);
   if (expect_no_vg_error("OpenVG image filter limit query failed") ||
@@ -794,9 +835,10 @@ static int run_image_filter_test(void)
 
   extensions = (const char*)vgGetString(VG_EXTENSIONS);
   if (!extensions ||
-      !strstr(extensions, "VG_KHR_iterative_average_blur")) {
+      !strstr(extensions, "VG_KHR_iterative_average_blur") ||
+      !strstr(extensions, "VG_KHR_parametric_filter")) {
     fprintf(stderr,
-            "OpenVG did not advertise VG_KHR_iterative_average_blur\n");
+            "OpenVG did not advertise expected image filter extensions\n");
     result = 1;
     goto cleanup;
   }
@@ -1023,6 +1065,135 @@ static int run_image_filter_test(void)
     goto cleanup;
   }
 
+  memset(sourceData, 0, sizeof(sourceData));
+  memset(destData, 0, sizeof(destData));
+  memset(blurData, 0, sizeof(blurData));
+  for (i=0; i<16; ++i)
+    set_rgba(destData, 4 * 4, i % 4, i / 4, 5, 6, 7, 8);
+  blurData[1 * 4 + 2] = 255;
+  vgImageSubData(source, sourceData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 4);
+  vgImageSubData(dest, destData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 4);
+  vgImageSubData(blur, blurData, 4, VG_A_8, 0, 0, 4, 4);
+
+  vgSeti(VG_FILTER_CHANNEL_MASK,
+         VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
+  vgParametricFilterKHR(dest, source, blur, 1.0f, 1.0f, 0.0f,
+                        VG_PF_OUTER_FLAG_KHR,
+                        highlightPaint, VG_INVALID_HANDLE);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgParametricFilterKHR color paint failed") ||
+      expect_rgba_at(readData, 4 * 4, 1, 1, 255, 0, 0, 255,
+                     "OpenVG parametric filter did not apply a color highlight")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgImageSubData(dest, destData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 4);
+  vgParametricFilterKHR(dest, source, blur, 1.0f, 1.0f, 0.0f,
+                        VG_PF_OUTER_FLAG_KHR,
+                        gradientPaint, VG_INVALID_HANDLE);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG vgParametricFilterKHR gradient paint failed") ||
+      expect_rgba_at(readData, 4 * 4, 1, 1, 255, 0, 0, 255,
+                     "OpenVG parametric filter did not sample a gradient paint")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgImageSubData(dest, destData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 4);
+  vgSeti(VG_FILTER_CHANNEL_MASK, VG_ALPHA);
+  vgParametricFilterKHR(dest, source, blur, 1.0f, 1.0f, 0.0f,
+                        VG_PF_OUTER_FLAG_KHR,
+                        highlightPaint, VG_INVALID_HANDLE);
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG parametric channel mask failed") ||
+      expect_rgba_at(readData, 4 * 4, 1, 1, 5, 6, 7, 255,
+                     "OpenVG parametric filter ignored the channel mask")) {
+    result = 1;
+    goto cleanup;
+  }
+  vgSeti(VG_FILTER_CHANNEL_MASK,
+         VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
+
+  vgSetParameterfv(gradientPaint, VG_PAINT_COLOR_RAMP_STOPS,
+                   10, badGradientStops);
+  vgParametricFilterKHR(dest, source, blur, 1.0f, 1.0f, 0.0f,
+                        VG_PF_OUTER_FLAG_KHR,
+                        gradientPaint, VG_INVALID_HANDLE);
+  if (expect_vg_error("OpenVG accepted a parametric gradient with opaque first stop",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+  vgSetParameterfv(gradientPaint, VG_PAINT_COLOR_RAMP_STOPS,
+                   10, goodGradientStops);
+
+  vgParametricFilterKHR(dest, source, blur, 1.0f, 1.0f, 0.0f,
+                        0x10u, highlightPaint, VG_INVALID_HANDLE);
+  if (expect_vg_error("OpenVG accepted invalid parametric filter flags",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgParametricFilterKHR(dest, source, blur, 1.0f, 1.0f, 0.0f,
+                        VG_PF_OUTER_FLAG_KHR,
+                        invalidFilterPaint, VG_INVALID_HANDLE);
+  if (expect_vg_error("OpenVG accepted an invalid parametric paint type",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgParametricFilterKHR(source, source, blur, 1.0f, 1.0f, 0.0f,
+                        VG_PF_OUTER_FLAG_KHR,
+                        highlightPaint, VG_INVALID_HANDLE);
+  if (expect_vg_error("OpenVG accepted overlapping parametric operands",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  memset(sourceData, 0, sizeof(sourceData));
+  set_rgba(sourceData, 4 * 4, 1, 1, 255, 255, 255, 255);
+  vgImageSubData(source, sourceData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 4);
+  vgImageSubData(dest, destData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 4);
+  if (vguDropShadowKHR(dest, source, 3.0f, 1.0f, 1, 1.0f,
+                       1.0f, 0.0f, VG_PF_OUTER_FLAG_KHR,
+                       VG_IMAGE_QUALITY_BETTER,
+                       0x00ff00ff) != VGU_NO_ERROR) {
+    fprintf(stderr, "OpenVG VGU drop shadow helper failed\n");
+    result = 1;
+    goto cleanup;
+  }
+  vgGetImageSubData(dest, readData, 4 * 4,
+                    VG_lABGR_8888, 0, 0, 4, 4);
+  if (expect_no_vg_error("OpenVG VGU drop shadow readback failed") ||
+      readData[((size_t)1 * 4u + 2u) * 4u + 1] == 0 ||
+      readData[((size_t)1 * 4u + 2u) * 4u + 3] == 0) {
+    fprintf(stderr, "OpenVG VGU drop shadow did not produce a visible shadow\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  if (vguDropShadowKHR(dest, VG_INVALID_HANDLE, 3.0f, 1.0f, 1, 1.0f,
+                       1.0f, 0.0f, VG_PF_OUTER_FLAG_KHR,
+                       VG_IMAGE_QUALITY_BETTER,
+                       0x00ff00ff) != VGU_BAD_HANDLE_ERROR) {
+    fprintf(stderr, "OpenVG VGU drop shadow did not map bad handles\n");
+    result = 1;
+    goto cleanup;
+  }
+
   vgIterativeAverageBlurKHR(dest, source, -1.0f, 1.0f, 1, VG_TILE_PAD);
   if (expect_vg_error("OpenVG accepted a negative iterative average blur dimension",
                       VG_ILLEGAL_ARGUMENT_ERROR)) {
@@ -1097,10 +1268,20 @@ static int run_image_filter_test(void)
 cleanup:
   vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
   vgSeti(VG_FILTER_FORMAT_LINEAR, VG_FALSE);
+  if (invalidFilterPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(invalidFilterPaint);
+  if (gradientPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(gradientPaint);
+  if (shadowPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(shadowPaint);
+  if (highlightPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(highlightPaint);
   if (lumaDest != VG_INVALID_HANDLE)
     vgDestroyImage(lumaDest);
   if (alphaDest != VG_INVALID_HANDLE)
     vgDestroyImage(alphaDest);
+  if (blur != VG_INVALID_HANDLE)
+    vgDestroyImage(blur);
   if (dest != VG_INVALID_HANDLE)
     vgDestroyImage(dest);
   if (source != VG_INVALID_HANDLE)

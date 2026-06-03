@@ -14,7 +14,7 @@ EXAMPLE_LF = @CONFIG_LDFLAGS@ -L${prefix}/lib
 
 EXTRA_DIST = *.jpg *.png
 
-noinst_PROGRAMS = test_pbuffer test_egl_gl_vg test_egl_features test_masking test_pixels test_filters
+noinst_PROGRAMS = test_pbuffer test_egl_gl_vg test_egl_features test_masking test_pixels test_filters test_parametric_filter
 
 if BUILD_VGU
 noinst_PROGRAMS += test_vgu
@@ -132,6 +132,9 @@ test_pixels_SOURCES =\
 test_filters_SOURCES =\
 	${EXAMPLE_SRCS} test_filters.c
 
+test_parametric_filter_SOURCES =\
+	${EXAMPLE_SRCS} test_parametric_filter.c
+
 test_font_SOURCES =\
 	${EXAMPLE_SRCS} test_font.c
 
@@ -214,6 +217,10 @@ test_pixels_LDFLAGS = ${EXAMPLE_LF}
 test_filters_CFLAGS = ${EXAMPLE_CF}
 test_filters_LDADD = ${EXAMPLE_LA}
 test_filters_LDFLAGS = ${EXAMPLE_LF}
+
+test_parametric_filter_CFLAGS = ${EXAMPLE_CF}
+test_parametric_filter_LDADD = ${EXAMPLE_LA}
+test_parametric_filter_LDFLAGS = ${EXAMPLE_LF}
 
 test_font_CFLAGS = ${EXAMPLE_CF}
 test_font_LDADD = ${EXAMPLE_LA}

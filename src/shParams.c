@@ -1261,14 +1261,19 @@ static void shGetParameter(VGContext *context, VGHandle object,
     } break;
   case SH_RESOURCE_IMAGE: switch (ptype) { /* Image parameters */
       
-      /* TODO: output image parameters when image implemented */
     case VG_IMAGE_FORMAT:
+      SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+      shIntToParam(((SHImage*)object)->fd.vgformat, count, values, floats, 0);
       break;
       
     case VG_IMAGE_WIDTH:
+      SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+      shIntToParam(((SHImage*)object)->width, count, values, floats, 0);
       break;
       
     case VG_IMAGE_HEIGHT:
+      SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+      shIntToParam(((SHImage*)object)->height, count, values, floats, 0);
       break;
       
     default:

@@ -2617,7 +2617,8 @@ enum
   SH_IMAGE_FILTER_GAUSSIAN_Y = 5,
   SH_IMAGE_FILTER_LOOKUP = 6,
   SH_IMAGE_FILTER_LOOKUP_SINGLE = 7,
-  SH_IMAGE_FILTER_TRANSFER = 8
+  SH_IMAGE_FILTER_TRANSFER = 8,
+  SH_IMAGE_FILTER_PARAMETRIC = 9
 };
 
 enum
@@ -2626,6 +2627,13 @@ enum
   SH_IMAGE_FILTER_STORE_ALPHA = 1,
   SH_IMAGE_FILTER_STORE_LUMINANCE = 2,
   SH_IMAGE_FILTER_STORE_FLOAT = 3
+};
+
+enum
+{
+  SH_PARAMETRIC_PAINT_NONE = 0,
+  SH_PARAMETRIC_PAINT_COLOR = 1,
+  SH_PARAMETRIC_PAINT_LINEAR_GRADIENT = 2
 };
 
 typedef struct
@@ -2639,6 +2647,8 @@ typedef struct
   GLint activeTexture;
   GLint sourceTextureBinding;
   GLint auxTextureBinding;
+  GLint highlightTextureBinding;
+  GLint shadowTextureBinding;
   GLint drawBuffer;
   GLint readBuffer;
   GLint scissorBox[4];
@@ -2672,6 +2682,18 @@ typedef struct
   VGboolean unpremultiplyOutput;
   SHint dstStorageMode;
   SHint lookupSourceChannel;
+  SHint blurWidth;
+  SHint blurHeight;
+  SHfloat parametricStrength;
+  SHfloat parametricOffsetX;
+  SHfloat parametricOffsetY;
+  VGbitfield parametricFlags;
+  SHint highlightPaintMode;
+  SHint shadowPaintMode;
+  GLfloat highlightColor[4];
+  GLfloat shadowColor[4];
+  SHPaint *highlightPaint;
+  SHPaint *shadowPaint;
 } SHImageFilterPass;
 
 static void shSaveImageFilterGLState(SHImageFilterGLState *state)
@@ -2695,6 +2717,10 @@ static void shSaveImageFilterGLState(SHImageFilterGLState *state)
   glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->sourceTextureBinding);
   glActiveTexture(GL_TEXTURE1);
   glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->auxTextureBinding);
+  glActiveTexture(GL_TEXTURE2);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->highlightTextureBinding);
+  glActiveTexture(GL_TEXTURE3);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->shadowTextureBinding);
   glActiveTexture(state->activeTexture);
 }
 
@@ -2729,6 +2755,10 @@ static void shRestoreImageFilterGLState(const SHImageFilterGLState *state)
   glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
   glViewport(state->viewport[0], state->viewport[1],
              state->viewport[2], state->viewport[3]);
+  glActiveTexture(GL_TEXTURE3);
+  glBindTexture(GL_TEXTURE_2D, (GLuint)state->shadowTextureBinding);
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, (GLuint)state->highlightTextureBinding);
   glActiveTexture(GL_TEXTURE1);
   glBindTexture(GL_TEXTURE_2D, (GLuint)state->auxTextureBinding);
   glActiveTexture(GL_TEXTURE0);
@@ -3144,11 +3174,45 @@ static VGboolean shImageFilterRunPass(VGContext *context,
               pass->dstStorageMode);
   glUniform1i(context->locationImageFilter.lookupSourceChannel,
               pass->lookupSourceChannel);
+  glUniform2i(context->locationImageFilter.blurSize,
+              pass->blurWidth, pass->blurHeight);
+  glUniform2f(context->locationImageFilter.parametricOffset,
+              pass->parametricOffsetX, pass->parametricOffsetY);
+  glUniform1f(context->locationImageFilter.parametricStrength,
+              pass->parametricStrength);
+  glUniform1i(context->locationImageFilter.parametricFlags,
+              (GLint)pass->parametricFlags);
+  glUniform1i(context->locationImageFilter.highlightPaintMode,
+              pass->highlightPaintMode);
+  glUniform1i(context->locationImageFilter.shadowPaintMode,
+              pass->shadowPaintMode);
+  glUniform4fv(context->locationImageFilter.highlightColor,
+               1, pass->highlightColor);
+  glUniform4fv(context->locationImageFilter.shadowColor,
+               1, pass->shadowColor);
+  glUniform1i(context->locationImageFilter.highlightSampler, 2);
+  glUniform1i(context->locationImageFilter.shadowSampler, 3);
 
   glActiveTexture(GL_TEXTURE0);
   shImageFilterSetTextureParams(sourceTexture);
   glActiveTexture(GL_TEXTURE1);
   shImageFilterSetTextureParams(auxTexture);
+  if (pass->mode == SH_IMAGE_FILTER_PARAMETRIC && auxTexture != 0) {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  }
+  glActiveTexture(GL_TEXTURE2);
+  if (pass->highlightPaintMode == SH_PARAMETRIC_PAINT_LINEAR_GRADIENT &&
+      pass->highlightPaint)
+    shSetGradientTexGLState(pass->highlightPaint);
+  else
+    glBindTexture(GL_TEXTURE_2D, 0);
+  glActiveTexture(GL_TEXTURE3);
+  if (pass->shadowPaintMode == SH_PARAMETRIC_PAINT_LINEAR_GRADIENT &&
+      pass->shadowPaint)
+    shSetGradientTexGLState(pass->shadowPaint);
+  else
+    glBindTexture(GL_TEXTURE_2D, 0);
 
   shBindContextVertexState(context, &vertexState);
   glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
@@ -4066,6 +4130,130 @@ average_out_of_memory:
   free(kernelY);
   free(kernelX);
   VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+}
+
+static VGboolean shParametricFilterPaintInfo(VGContext *context,
+                                             VGPaint paint,
+                                             SHint *mode,
+                                             SHPaint **paintOut,
+                                             GLfloat color[4])
+{
+  SHPaint *p;
+
+  *mode = SH_PARAMETRIC_PAINT_NONE;
+  *paintOut = NULL;
+  color[0] = 0.0f;
+  color[1] = 0.0f;
+  color[2] = 0.0f;
+  color[3] = 0.0f;
+
+  if (paint == VG_INVALID_HANDLE)
+    return VG_TRUE;
+
+  if (!shIsValidPaint(context, paint)) {
+    shSetError(context, VG_BAD_HANDLE_ERROR);
+    return VG_FALSE;
+  }
+
+  p = (SHPaint*)paint;
+  if (p->type == VG_PAINT_TYPE_COLOR) {
+    *mode = SH_PARAMETRIC_PAINT_COLOR;
+    color[0] = p->color.r;
+    color[1] = p->color.g;
+    color[2] = p->color.b;
+    color[3] = p->color.a;
+    return VG_TRUE;
+  }
+
+  if (p->type == VG_PAINT_TYPE_LINEAR_GRADIENT) {
+    if (p->stops.size <= 0 ||
+        SH_ABS(p->stops.items[0].color.a) > 0.00001f) {
+      shSetError(context, VG_ILLEGAL_ARGUMENT_ERROR);
+      return VG_FALSE;
+    }
+
+    *mode = SH_PARAMETRIC_PAINT_LINEAR_GRADIENT;
+    *paintOut = p;
+    return VG_TRUE;
+  }
+
+  shSetError(context, VG_ILLEGAL_ARGUMENT_ERROR);
+  return VG_FALSE;
+}
+
+VG_API_CALL void vgParametricFilterKHR(VGImage dst,
+                                       VGImage src,
+                                       VGImage blur,
+                                       VGfloat strength,
+                                       VGfloat offsetX,
+                                       VGfloat offsetY,
+                                       VGbitfield filterFlags,
+                                       VGPaint highlightPaint,
+                                       VGPaint shadowPaint)
+{
+  SHImage *s, *d, *b;
+  SHint width, height;
+  SHImageFilterPass pass;
+  VGbitfield validFlags = VG_PF_OBJECT_VISIBLE_FLAG_KHR |
+                          VG_PF_KNOCKOUT_FLAG_KHR |
+                          VG_PF_OUTER_FLAG_KHR |
+                          VG_PF_INNER_FLAG_KHR;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
+                   !shIsValidImage(context, dst) ||
+                   !shIsValidImage(context, blur),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(SH_ISNAN(strength) ||
+                   SH_ISNAN(offsetX) ||
+                   SH_ISNAN(offsetY) ||
+                   (filterFlags & ~validFlags),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  s = (SHImage*)src;
+  d = (SHImage*)dst;
+  b = (SHImage*)blur;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
+                   shImageIsRenderTarget(d) ||
+                   shImageIsRenderTarget(b),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s) ||
+                   shImageFilterImagesOverlap(d, b),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  shImageFilterInitPass(context, s, d, &pass);
+  if (!shParametricFilterPaintInfo(context, highlightPaint,
+                                   &pass.highlightPaintMode,
+                                   &pass.highlightPaint,
+                                   pass.highlightColor) ||
+      !shParametricFilterPaintInfo(context, shadowPaint,
+                                   &pass.shadowPaintMode,
+                                   &pass.shadowPaint,
+                                   pass.shadowColor))
+    VG_RETURN(VG_NO_RETVAL);
+
+  width = SH_MIN(d->width, SH_MIN(s->width, b->width));
+  height = SH_MIN(d->height, SH_MIN(s->height, b->height));
+
+  pass.mode = SH_IMAGE_FILTER_PARAMETRIC;
+  pass.blurWidth = b->width;
+  pass.blurHeight = b->height;
+  pass.parametricStrength = strength;
+  pass.parametricOffsetX = offsetX;
+  pass.parametricOffsetY = offsetY;
+  pass.parametricFlags = filterFlags;
+  pass.premultiplyInput = VG_TRUE;
+  pass.unpremultiplyOutput = VG_TRUE;
+
+  VG_RETURN_ERR_IF(!shImageFilterRunPass(context, d, d->texture,
+                                         width, height,
+                                         s->texture, b->texture,
+                                         context->filterChannelMask,
+                                         &pass),
+                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  d->gpuDataDirty = VG_TRUE;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgLookup(VGImage dst, VGImage src,

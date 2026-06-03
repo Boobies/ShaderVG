@@ -243,6 +243,16 @@ typedef struct VGContext
       GLint unpremultiplyOutput;
       GLint dstStorageMode;
       GLint lookupSourceChannel;
+      GLint blurSize;
+      GLint parametricOffset;
+      GLint parametricStrength;
+      GLint parametricFlags;
+      GLint highlightPaintMode;
+      GLint shadowPaintMode;
+      GLint highlightColor;
+      GLint shadowColor;
+      GLint highlightSampler;
+      GLint shadowSampler;
   } locationImageFilter;
 
   /* GL programs */
