@@ -28,10 +28,35 @@ extern "C" {
 #endif
 
 #define VG_KHR_iterative_average_blur 1
+#define VG_KHR_advanced_blending 1
 
 #define VG_MAX_AVERAGE_BLUR_DIMENSION_KHR        0x116B
 #define VG_AVERAGE_BLUR_DIMENSION_RESOLUTION_KHR 0x116C
 #define VG_MAX_AVERAGE_BLUR_ITERATIONS_KHR       0x116D
+
+#define VG_BLEND_OVERLAY_KHR        0x2010
+#define VG_BLEND_HARDLIGHT_KHR      0x2011
+#define VG_BLEND_SOFTLIGHT_SVG_KHR  0x2012
+#define VG_BLEND_SOFTLIGHT_KHR      0x2013
+#define VG_BLEND_COLORDODGE_KHR     0x2014
+#define VG_BLEND_COLORBURN_KHR      0x2015
+#define VG_BLEND_DIFFERENCE_KHR     0x2016
+#define VG_BLEND_SUBTRACT_KHR       0x2017
+#define VG_BLEND_INVERT_KHR         0x2018
+#define VG_BLEND_EXCLUSION_KHR      0x2019
+#define VG_BLEND_LINEARDODGE_KHR    0x201A
+#define VG_BLEND_LINEARBURN_KHR     0x201B
+#define VG_BLEND_VIVIDLIGHT_KHR     0x201C
+#define VG_BLEND_LINEARLIGHT_KHR    0x201D
+#define VG_BLEND_PINLIGHT_KHR       0x201E
+#define VG_BLEND_HARDMIX_KHR        0x201F
+#define VG_BLEND_CLEAR_KHR          0x2020
+#define VG_BLEND_DST_KHR            0x2021
+#define VG_BLEND_SRC_OUT_KHR        0x2022
+#define VG_BLEND_DST_OUT_KHR        0x2023
+#define VG_BLEND_SRC_ATOP_KHR       0x2024
+#define VG_BLEND_DST_ATOP_KHR       0x2025
+#define VG_BLEND_XOR_KHR            0x2026
 
 VG_API_CALL void vgIterativeAverageBlurKHR(VGImage dst,
                                            VGImage src,

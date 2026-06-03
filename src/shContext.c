@@ -684,7 +684,8 @@ void VGContext_ctor(VGContext *c)
   strncpy(c->vendor, "Takuma Hayashi", sizeof(c->vendor));
   strncpy(c->renderer, "ShaderVG", sizeof(c->renderer));
   strncpy(c->version, "1.0.0", sizeof(c->version));
-  strncpy(c->extensions, "VG_KHR_iterative_average_blur",
+  strncpy(c->extensions,
+          "VG_KHR_iterative_average_blur VG_KHR_advanced_blending",
           sizeof(c->extensions));
   
   /* Mode settings */

@@ -89,7 +89,30 @@ int shIsEnumValid(SHint type, VGint val)
             val == VG_BLEND_SRC_OUT_SH ||
             val == VG_BLEND_DST_OUT_SH ||
             val == VG_BLEND_SRC_ATOP_SH ||
-            val == VG_BLEND_DST_ATOP_SH);
+            val == VG_BLEND_DST_ATOP_SH ||
+            val == VG_BLEND_OVERLAY_KHR ||
+            val == VG_BLEND_HARDLIGHT_KHR ||
+            val == VG_BLEND_SOFTLIGHT_SVG_KHR ||
+            val == VG_BLEND_SOFTLIGHT_KHR ||
+            val == VG_BLEND_COLORDODGE_KHR ||
+            val == VG_BLEND_COLORBURN_KHR ||
+            val == VG_BLEND_DIFFERENCE_KHR ||
+            val == VG_BLEND_SUBTRACT_KHR ||
+            val == VG_BLEND_INVERT_KHR ||
+            val == VG_BLEND_EXCLUSION_KHR ||
+            val == VG_BLEND_LINEARDODGE_KHR ||
+            val == VG_BLEND_LINEARBURN_KHR ||
+            val == VG_BLEND_VIVIDLIGHT_KHR ||
+            val == VG_BLEND_LINEARLIGHT_KHR ||
+            val == VG_BLEND_PINLIGHT_KHR ||
+            val == VG_BLEND_HARDMIX_KHR ||
+            val == VG_BLEND_CLEAR_KHR ||
+            val == VG_BLEND_DST_KHR ||
+            val == VG_BLEND_SRC_OUT_KHR ||
+            val == VG_BLEND_DST_OUT_KHR ||
+            val == VG_BLEND_SRC_ATOP_KHR ||
+            val == VG_BLEND_DST_ATOP_KHR ||
+            val == VG_BLEND_XOR_KHR);
     
   case VG_IMAGE_MODE:
     return (val == VG_DRAW_IMAGE_NORMAL ||

@@ -53,7 +53,7 @@ noinst_PROGRAMS += test_pattern
 endif
 
 if BUILD_BLEND
-noinst_PROGRAMS += test_blend
+noinst_PROGRAMS += test_blend test_advanced_blend
 endif
 
 if BUILD_ALPHA
@@ -101,6 +101,9 @@ test_pattern_SOURCES =\
 
 test_blend_SOURCES =\
 	${EXAMPLE_SRCS} test_blend.c
+
+test_advanced_blend_SOURCES =\
+	${EXAMPLE_SRCS} test_advanced_blend.c
 
 test_alpha_SOURCES =\
 	${EXAMPLE_SRCS} test_alpha.c
@@ -171,6 +174,10 @@ test_pattern_LDFLAGS = ${EXAMPLE_LF}
 test_blend_CFLAGS = ${EXAMPLE_CF}
 test_blend_LDADD = ${EXAMPLE_LA} @PNG_LIBS@
 test_blend_LDFLAGS = ${EXAMPLE_LF}
+
+test_advanced_blend_CFLAGS = ${EXAMPLE_CF}
+test_advanced_blend_LDADD = ${EXAMPLE_LA}
+test_advanced_blend_LDFLAGS = ${EXAMPLE_LF}
 
 test_alpha_CFLAGS = ${EXAMPLE_CF}
 test_alpha_LDADD = ${EXAMPLE_LA}

@@ -85,6 +85,10 @@ $ ./test_tiger_shader
   Loads PNG source and destination images and draws them with the standard
   OpenVG blend modes.
 
+#### test_advanced_blend
+  Shows `VG_KHR_advanced_blending` using vector source and destination panels
+  in the same order as the extension blend-mode tokens.
+
 #### test_alpha
   Shows source-over alpha blending with overlapping translucent red, green,
   and blue circles.
@@ -279,8 +283,8 @@ VG_KHR_EGL_image                      | NOT implemented
 vgCreateEGLImageTargetKHR             | NOT implemented
 VG_KHR_iterative_average_blur         | FULLY implemented
 vgIterativeAverageBlurKHR             | FULLY implemented
-VG_KHR_advanced_blending              | NOT implemented
-VG_BLEND_*_KHR advanced blend modes   | NOT implemented
+VG_KHR_advanced_blending              | FULLY implemented
+VG_BLEND_*_KHR advanced blend modes   | FULLY implemented
 VG_NDS_paint_generation               | NOT implemented
 VG_PAINT_COLOR_RAMP_LINEAR_NDS        | NOT implemented
 VG_COLOR_MATRIX_NDS                   | NOT implemented

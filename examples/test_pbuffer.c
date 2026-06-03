@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #if defined(__APPLE__)
 #  include <OpenGL/gl.h>
@@ -18,6 +19,7 @@
 #include <VG/vgu.h>
 
 #define WARP_TEST_EPSILON 0.001f
+#define BLEND_TEST_EPSILON 0.000001f
 
 static int expect_rgba_at(const VGubyte *data,
                           VGint stride,
@@ -1152,14 +1154,253 @@ static void store_straight_rgba(const VGfloat color[4], VGubyte out[4])
   out[3] = unit_to_byte(color[3]);
 }
 
-static void expected_blend_pixel(VGBlendMode mode,
-                                 const VGfloat srcStraight[4],
-                                 const VGfloat dstStraight[4],
-                                 VGubyte expected[4])
+static VGfloat safe_divide_float(VGfloat numerator, VGfloat denominator)
+{
+  if (denominator == 0.0f)
+    return 0.0f;
+  return numerator / denominator;
+}
+
+static int blend_definitely_less(VGfloat a, VGfloat b)
+{
+  return a < b - BLEND_TEST_EPSILON;
+}
+
+static int blend_definitely_greater(VGfloat a, VGfloat b)
+{
+  return a > b + BLEND_TEST_EPSILON;
+}
+
+static VGfloat premultiplied_common_channel(VGfloat src,
+                                            VGfloat dst,
+                                            VGfloat srcAlpha,
+                                            VGfloat dstAlpha)
+{
+  return src * (1.0f - dstAlpha) + dst * (1.0f - srcAlpha);
+}
+
+static VGfloat blend_overlay_channel(VGfloat src,
+                                     VGfloat dst,
+                                     VGfloat srcAlpha,
+                                     VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+
+  if (blend_definitely_less(2.0f * dst, dstAlpha))
+    return 2.0f * src * dst + common;
+
+  return srcAlpha * dstAlpha -
+         2.0f * (dstAlpha - dst) * (srcAlpha - src) + common;
+}
+
+static VGfloat blend_hardlight_channel(VGfloat src,
+                                       VGfloat dst,
+                                       VGfloat srcAlpha,
+                                       VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+
+  if (blend_definitely_less(2.0f * src, srcAlpha))
+    return 2.0f * src * dst + common;
+
+  return srcAlpha * dstAlpha -
+         2.0f * (dstAlpha - dst) * (srcAlpha - src) + common;
+}
+
+static VGfloat blend_softlight_svg_channel(VGfloat src,
+                                           VGfloat dst,
+                                           VGfloat srcAlpha,
+                                           VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+  VGfloat dstRatio = safe_divide_float(dst, dstAlpha);
+
+  if (blend_definitely_less(2.0f * src, srcAlpha)) {
+    return dst * (srcAlpha -
+                  (1.0f - dstRatio) * (2.0f * src - srcAlpha)) + common;
+  }
+
+  if (blend_definitely_less(8.0f * dst, dstAlpha)) {
+    return dst * (srcAlpha -
+                  (1.0f - dstRatio) * (2.0f * src - srcAlpha) *
+                  (3.0f - 8.0f * dstRatio)) + common;
+  }
+
+  return dst * srcAlpha +
+         (sqrtf(dstRatio) * dstAlpha - dst) *
+         (2.0f * src - srcAlpha) + common;
+}
+
+static VGfloat blend_softlight_channel(VGfloat src,
+                                       VGfloat dst,
+                                       VGfloat srcAlpha,
+                                       VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+  VGfloat dstRatio = safe_divide_float(dst, dstAlpha);
+
+  if (blend_definitely_less(2.0f * src, srcAlpha)) {
+    return dst * srcAlpha +
+           dst * (1.0f - dstRatio) * (2.0f * src - srcAlpha) + common;
+  }
+
+  if (blend_definitely_less(4.0f * dst, dstAlpha)) {
+    return dst * srcAlpha +
+           dst * ((16.0f * dstRatio - 12.0f) * dstRatio + 3.0f) *
+           (2.0f * src - srcAlpha) + common;
+  }
+
+  return dst * srcAlpha +
+         (sqrtf(dstRatio) * dstAlpha - dst) *
+         (2.0f * src - srcAlpha) + common;
+}
+
+static VGfloat blend_color_dodge_channel(VGfloat src,
+                                         VGfloat dst,
+                                         VGfloat srcAlpha,
+                                         VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+  VGfloat srcRatio = safe_divide_float(src, srcAlpha);
+  VGfloat srcDstAlpha = srcAlpha * dstAlpha;
+
+  if (!blend_definitely_less(src, srcAlpha))
+    return srcDstAlpha + common;
+
+  return min_float(srcDstAlpha,
+                   safe_divide_float(dst * srcAlpha,
+                                     1.0f - srcRatio)) + common;
+}
+
+static VGfloat blend_color_burn_channel(VGfloat src,
+                                        VGfloat dst,
+                                        VGfloat srcAlpha,
+                                        VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+  VGfloat srcDstAlpha = srcAlpha * dstAlpha;
+
+  if (!blend_definitely_greater(src, 0.0f))
+    return common;
+
+  return srcDstAlpha -
+         min_float(srcDstAlpha,
+                   safe_divide_float(srcAlpha * srcAlpha *
+                                     (dstAlpha - dst), src)) + common;
+}
+
+static VGfloat blend_vivid_light_channel(VGfloat src,
+                                         VGfloat dst,
+                                         VGfloat srcAlpha,
+                                         VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+  VGfloat srcDstAlpha = srcAlpha * dstAlpha;
+  VGfloat srcRatio = safe_divide_float(src, srcAlpha);
+
+  if (blend_definitely_less(2.0f * src, srcAlpha)) {
+    if (!blend_definitely_greater(src, 0.0f))
+      return common;
+    return srcDstAlpha -
+           min_float(srcDstAlpha,
+                     safe_divide_float(srcAlpha * srcAlpha *
+                                       (dstAlpha - dst),
+                                       2.0f * src)) + common;
+  }
+
+  if (!blend_definitely_less(src, srcAlpha))
+    return srcDstAlpha + common;
+
+  return min_float(srcDstAlpha,
+                   safe_divide_float(dst * srcAlpha,
+                                     2.0f * (1.0f - srcRatio))) + common;
+}
+
+static VGfloat blend_linear_light_channel(VGfloat src,
+                                          VGfloat dst,
+                                          VGfloat srcAlpha,
+                                          VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+  VGfloat srcDstAlpha = srcAlpha * dstAlpha;
+  VGfloat value = 2.0f * src * dstAlpha + dst * srcAlpha;
+
+  if (blend_definitely_greater(value, 2.0f * srcDstAlpha))
+    return srcDstAlpha + common;
+  if (blend_definitely_greater(value, srcDstAlpha))
+    return value - srcDstAlpha + common;
+  return common;
+}
+
+static VGfloat blend_pin_light_channel(VGfloat src,
+                                       VGfloat dst,
+                                       VGfloat srcAlpha,
+                                       VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+  VGfloat srcDstAlpha = srcAlpha * dstAlpha;
+  VGfloat scaledSrc = 2.0f * src * dstAlpha;
+  VGfloat scaledDst = dst * srcAlpha;
+
+  if (blend_definitely_greater(scaledSrc - scaledDst, srcDstAlpha)) {
+    if (blend_definitely_less(2.0f * src, srcAlpha))
+      return common;
+    return scaledSrc - srcDstAlpha + common;
+  }
+
+  if (blend_definitely_less(scaledSrc, scaledDst))
+    return scaledSrc + common;
+
+  return scaledDst + common;
+}
+
+static VGfloat blend_hardmix_channel(VGfloat src,
+                                     VGfloat dst,
+                                     VGfloat srcAlpha,
+                                     VGfloat dstAlpha)
+{
+  VGfloat common = premultiplied_common_channel(src, dst,
+                                                srcAlpha, dstAlpha);
+  VGfloat srcDstAlpha = srcAlpha * dstAlpha;
+
+  if (blend_definitely_less(src * dstAlpha + dst * srcAlpha, srcDstAlpha))
+    return common;
+
+  return srcDstAlpha + common;
+}
+
+static void clamp_premultiplied_color(VGfloat color[4])
+{
+  int channel;
+
+  color[3] = clamp_unit(color[3]);
+  for (channel=0; channel<3; ++channel) {
+    if (color[channel] < 0.0f)
+      color[channel] = 0.0f;
+    if (color[channel] > color[3])
+      color[channel] = color[3];
+  }
+}
+
+static void expected_blend_premultiplied(VGBlendMode mode,
+                                         const VGfloat srcStraight[4],
+                                         const VGfloat dstStraight[4],
+                                         VGfloat out[4])
 {
   VGfloat src[4];
   VGfloat dst[4];
-  VGfloat out[4];
+  VGfloat common;
+  VGfloat srcDstAlpha;
+  VGfloat value;
   int channel;
 
   premultiply_color(srcStraight, src);
@@ -1189,6 +1430,54 @@ static void expected_blend_pixel(VGBlendMode mode,
     for (channel=0; channel<3; ++channel)
       out[channel] = dst[channel] * src[3];
     out[3] = dst[3] * src[3];
+    break;
+
+  case VG_BLEND_CLEAR_KHR:
+    out[0] = 0.0f;
+    out[1] = 0.0f;
+    out[2] = 0.0f;
+    out[3] = 0.0f;
+    break;
+
+  case VG_BLEND_DST_KHR:
+    out[0] = dst[0];
+    out[1] = dst[1];
+    out[2] = dst[2];
+    out[3] = dst[3];
+    break;
+
+  case VG_BLEND_SRC_OUT_KHR:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = src[channel] * (1.0f - dst[3]);
+    out[3] = src[3] * (1.0f - dst[3]);
+    break;
+
+  case VG_BLEND_DST_OUT_KHR:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = dst[channel] * (1.0f - src[3]);
+    out[3] = dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_SRC_ATOP_KHR:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = src[channel] * dst[3] +
+                     dst[channel] * (1.0f - src[3]);
+    out[3] = dst[3];
+    break;
+
+  case VG_BLEND_DST_ATOP_KHR:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = dst[channel] * src[3] +
+                     src[channel] * (1.0f - dst[3]);
+    out[3] = src[3];
+    break;
+
+  case VG_BLEND_XOR_KHR:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = src[channel] * (1.0f - dst[3]) +
+                     dst[channel] * (1.0f - src[3]);
+    out[3] = src[3] * (1.0f - dst[3]) +
+             dst[3] * (1.0f - src[3]);
     break;
 
   case VG_BLEND_MULTIPLY:
@@ -1233,6 +1522,148 @@ static void expected_blend_pixel(VGBlendMode mode,
     out[3] = min_float(src[3] + dst[3], 1.0f);
     break;
 
+  case VG_BLEND_OVERLAY_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_overlay_channel(src[channel], dst[channel],
+                                           src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_HARDLIGHT_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_hardlight_channel(src[channel], dst[channel],
+                                             src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_SOFTLIGHT_SVG_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_softlight_svg_channel(src[channel], dst[channel],
+                                                 src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_SOFTLIGHT_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_softlight_channel(src[channel], dst[channel],
+                                             src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_COLORDODGE_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_color_dodge_channel(src[channel], dst[channel],
+                                               src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_COLORBURN_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_color_burn_channel(src[channel], dst[channel],
+                                              src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_DIFFERENCE_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = src[channel] + dst[channel] -
+                     2.0f * min_float(src[channel] * dst[3],
+                                      dst[channel] * src[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_SUBTRACT_KHR:
+    for (channel=0; channel<3; ++channel)
+      out[channel] = max_float(dst[channel] - src[channel], 0.0f);
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_INVERT_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = (1.0f - src[3]) * dst[channel] +
+                     src[3] * (1.0f - dst[channel]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_EXCLUSION_KHR:
+    for (channel=0; channel<3; ++channel) {
+      common = premultiplied_common_channel(src[channel], dst[channel],
+                                            src[3], dst[3]);
+      out[channel] = src[channel] * dst[3] +
+                     dst[channel] * src[3] -
+                     2.0f * src[channel] * dst[channel] + common;
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_LINEARDODGE_KHR:
+    srcDstAlpha = src[3] * dst[3];
+    for (channel=0; channel<3; ++channel) {
+      common = premultiplied_common_channel(src[channel], dst[channel],
+                                            src[3], dst[3]);
+      value = src[channel] * dst[3] + dst[channel] * src[3];
+      if (value <= srcDstAlpha)
+        out[channel] = src[channel] + dst[channel];
+      else
+        out[channel] = srcDstAlpha + common;
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_LINEARBURN_KHR:
+    srcDstAlpha = src[3] * dst[3];
+    for (channel=0; channel<3; ++channel) {
+      common = premultiplied_common_channel(src[channel], dst[channel],
+                                            src[3], dst[3]);
+      value = src[channel] * dst[3] + dst[channel] * src[3];
+      if (value > srcDstAlpha)
+        out[channel] = src[channel] + dst[channel] - srcDstAlpha;
+      else
+        out[channel] = common;
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_VIVIDLIGHT_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_vivid_light_channel(src[channel], dst[channel],
+                                               src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_LINEARLIGHT_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_linear_light_channel(src[channel], dst[channel],
+                                                src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_PINLIGHT_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_pin_light_channel(src[channel], dst[channel],
+                                             src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
+  case VG_BLEND_HARDMIX_KHR:
+    for (channel=0; channel<3; ++channel) {
+      out[channel] = blend_hardmix_channel(src[channel], dst[channel],
+                                           src[3], dst[3]);
+    }
+    out[3] = src[3] + dst[3] * (1.0f - src[3]);
+    break;
+
   case VG_BLEND_SRC_OVER:
   default:
     for (channel=0; channel<3; ++channel)
@@ -1241,6 +1672,38 @@ static void expected_blend_pixel(VGBlendMode mode,
     break;
   }
 
+  clamp_premultiplied_color(out);
+}
+
+static void expected_blend_pixel(VGBlendMode mode,
+                                 const VGfloat srcStraight[4],
+                                 const VGfloat dstStraight[4],
+                                 VGubyte expected[4])
+{
+  VGfloat out[4];
+
+  expected_blend_premultiplied(mode, srcStraight, dstStraight, out);
+  store_straight_rgba(out, expected);
+}
+
+static void expected_blend_covered_pixel(VGBlendMode mode,
+                                         const VGfloat srcStraight[4],
+                                         const VGfloat dstStraight[4],
+                                         VGfloat coverage,
+                                         VGubyte expected[4])
+{
+  VGfloat blended[4];
+  VGfloat dst[4];
+  VGfloat out[4];
+  int channel;
+
+  expected_blend_premultiplied(mode, srcStraight, dstStraight, blended);
+  premultiply_color(dstStraight, dst);
+  for (channel=0; channel<4; ++channel)
+    out[channel] = dst[channel] * (1.0f - coverage) +
+                   blended[channel] * coverage;
+
+  clamp_premultiplied_color(out);
   store_straight_rgba(out, expected);
 }
 
@@ -1257,6 +1720,29 @@ static const char *blend_mode_name(VGBlendMode mode)
   case VG_BLEND_DARKEN: return "VG_BLEND_DARKEN";
   case VG_BLEND_LIGHTEN: return "VG_BLEND_LIGHTEN";
   case VG_BLEND_ADDITIVE: return "VG_BLEND_ADDITIVE";
+  case VG_BLEND_OVERLAY_KHR: return "VG_BLEND_OVERLAY_KHR";
+  case VG_BLEND_HARDLIGHT_KHR: return "VG_BLEND_HARDLIGHT_KHR";
+  case VG_BLEND_SOFTLIGHT_SVG_KHR: return "VG_BLEND_SOFTLIGHT_SVG_KHR";
+  case VG_BLEND_SOFTLIGHT_KHR: return "VG_BLEND_SOFTLIGHT_KHR";
+  case VG_BLEND_COLORDODGE_KHR: return "VG_BLEND_COLORDODGE_KHR";
+  case VG_BLEND_COLORBURN_KHR: return "VG_BLEND_COLORBURN_KHR";
+  case VG_BLEND_DIFFERENCE_KHR: return "VG_BLEND_DIFFERENCE_KHR";
+  case VG_BLEND_SUBTRACT_KHR: return "VG_BLEND_SUBTRACT_KHR";
+  case VG_BLEND_INVERT_KHR: return "VG_BLEND_INVERT_KHR";
+  case VG_BLEND_EXCLUSION_KHR: return "VG_BLEND_EXCLUSION_KHR";
+  case VG_BLEND_LINEARDODGE_KHR: return "VG_BLEND_LINEARDODGE_KHR";
+  case VG_BLEND_LINEARBURN_KHR: return "VG_BLEND_LINEARBURN_KHR";
+  case VG_BLEND_VIVIDLIGHT_KHR: return "VG_BLEND_VIVIDLIGHT_KHR";
+  case VG_BLEND_LINEARLIGHT_KHR: return "VG_BLEND_LINEARLIGHT_KHR";
+  case VG_BLEND_PINLIGHT_KHR: return "VG_BLEND_PINLIGHT_KHR";
+  case VG_BLEND_HARDMIX_KHR: return "VG_BLEND_HARDMIX_KHR";
+  case VG_BLEND_CLEAR_KHR: return "VG_BLEND_CLEAR_KHR";
+  case VG_BLEND_DST_KHR: return "VG_BLEND_DST_KHR";
+  case VG_BLEND_SRC_OUT_KHR: return "VG_BLEND_SRC_OUT_KHR";
+  case VG_BLEND_DST_OUT_KHR: return "VG_BLEND_DST_OUT_KHR";
+  case VG_BLEND_SRC_ATOP_KHR: return "VG_BLEND_SRC_ATOP_KHR";
+  case VG_BLEND_DST_ATOP_KHR: return "VG_BLEND_DST_ATOP_KHR";
+  case VG_BLEND_XOR_KHR: return "VG_BLEND_XOR_KHR";
   default: return "unknown blend mode";
   }
 }
@@ -1329,6 +1815,212 @@ static int run_core_blend_mode_test(unsigned char *pixels,
 
 cleanup:
   vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+  return result;
+}
+
+static int run_advanced_blend_mode_test(unsigned char *pixels,
+                                        EGLint width,
+                                        EGLint height)
+{
+  struct {
+    VGBlendMode mode;
+  } cases[] = {
+    { VG_BLEND_OVERLAY_KHR },
+    { VG_BLEND_HARDLIGHT_KHR },
+    { VG_BLEND_SOFTLIGHT_SVG_KHR },
+    { VG_BLEND_SOFTLIGHT_KHR },
+    { VG_BLEND_COLORDODGE_KHR },
+    { VG_BLEND_COLORBURN_KHR },
+    { VG_BLEND_DIFFERENCE_KHR },
+    { VG_BLEND_SUBTRACT_KHR },
+    { VG_BLEND_INVERT_KHR },
+    { VG_BLEND_EXCLUSION_KHR },
+    { VG_BLEND_LINEARDODGE_KHR },
+    { VG_BLEND_LINEARBURN_KHR },
+    { VG_BLEND_VIVIDLIGHT_KHR },
+    { VG_BLEND_LINEARLIGHT_KHR },
+    { VG_BLEND_PINLIGHT_KHR },
+    { VG_BLEND_HARDMIX_KHR },
+    { VG_BLEND_CLEAR_KHR },
+    { VG_BLEND_DST_KHR },
+    { VG_BLEND_SRC_OUT_KHR },
+    { VG_BLEND_DST_OUT_KHR },
+    { VG_BLEND_SRC_ATOP_KHR },
+    { VG_BLEND_DST_ATOP_KHR },
+    { VG_BLEND_XOR_KHR }
+  };
+  struct {
+    VGfloat src[4];
+    VGfloat dst[4];
+  } samples[] = {
+    {
+      { 0.80f, 0.20f, 0.60f, 0.50f },
+      { 0.25f, 0.70f, 0.40f, 0.625f }
+    },
+    {
+      { 0.20f, 0.85f, 0.45f, 0.80f },
+      { 0.90f, 0.15f, 0.52f, 0.70f }
+    },
+    {
+      { 0.07f, 0.88f, 0.52f, 0.65f },
+      { 0.86f, 0.14f, 0.58f, 0.40f }
+    },
+    {
+      { 0.30f, 0.70f, 0.10f, 0.00f },
+      { 0.40f, 0.20f, 0.90f, 0.60f }
+    }
+  };
+  VGPath rect = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  const char *extensions;
+  VGubyte expected[4];
+  int i;
+  int sample;
+  int result = 0;
+
+  extensions = (const char*)vgGetString(VG_EXTENSIONS);
+  if (!extensions || !strstr(extensions, "VG_KHR_advanced_blending")) {
+    fprintf(stderr, "OpenVG did not advertise VG_KHR_advanced_blending\n");
+    return 1;
+  }
+
+  rect = create_rect_path((VGfloat)width, (VGfloat)height);
+  paint = vgCreatePaint();
+  if (rect == VG_INVALID_HANDLE || paint == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG advanced blend mode test setup failed");
+    goto cleanup;
+  }
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSetPaint(paint, VG_FILL_PATH);
+
+  for (i=0; i<(int)(sizeof(cases) / sizeof(cases[0])); ++i) {
+    for (sample=0; sample<(int)(sizeof(samples) / sizeof(samples[0]));
+         ++sample) {
+      expected_blend_pixel(cases[i].mode, samples[sample].src,
+                           samples[sample].dst, expected);
+      vgSetfv(VG_CLEAR_COLOR, 4, samples[sample].dst);
+      vgClear(0, 0, width, height);
+      vgSetParameterfv(paint, VG_PAINT_COLOR, 4, samples[sample].src);
+      vgSeti(VG_BLEND_MODE, cases[i].mode);
+      vgDrawPath(rect, VG_FILL_PATH);
+      vgFinish();
+      vgReadPixels(pixels, width * 4, VG_sRGBA_8888,
+                   0, 0, width, height);
+
+      if (expect_no_vg_error("OpenVG advanced blend mode test failed")) {
+        result = 1;
+        goto cleanup;
+      }
+
+      if (expect_rgba_at(pixels, width * 4, width / 2, height / 2,
+                         expected[0], expected[1],
+                         expected[2], expected[3],
+                         "OpenVG advanced blend mode produced an unexpected pixel")) {
+        fprintf(stderr, "%s sample %d expected %u,%u,%u,%u\n",
+                blend_mode_name(cases[i].mode), sample,
+                expected[0], expected[1], expected[2], expected[3]);
+        result = 1;
+        goto cleanup;
+      }
+    }
+  }
+
+cleanup:
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+  return result;
+}
+
+static int run_advanced_blend_mask_test(unsigned char *pixels,
+                                        EGLint width,
+                                        EGLint height)
+{
+  struct {
+    VGBlendMode mode;
+  } cases[] = {
+    { VG_BLEND_OVERLAY_KHR },
+    { VG_BLEND_CLEAR_KHR }
+  };
+  VGfloat dstColor[] = { 0.25f, 0.70f, 0.40f, 0.625f };
+  VGfloat srcColor[] = { 0.80f, 0.20f, 0.60f, 0.50f };
+  VGPath rect = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGImage mask = VG_INVALID_HANDLE;
+  VGubyte *maskData = NULL;
+  VGubyte expected[4];
+  VGfloat coverage = 128.0f / 255.0f;
+  int i;
+  int result = 0;
+
+  rect = create_rect_path((VGfloat)width, (VGfloat)height);
+  paint = vgCreatePaint();
+  mask = vgCreateImage(VG_A_8, width, height, VG_IMAGE_QUALITY_BETTER);
+  maskData = malloc((size_t)width * (size_t)height);
+  if (rect == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE ||
+      mask == VG_INVALID_HANDLE ||
+      !maskData) {
+    result = fail_vg("OpenVG advanced blend mask test setup failed");
+    goto cleanup;
+  }
+
+  memset(maskData, 128, (size_t)width * (size_t)height);
+  vgImageSubData(mask, maskData, width, VG_A_8, 0, 0, width, height);
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, srcColor);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+
+  for (i=0; i<(int)(sizeof(cases) / sizeof(cases[0])); ++i) {
+    expected_blend_covered_pixel(cases[i].mode, srcColor, dstColor,
+                                 coverage, expected);
+    vgSeti(VG_MASKING, VG_FALSE);
+    vgSetfv(VG_CLEAR_COLOR, 4, dstColor);
+    vgClear(0, 0, width, height);
+    vgMask(mask, VG_SET_MASK, 0, 0, width, height);
+    vgSeti(VG_MASKING, VG_TRUE);
+    vgSeti(VG_BLEND_MODE, cases[i].mode);
+    vgDrawPath(rect, VG_FILL_PATH);
+    vgFinish();
+    vgReadPixels(pixels, width * 4, VG_sRGBA_8888,
+                 0, 0, width, height);
+
+    if (expect_no_vg_error("OpenVG advanced blend mask test failed")) {
+      result = 1;
+      goto cleanup;
+    }
+
+    if (expect_rgba_at(pixels, width * 4, width / 2, height / 2,
+                       expected[0], expected[1], expected[2], expected[3],
+                       "OpenVG advanced blend mask coverage produced an unexpected pixel")) {
+      fprintf(stderr, "%s masked expected %u,%u,%u,%u\n",
+              blend_mode_name(cases[i].mode),
+              expected[0], expected[1], expected[2], expected[3]);
+      result = 1;
+      goto cleanup;
+    }
+  }
+
+cleanup:
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  if (width > 0 && height > 0)
+    vgMask(VG_INVALID_HANDLE, VG_FILL_MASK, 0, 0, width, height);
+  free(maskData);
+  if (mask != VG_INVALID_HANDLE)
+    vgDestroyImage(mask);
   if (paint != VG_INVALID_HANDLE)
     vgDestroyPaint(paint);
   if (rect != VG_INVALID_HANDLE)
@@ -3182,6 +3874,10 @@ int main(void)
         result = run_src_over_alpha_test(pixels, width, height);
       if (result == 0)
         result = run_core_blend_mode_test(pixels, width, height);
+      if (result == 0)
+        result = run_advanced_blend_mode_test(pixels, width, height);
+      if (result == 0)
+        result = run_advanced_blend_mask_test(pixels, width, height);
       if (result == 0)
         result = run_rendering_quality_antialias_test(pixels, width, height);
       if (result == 0)

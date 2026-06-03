@@ -20,6 +20,7 @@
 
 #define VG_API_EXPORT
 #include <VG/openvg.h>
+#include <VG/vgext.h>
 #include "shDefs.h"
 #include "shExtensions.h"
 #include "shContext.h"
@@ -43,6 +44,10 @@ void shUnpremultiplyFramebuffer()
 static VGboolean shUsesShaderBlendMode(VGBlendMode mode,
                                        VGboolean sourceCoverageEnabled)
 {
+  if ((VGint)mode >= VG_BLEND_OVERLAY_KHR &&
+      (VGint)mode <= VG_BLEND_XOR_KHR)
+    return VG_TRUE;
+
   if (mode == VG_BLEND_MULTIPLY ||
       mode == VG_BLEND_SCREEN ||
       mode == VG_BLEND_DARKEN ||
