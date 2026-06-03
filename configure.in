@@ -45,6 +45,11 @@ AC_ARG_WITH(
 	[build_test_interpolate=$withval], [build_test_interpolate="$build_test_all"])
 
 AC_ARG_WITH(
+	[example-paths],
+	[  --with-example-paths          Build Path Metrics example (default=yes)],
+	[build_test_paths=$withval], [build_test_paths="$build_test_all"])
+
+AC_ARG_WITH(
 	[example-tiger],
 	[  --with-example-tiger          Build Tiger SVG example (default=yes)],
 	[build_test_tiger=$withval], [build_test_tiger="$build_test_all"])
@@ -325,6 +330,7 @@ AM_CONDITIONAL([BUILD_DASH],        [test "x$build_test_dash" = "xyes"])
 AM_CONDITIONAL([BUILD_LINEAR],      [test "x$build_test_linear" = "xyes"])
 AM_CONDITIONAL([BUILD_RADIAL],      [test "x$build_test_radial" = "xyes"])
 AM_CONDITIONAL([BUILD_INTERPOLATE], [test "x$build_test_interpolate" = "xyes"])
+AM_CONDITIONAL([BUILD_PATHS],       [test "x$build_test_paths" = "xyes"])
 AM_CONDITIONAL([BUILD_TIGER],       [test "x$build_test_tiger" = "xyes"])
 AM_CONDITIONAL([BUILD_IMAGE],       [test "x$build_test_image" = "xyes"])
 AM_CONDITIONAL([BUILD_PATTERN],     [test "x$build_test_pattern" = "xyes"])
@@ -363,6 +369,7 @@ ShaderVG will be compiled with the following example programs
   Linear Gradient           ${build_test_linear}
   Radial Gradient           ${build_test_radial}
   Path Interpolation        ${build_test_interpolate}
+  Path Metrics              ${build_test_paths}
   Tiger SVG                 ${build_test_tiger}
   Images                    ${build_test_image}
   Pattern paint             ${build_test_pattern}

@@ -40,6 +40,10 @@ if BUILD_INTERPOLATE
 noinst_PROGRAMS += test_interpolate
 endif
 
+if BUILD_PATHS
+noinst_PROGRAMS += test_paths
+endif
+
 if BUILD_TIGER
 noinst_PROGRAMS += test_tiger
 endif
@@ -89,6 +93,9 @@ test_radial_SOURCES =\
 
 test_interpolate_SOURCES =\
 	${EXAMPLE_SRCS} test_interpolate.c
+
+test_paths_SOURCES =\
+	${EXAMPLE_SRCS} test_paths.c
 
 test_tiger_SOURCES =\
 	${EXAMPLE_SRCS} test_tiger.c test_tiger_paths.c
@@ -161,6 +168,10 @@ test_radial_LDFLAGS = ${EXAMPLE_LF}
 test_interpolate_CFLAGS = ${EXAMPLE_CF}
 test_interpolate_LDADD = ${EXAMPLE_LA}
 test_interpolate_LDFLAGS = ${EXAMPLE_LF}
+
+test_paths_CFLAGS = ${EXAMPLE_CF}
+test_paths_LDADD = ${EXAMPLE_LA}
+test_paths_LDFLAGS = ${EXAMPLE_LF}
 
 test_tiger_CFLAGS = ${EXAMPLE_CF}
 test_tiger_LDADD = ${EXAMPLE_LA}

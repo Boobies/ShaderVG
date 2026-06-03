@@ -22,6 +22,7 @@
 #include <VG/openvg.h>
 #include "shContext.h"
 #include "shGeometry.h"
+#include <string.h>
 
 
 static int shAddVertex(SHPath *p, SHVertex *v, SHint *contourStart)
@@ -359,6 +360,7 @@ void shFlattenPath(SHPath *p, SHint surfaceSpace)
   userData[0] = &contourStart;
   userData[1] = &surfaceSpace;
   
+  p->vertices.outofmemory = 0;
   shVertexArrayClear(&p->vertices);
   shProcessPathData(p, processFlags, shSubdivideSegment, userData);
 }
@@ -922,10 +924,360 @@ VG_API_CALL void vgPathTransformedBounds(VGPath path,
   VG_RETURN(VG_NO_RETVAL);
 }
 
+typedef struct {
+  SHint first;
+  SHint last;
+} SHPathSegmentRange;
+
+typedef struct {
+  SHPathSegmentRange *ranges;
+  SHint *contourStart;
+  SHint *surfaceSpace;
+} SHPathRangeData;
+
+typedef struct {
+  SHfloat length;
+  SHVector2 start;
+  SHVector2 end;
+  SHVector2 startTangent;
+  SHVector2 endTangent;
+  SHint hasStart;
+  SHint hasEnd;
+  SHint hasStartTangent;
+  SHint hasEndTangent;
+} SHPathMeasure;
+
+typedef struct {
+  SHfloat target;
+  SHfloat length;
+  SHVector2 point;
+  SHVector2 tangent;
+  SHint found;
+} SHPathPointQuery;
+
+static SHint shPathRangeValid(SHPath *p,
+                              VGint startSegment,
+                              VGint numSegments)
+{
+  if (startSegment < 0 || numSegments <= 0)
+    return 0;
+
+  if (startSegment >= p->segCount)
+    return 0;
+
+  if (numSegments > p->segCount - startSegment)
+    return 0;
+
+  return 1;
+}
+
+static SHint shPathFloatAligned(const VGfloat *value)
+{
+  return ((uintptr_t)value % sizeof(VGfloat)) == 0;
+}
+
+static SHfloat shPathDistance(SHVector2 *a, SHVector2 *b)
+{
+  SHVector2 d;
+
+  SET2V(d, (*b));
+  SUB2V(d, (*a));
+  return NORM2(d);
+}
+
+static SHint shPathSegmentHasLength(SHPath *p,
+                                    SHPathSegmentRange *range,
+                                    SHint *first,
+                                    SHint *last)
+{
+  if (range->first < 0 || range->last <= range->first)
+    return 0;
+
+  if (range->first <= 0)
+    return 0;
+
+  if (range->last > p->vertices.size)
+    return 0;
+
+  *first = range->first - 1;
+  *last = range->last - 1;
+  return 1;
+}
+
+static void shSetUnitDirection(SHVector2 *from,
+                               SHVector2 *to,
+                               SHVector2 *direction)
+{
+  SHfloat length;
+
+  SET2V((*direction), (*to));
+  SUB2V((*direction), (*from));
+  length = NORM2((*direction));
+  if (length > 0.0f) {
+    DIV2((*direction), length);
+  } else {
+    SET2((*direction), 1.0f, 0.0f);
+  }
+}
+
+static void shStoreRangeSegment(SHPath *p,
+                                VGPathSegment segment,
+                                VGPathCommand originalCommand,
+                                SHint originalIndex,
+                                SHfloat *data,
+                                void *userData)
+{
+  SHPathRangeData *rangeData = (SHPathRangeData*)userData;
+  SHint first;
+  SHint last;
+  SHuint originalSegment;
+  SHint *subdivideUserData[2];
+
+  first = p->vertices.size;
+  subdivideUserData[0] = rangeData->contourStart;
+  subdivideUserData[1] = rangeData->surfaceSpace;
+
+  shSubdivideSegment(p, segment, originalCommand, data, subdivideUserData);
+
+  last = p->vertices.size;
+  originalSegment = originalCommand & 0x1E;
+  if (segment == VG_MOVE_TO && originalSegment != VG_MOVE_TO)
+    return;
+
+  if (originalIndex >= 0 && rangeData->ranges[originalIndex].first < 0) {
+    rangeData->ranges[originalIndex].first = first;
+    rangeData->ranges[originalIndex].last = last;
+  } else if (originalIndex >= 0) {
+    rangeData->ranges[originalIndex].last = last;
+  }
+}
+
+static SHint shFlattenPathForMeasurement(SHPath *p,
+                                         SHPathSegmentRange *ranges)
+{
+  SHint i;
+  SHint contourStart = -1;
+  SHint surfaceSpace = 0;
+  SHint processFlags =
+    SH_PROCESS_SIMPLIFY_LINES |
+    SH_PROCESS_SIMPLIFY_CURVES |
+    SH_PROCESS_CENTRALIZE_ARCS |
+    SH_PROCESS_REPAIR_ENDS;
+  SHPathRangeData rangeData;
+
+  for (i=0; i<p->segCount; ++i) {
+    ranges[i].first = -1;
+    ranges[i].last = -1;
+  }
+
+  rangeData.ranges = ranges;
+  rangeData.contourStart = &contourStart;
+  rangeData.surfaceSpace = &surfaceSpace;
+
+  p->vertices.outofmemory = 0;
+  shVertexArrayClear(&p->vertices);
+  shProcessPathDataIndexed(p, processFlags, shStoreRangeSegment, &rangeData);
+  p->cacheDataValid = VG_FALSE;
+
+  return p->vertices.outofmemory == 0;
+}
+
+static void shPathMeasureAddEdge(SHPathMeasure *measure,
+                                 SHVector2 *from,
+                                 SHVector2 *to)
+{
+  SHVector2 tangent;
+  SHfloat edgeLength;
+
+  edgeLength = shPathDistance(from, to);
+  if (!measure->hasStart) {
+    measure->start = *from;
+    measure->hasStart = 1;
+  }
+
+  measure->end = *to;
+  measure->hasEnd = 1;
+
+  if (edgeLength <= 0.0f)
+    return;
+
+  shSetUnitDirection(from, to, &tangent);
+  if (!measure->hasStartTangent) {
+    measure->startTangent = tangent;
+    measure->hasStartTangent = 1;
+  }
+  measure->endTangent = tangent;
+  measure->hasEndTangent = 1;
+  measure->length += edgeLength;
+}
+
+static void shMeasurePathRange(SHPath *p,
+                               SHPathSegmentRange *ranges,
+                               VGint startSegment,
+                               VGint numSegments,
+                               SHPathMeasure *measure)
+{
+  SHint s, i;
+  SHint first = 0;
+  SHint last = 0;
+
+  memset(measure, 0, sizeof(*measure));
+  SET2(measure->startTangent, 1.0f, 0.0f);
+  SET2(measure->endTangent, 1.0f, 0.0f);
+
+  for (s=startSegment; s<startSegment + numSegments; ++s) {
+    if (!shPathSegmentHasLength(p, &ranges[s], &first, &last)) {
+      if (ranges[s].first >= 0 && ranges[s].last > ranges[s].first) {
+        SHVector2 point = p->vertices.items[ranges[s].last - 1].point;
+        if (!measure->hasStart) {
+          measure->start = point;
+          measure->hasStart = 1;
+        }
+        measure->end = point;
+        measure->hasEnd = 1;
+      }
+      continue;
+    }
+
+    for (i=first; i<last; ++i)
+      shPathMeasureAddEdge(measure,
+                           &p->vertices.items[i].point,
+                           &p->vertices.items[i + 1].point);
+  }
+
+  if (!measure->hasEnd && measure->hasStart) {
+    measure->end = measure->start;
+    measure->hasEnd = 1;
+  }
+}
+
+static void shPathQueryAddEdge(SHPathPointQuery *query,
+                               SHVector2 *from,
+                               SHVector2 *to)
+{
+  SHVector2 tangent;
+  SHfloat edgeLength;
+  SHfloat t;
+
+  if (query->found)
+    return;
+
+  edgeLength = shPathDistance(from, to);
+  if (edgeLength <= 0.0f)
+    return;
+
+  shSetUnitDirection(from, to, &tangent);
+  query->tangent = tangent;
+
+  if (query->target <= query->length + edgeLength) {
+    t = (query->target - query->length) / edgeLength;
+    SH_CLAMP(t, 0.0f, 1.0f);
+    query->point.x = from->x + (to->x - from->x) * t;
+    query->point.y = from->y + (to->y - from->y) * t;
+    query->found = 1;
+    return;
+  }
+
+  query->length += edgeLength;
+}
+
+static SHint shPointAlongMeasuredPath(SHPath *p,
+                                      SHPathSegmentRange *ranges,
+                                      VGint startSegment,
+                                      VGint numSegments,
+                                      SHPathMeasure *measure,
+                                      SHfloat distance,
+                                      SHVector2 *point,
+                                      SHVector2 *tangent)
+{
+  SHint s, i;
+  SHint first = 0;
+  SHint last = 0;
+  SHPathPointQuery query;
+
+  if (!measure->hasStart)
+    return 0;
+
+  if (distance <= 0.0f || measure->length <= 0.0f) {
+    *point = measure->start;
+    if (measure->hasStartTangent)
+      *tangent = measure->startTangent;
+    else if (measure->hasEndTangent)
+      *tangent = measure->endTangent;
+    else
+      SET2((*tangent), 1.0f, 0.0f);
+    return 1;
+  }
+
+  if (distance >= measure->length) {
+    *point = measure->end;
+    if (measure->hasEndTangent)
+      *tangent = measure->endTangent;
+    else if (measure->hasStartTangent)
+      *tangent = measure->startTangent;
+    else
+      SET2((*tangent), 1.0f, 0.0f);
+    return 1;
+  }
+
+  memset(&query, 0, sizeof(query));
+  query.target = distance;
+
+  for (s=startSegment; s<startSegment + numSegments; ++s) {
+    if (!shPathSegmentHasLength(p, &ranges[s], &first, &last))
+      continue;
+
+    for (i=first; i<last; ++i) {
+      shPathQueryAddEdge(&query,
+                         &p->vertices.items[i].point,
+                         &p->vertices.items[i + 1].point);
+      if (query.found) {
+        *point = query.point;
+        *tangent = query.tangent;
+        return 1;
+      }
+    }
+  }
+
+  *point = measure->end;
+  if (measure->hasEndTangent)
+    *tangent = measure->endTangent;
+  else
+    SET2((*tangent), 1.0f, 0.0f);
+  return 1;
+}
+
 VG_API_CALL VGfloat vgPathLength(VGPath path,
                                  VGint startSegment, VGint numSegments)
 {
-  return 0.0f;
+  SHPath *p = NULL;
+  SHPathSegmentRange *ranges = NULL;
+  SHPathMeasure measure;
+  VG_GETCONTEXT(-1.0f);
+
+  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+                   VG_BAD_HANDLE_ERROR, -1.0f);
+
+  p = (SHPath*)path;
+  VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_PATH_LENGTH),
+                   VG_PATH_CAPABILITY_ERROR, -1.0f);
+
+  VG_RETURN_ERR_IF(!shPathRangeValid(p, startSegment, numSegments),
+                   VG_ILLEGAL_ARGUMENT_ERROR, -1.0f);
+
+  ranges = (SHPathSegmentRange*)malloc(sizeof(SHPathSegmentRange) *
+                                       (size_t)p->segCount);
+  VG_RETURN_ERR_IF(!ranges, VG_OUT_OF_MEMORY_ERROR, -1.0f);
+
+  if (!shFlattenPathForMeasurement(p, ranges)) {
+    free(ranges);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, -1.0f);
+  }
+
+  shMeasurePathRange(p, ranges, startSegment, numSegments, &measure);
+  free(ranges);
+
+  VG_RETURN(measure.length);
 }
 
 VG_API_CALL void vgPointAlongPath(VGPath path,
@@ -934,4 +1286,60 @@ VG_API_CALL void vgPointAlongPath(VGPath path,
                                   VGfloat * x, VGfloat * y,
                                   VGfloat * tangentX, VGfloat * tangentY)
 {
+  SHPath *p = NULL;
+  SHPathSegmentRange *ranges = NULL;
+  SHPathMeasure measure;
+  SHVector2 point;
+  SHVector2 tangent;
+  SHint wantPoint;
+  SHint wantTangent;
+  VG_GETCONTEXT(VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+
+  p = (SHPath*)path;
+  wantPoint = x != NULL && y != NULL;
+  wantTangent = tangentX != NULL && tangentY != NULL;
+
+  VG_RETURN_ERR_IF((wantPoint &&
+                    !(p->caps & VG_PATH_CAPABILITY_POINT_ALONG_PATH)) ||
+                   (wantTangent &&
+                    !(p->caps & VG_PATH_CAPABILITY_TANGENT_ALONG_PATH)),
+                   VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF(!shPathRangeValid(p, startSegment, numSegments) ||
+                   SH_ISNAN(distance),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  VG_RETURN_ERR_IF((x && !shPathFloatAligned(x)) ||
+                   (y && !shPathFloatAligned(y)) ||
+                   (tangentX && !shPathFloatAligned(tangentX)) ||
+                   (tangentY && !shPathFloatAligned(tangentY)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
+  ranges = (SHPathSegmentRange*)malloc(sizeof(SHPathSegmentRange) *
+                                       (size_t)p->segCount);
+  VG_RETURN_ERR_IF(!ranges, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+
+  if (!shFlattenPathForMeasurement(p, ranges)) {
+    free(ranges);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+
+  shMeasurePathRange(p, ranges, startSegment, numSegments, &measure);
+  if (shPointAlongMeasuredPath(p, ranges, startSegment, numSegments,
+                               &measure, distance, &point, &tangent)) {
+    if (wantPoint) {
+      *x = point.x;
+      *y = point.y;
+    }
+    if (wantTangent) {
+      *tangentX = tangent.x;
+      *tangentY = tangent.y;
+    }
+  }
+
+  free(ranges);
+  VG_RETURN(VG_NO_RETVAL);
 }

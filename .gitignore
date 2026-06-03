@@ -35,6 +35,7 @@ examples/test_antialias
 examples/test_dash
 examples/test_image
 examples/test_interpolate
+examples/test_paths
 examples/test_linear
 examples/test_pattern
 examples/test_radial

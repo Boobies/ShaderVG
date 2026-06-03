@@ -726,10 +726,27 @@ SHint shCentralizeArc(SHuint command, SHfloat *data)
 #define SH_PROCESS_CENTRALIZE_ARCS   (1 << 2)
 #define SH_PROCESS_REPAIR_ENDS       (1 << 3)
 
-void shProcessPathData(SHPath *p,
-                       int flags,
-                       SegmentFunc callback,
-                       void *userData)
+static void shCallPathSegment(SHPath *p,
+                              SegmentFunc callback,
+                              IndexedSegmentFunc indexedCallback,
+                              SHint originalIndex,
+                              VGPathSegment segment,
+                              VGPathCommand originalCommand,
+                              SHfloat *data,
+                              void *userData)
+{
+  if (indexedCallback)
+    (*indexedCallback)(p, segment, originalCommand, originalIndex,
+                       data, userData);
+  else if (callback)
+    (*callback)(p, segment, originalCommand, data, userData);
+}
+
+static void shProcessPathDataInternal(SHPath *p,
+                                      int flags,
+                                      SegmentFunc callback,
+                                      IndexedSegmentFunc indexedCallback,
+                                      void *userData)
 {
   SHint i=0, s=0, d=0, c=0;
   SHuint command;
@@ -768,7 +785,8 @@ void shProcessPathData(SHPath *p,
       if (!open && segment != VG_MOVE_TO) {
         data[0] = pen.x; data[1] = pen.y;
         data[2] = pen.x; data[3] = pen.y;
-        (*callback)(p,VG_MOVE_TO,command,data,userData);
+        shCallPathSegment(p, callback, indexedCallback, s,
+                          VG_MOVE_TO, command, data, userData);
         open = 1;
       }
       
@@ -805,7 +823,8 @@ void shProcessPathData(SHPath *p,
       SET2V(tan, start);
       open = 0;
       
-      (*callback)(p,VG_CLOSE_PATH,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        VG_CLOSE_PATH, command, data, userData);
       
       break;
     case VG_MOVE_TO:
@@ -819,7 +838,8 @@ void shProcessPathData(SHPath *p,
       SET2V(tan, pen);
       open = 1;
       
-      (*callback)(p,VG_MOVE_TO,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        VG_MOVE_TO, command, data, userData);
       
       break;
     case VG_LINE_TO:
@@ -831,7 +851,8 @@ void shProcessPathData(SHPath *p,
       SET2(pen, data[2], data[3]);
       SET2V(tan, pen);
       
-      (*callback)(p,VG_LINE_TO,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        VG_LINE_TO, command, data, userData);
       
       break;
     case VG_HLINE_TO:
@@ -844,11 +865,13 @@ void shProcessPathData(SHPath *p,
       
       if (flags & SH_PROCESS_SIMPLIFY_LINES) {
         data[3] = pen.y;
-        (*callback)(p,VG_LINE_TO,command,data,userData);
+        shCallPathSegment(p, callback, indexedCallback, s,
+                          VG_LINE_TO, command, data, userData);
         break;
       }
       
-      (*callback)(p,VG_HLINE_TO,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        VG_HLINE_TO, command, data, userData);
       
       break;
     case VG_VLINE_TO:
@@ -861,11 +884,13 @@ void shProcessPathData(SHPath *p,
       
       if (flags & SH_PROCESS_SIMPLIFY_LINES) {
         data[2] = pen.x; data[3] = pen.y;
-        (*callback)(p,VG_LINE_TO,command,data,userData);
+        shCallPathSegment(p, callback, indexedCallback, s,
+                          VG_LINE_TO, command, data, userData);
         break;
       }
        
-      (*callback)(p,VG_VLINE_TO,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        VG_VLINE_TO, command, data, userData);
       
       break;
     case VG_QUAD_TO:
@@ -878,7 +903,8 @@ void shProcessPathData(SHPath *p,
       SET2(tan, data[2], data[3]);
       SET2(pen, data[4], data[5]);
       
-      (*callback)(p,VG_QUAD_TO,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        VG_QUAD_TO, command, data, userData);
       
       break;
     case VG_CUBIC_TO:
@@ -892,7 +918,8 @@ void shProcessPathData(SHPath *p,
       SET2(tan, data[4], data[5]);
       SET2(pen, data[6], data[7]);
       
-      (*callback)(p,VG_CUBIC_TO,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        VG_CUBIC_TO, command, data, userData);
       
       break;
     case VG_SQUAD_TO:
@@ -907,11 +934,13 @@ void shProcessPathData(SHPath *p,
       if (flags & SH_PROCESS_SIMPLIFY_CURVES) {
         data[2] = tan.x; data[3] = tan.y;
         data[4] = pen.x; data[5] = pen.y;
-        (*callback)(p,VG_QUAD_TO,command,data,userData);
+        shCallPathSegment(p, callback, indexedCallback, s,
+                          VG_QUAD_TO, command, data, userData);
         break;
       }
       
-      (*callback)(p,VG_SQUAD_TO,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        VG_SQUAD_TO, command, data, userData);
       
       break;
     case VG_SCUBIC_TO:
@@ -929,11 +958,13 @@ void shProcessPathData(SHPath *p,
         data[3] = 2*pen.y - tan.y;
         data[4] = tan.x; data[5] = tan.y;
         data[6] = pen.x; data[7] = pen.y;
-        (*callback)(p,VG_CUBIC_TO,command,data,userData);
+        shCallPathSegment(p, callback, indexedCallback, s,
+                          VG_CUBIC_TO, command, data, userData);
         break;
       }
       
-      (*callback)(p,VG_SCUBIC_TO,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        VG_SCUBIC_TO, command, data, userData);
       
       break;
     case VG_SCWARC_TO: case VG_SCCWARC_TO:
@@ -951,17 +982,36 @@ void shProcessPathData(SHPath *p,
       
       if (flags & SH_PROCESS_CENTRALIZE_ARCS) {
         if (shCentralizeArc(command, data))
-          (*callback)(p,segment,command,data,userData);
+          shCallPathSegment(p, callback, indexedCallback, s,
+                            segment, command, data, userData);
         else
-          (*callback)(p,VG_LINE_TO,command,data,userData);
+          shCallPathSegment(p, callback, indexedCallback, s,
+                            VG_LINE_TO, command, data, userData);
         break;
       }
       
-      (*callback)(p,segment,command,data,userData);
+      shCallPathSegment(p, callback, indexedCallback, s,
+                        segment, command, data, userData);
       break;
       
     } /* switch (command) */
   } /* for each segment */
+}
+
+void shProcessPathData(SHPath *p,
+                       int flags,
+                       SegmentFunc callback,
+                       void *userData)
+{
+  shProcessPathDataInternal(p, flags, callback, NULL, userData);
+}
+
+void shProcessPathDataIndexed(SHPath *p,
+                              int flags,
+                              IndexedSegmentFunc callback,
+                              void *userData)
+{
+  shProcessPathDataInternal(p, flags, NULL, callback, userData);
 }
 
 /*-------------------------------------------------------

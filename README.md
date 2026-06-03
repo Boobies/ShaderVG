@@ -73,6 +73,10 @@ $ ./test_tiger_shader
 #### test_interpolate
   Interpolates between two paths - an apple and a pear.
 
+#### test_paths
+  Demonstrates path metrics by animating a marker and tangent indicators along
+  a dashed curve, while also showing path interpolation and bounds overlays.
+
 #### test_image
   Images are drawn using VG_DRAW_IMAGE_MULTIPLY image mode to be
   multiplied with radial gradient fill paint.
@@ -196,8 +200,8 @@ vgAppendPathData        | FULLY implemented
 vgModifyPathCoords      | FULLY implemented                     
 vgTransformPath         | FULLY implemented                     
 vgInterpolatePath       | FULLY implemented                     
-vgPathLength            | NOT implemented                       
-vgPointAlongPath        | NOT implemented                       
+vgPathLength            | FULLY implemented
+vgPointAlongPath        | FULLY implemented
 vgPathBounds            | FULLY implemented                     
 vgPathTransformedBounds | FULLY implemented                     
 vgDrawPath              | PARTIALLY implemented                 

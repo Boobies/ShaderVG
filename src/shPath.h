@@ -129,10 +129,19 @@ typedef void (*SegmentFunc) (SHPath *p, VGPathSegment segment,
                              VGPathCommand originalCommand,
                              SHfloat *data, void *userData);
 
+typedef void (*IndexedSegmentFunc) (SHPath *p, VGPathSegment segment,
+                                    VGPathCommand originalCommand,
+                                    SHint originalIndex,
+                                    SHfloat *data, void *userData);
+
 /* Processes raw path data into normalized segments */
 void shProcessPathData(SHPath *p, int flags,
                        SegmentFunc callback,
                        void *userData);
+
+void shProcessPathDataIndexed(SHPath *p, int flags,
+                              IndexedSegmentFunc callback,
+                              void *userData);
 
 
 /* Pointer-to-path array */

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 
 #if defined(__APPLE__)
 #  include <OpenGL/gl.h>
@@ -20,6 +21,7 @@
 
 #define WARP_TEST_EPSILON 0.001f
 #define BLEND_TEST_EPSILON 0.000001f
+#define PATH_TEST_EPSILON 0.0001f
 
 static int expect_rgba_at(const VGubyte *data,
                           VGint stride,
@@ -572,6 +574,316 @@ static VGPath create_test_path(const VGubyte *segments,
   if (path != VG_INVALID_HANDLE)
     vgAppendPathData(path, segmentCount, segments, coords);
   return path;
+}
+
+static int expect_float_close(const char *message,
+                              VGfloat actual,
+                              VGfloat expected)
+{
+  VGfloat diff = actual - expected;
+  if (diff < 0.0f)
+    diff = -diff;
+
+  if (diff <= PATH_TEST_EPSILON)
+    return 0;
+
+  fprintf(stderr, "%s (expected %.4f, got %.4f)\n",
+          message, expected, actual);
+  return 1;
+}
+
+static int expect_float_between(const char *message,
+                                VGfloat actual,
+                                VGfloat minValue,
+                                VGfloat maxValue)
+{
+  if (actual >= minValue && actual <= maxValue)
+    return 0;
+
+  fprintf(stderr, "%s (expected %.4f..%.4f, got %.4f)\n",
+          message, minValue, maxValue, actual);
+  return 1;
+}
+
+static int expect_path_point(const char *message,
+                             VGfloat actualX,
+                             VGfloat actualY,
+                             VGfloat expectedX,
+                             VGfloat expectedY)
+{
+  if (!expect_float_close(message, actualX, expectedX) &&
+      !expect_float_close(message, actualY, expectedY))
+    return 0;
+
+  fprintf(stderr, "%s point mismatch\n", message);
+  return 1;
+}
+
+static int run_path_measurement_test(void)
+{
+  VGPath line = VG_INVALID_HANDLE;
+  VGPath multi = VG_INVALID_HANDLE;
+  VGPath rect = VG_INVALID_HANDLE;
+  VGPath curve = VG_INVALID_HANDLE;
+  VGPath capPath = VG_INVALID_HANDLE;
+  VGubyte lineSegments[] = {VG_MOVE_TO_ABS, VG_LINE_TO_ABS};
+  VGfloat lineCoords[] = {0.0f, 0.0f, 3.0f, 4.0f};
+  VGubyte multiSegments[] = {
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS
+  };
+  VGfloat multiCoords[] = {
+    0.0f, 0.0f,
+    4.0f, 0.0f,
+    4.0f, 3.0f
+  };
+  VGubyte rectSegments[] = {
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_CLOSE_PATH
+  };
+  VGfloat rectCoords[] = {
+    0.0f, 0.0f,
+    4.0f, 0.0f,
+    4.0f, 3.0f,
+    0.0f, 3.0f
+  };
+  VGubyte curveSegments[] = {VG_MOVE_TO_ABS, VG_QUAD_TO_ABS};
+  VGfloat curveCoords[] = {
+    0.0f, 0.0f,
+    5.0f, 5.0f,
+    10.0f, 0.0f
+  };
+  VGfloat length;
+  VGfloat x = -100.0f;
+  VGfloat y = -100.0f;
+  VGfloat tx = -100.0f;
+  VGfloat ty = -100.0f;
+  unsigned char misalignedStorage[sizeof(VGfloat) * 3u];
+  VGfloat *misaligned = NULL;
+  int misalignOffset;
+  int result = 0;
+
+  line = create_test_path(lineSegments, 2, lineCoords);
+  multi = create_test_path(multiSegments, 3, multiCoords);
+  rect = create_test_path(rectSegments, 5, rectCoords);
+  curve = create_test_path(curveSegments, 2, curveCoords);
+  if (line == VG_INVALID_HANDLE ||
+      multi == VG_INVALID_HANDLE ||
+      rect == VG_INVALID_HANDLE ||
+      curve == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG path measurement setup failed");
+    goto cleanup;
+  }
+
+  length = vgPathLength(line, 1, 1);
+  if (expect_no_vg_error("OpenVG line path length failed") ||
+      expect_float_close("OpenVG measured the wrong line length",
+                         length, 5.0f)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgPointAlongPath(line, 1, 1, 2.5f, &x, &y, &tx, &ty);
+  if (expect_no_vg_error("OpenVG line point-along-path failed") ||
+      expect_path_point("OpenVG returned the wrong line midpoint",
+                        x, y, 1.5f, 2.0f) ||
+      expect_path_point("OpenVG returned the wrong line tangent",
+                        tx, ty, 0.6f, 0.8f)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  length = vgPathLength(multi, 2, 1);
+  vgPointAlongPath(multi, 2, 1, 1.5f, &x, &y, &tx, &ty);
+  if (expect_no_vg_error("OpenVG ranged path measurement failed") ||
+      expect_float_close("OpenVG measured the wrong ranged segment length",
+                         length, 3.0f) ||
+      expect_path_point("OpenVG returned the wrong ranged point",
+                        x, y, 4.0f, 1.5f) ||
+      expect_path_point("OpenVG returned the wrong ranged tangent",
+                        tx, ty, 0.0f, 1.0f)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  length = vgPathLength(rect, 4, 1);
+  vgPointAlongPath(rect, 4, 1, 1.0f, &x, &y, &tx, &ty);
+  if (expect_no_vg_error("OpenVG close-path measurement failed") ||
+      expect_float_close("OpenVG measured the wrong close-path length",
+                         length, 3.0f) ||
+      expect_path_point("OpenVG returned the wrong close-path point",
+                        x, y, 0.0f, 2.0f) ||
+      expect_path_point("OpenVG returned the wrong close-path tangent",
+                        tx, ty, 0.0f, -1.0f)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  length = vgPathLength(curve, 1, 1);
+  if (expect_no_vg_error("OpenVG curve path length failed") ||
+      expect_float_between("OpenVG returned an implausible curve length",
+                           length, 10.0f, 13.0f)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgPointAlongPath(line, 1, 1, -2.0f, &x, &y, &tx, &ty);
+  if (expect_no_vg_error("OpenVG negative distance clamp failed") ||
+      expect_path_point("OpenVG did not clamp negative distance to start",
+                        x, y, 0.0f, 0.0f) ||
+      expect_path_point("OpenVG returned the wrong start tangent",
+                        tx, ty, 0.6f, 0.8f)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgPointAlongPath(line, 1, 1, 20.0f, &x, &y, &tx, &ty);
+  if (expect_no_vg_error("OpenVG oversized distance clamp failed") ||
+      expect_path_point("OpenVG did not clamp oversized distance to end",
+                        x, y, 3.0f, 4.0f) ||
+      expect_path_point("OpenVG returned the wrong end tangent",
+                        tx, ty, 0.6f, 0.8f)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgPointAlongPath(line, 1, 1, 1.0f, NULL, NULL, &tx, &ty);
+  if (expect_no_vg_error("OpenVG tangent-only point-along-path failed") ||
+      expect_path_point("OpenVG returned the wrong tangent-only result",
+                        tx, ty, 0.6f, 0.8f)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgPointAlongPath(line, 1, 1, 1.0f, NULL, NULL, NULL, NULL);
+  if (expect_no_vg_error("OpenVG all-null point-along-path outputs failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  length = vgPathLength(VG_INVALID_HANDLE, 0, 1);
+  if (length != -1.0f ||
+      expect_vg_error("OpenVG accepted an invalid path length handle",
+                      VG_BAD_HANDLE_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgPathLength(line, -1, 1);
+  if (expect_vg_error("OpenVG accepted a negative path length start segment",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgPathLength(line, 1, 0);
+  if (expect_vg_error("OpenVG accepted a zero path length segment count",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgPathLength(line, 2, 1);
+  if (expect_vg_error("OpenVG accepted an out-of-range path length start segment",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgPointAlongPath(line, 1, 2, 0.0f, &x, &y, NULL, NULL);
+  if (expect_vg_error("OpenVG accepted an out-of-range point-along-path segment count",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+#ifdef NAN
+  vgPointAlongPath(line, 1, 1, (VGfloat)NAN, &x, &y, NULL, NULL);
+  if (expect_vg_error("OpenVG accepted a NaN point-along-path distance",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+#endif
+
+  for (misalignOffset=1; misalignOffset<(int)sizeof(VGfloat); ++misalignOffset) {
+    misaligned = (VGfloat*)(void*)(misalignedStorage + misalignOffset);
+    if (((uintptr_t)misaligned % sizeof(VGfloat)) != 0)
+      break;
+    misaligned = NULL;
+  }
+  if (misaligned) {
+    vgPointAlongPath(line, 1, 1, 0.0f, misaligned, &y, NULL, NULL);
+    if (expect_vg_error("OpenVG accepted a misaligned point-along-path output",
+                        VG_ILLEGAL_ARGUMENT_ERROR)) {
+      result = 1;
+      goto cleanup;
+    }
+  }
+
+  capPath = create_test_path(lineSegments, 2, lineCoords);
+  if (capPath == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG path capability test setup failed");
+    goto cleanup;
+  }
+  vgRemovePathCapabilities(capPath, VG_PATH_CAPABILITY_PATH_LENGTH);
+  length = vgPathLength(capPath, 1, 1);
+  if (length != -1.0f ||
+      expect_vg_error("OpenVG ignored missing path length capability",
+                      VG_PATH_CAPABILITY_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+  vgDestroyPath(capPath);
+  capPath = create_test_path(lineSegments, 2, lineCoords);
+  if (capPath == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG point capability test setup failed");
+    goto cleanup;
+  }
+  vgRemovePathCapabilities(capPath,
+                           VG_PATH_CAPABILITY_POINT_ALONG_PATH);
+  vgPointAlongPath(capPath, 1, 1, 1.0f, &x, &y, NULL, NULL);
+  if (expect_vg_error("OpenVG ignored missing point-along-path capability",
+                      VG_PATH_CAPABILITY_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+  vgPointAlongPath(capPath, 1, 1, 1.0f, NULL, NULL, &tx, &ty);
+  if (expect_no_vg_error("OpenVG rejected tangent-only path measurement")) {
+    result = 1;
+    goto cleanup;
+  }
+  vgDestroyPath(capPath);
+  capPath = create_test_path(lineSegments, 2, lineCoords);
+  if (capPath == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG tangent capability test setup failed");
+    goto cleanup;
+  }
+  vgRemovePathCapabilities(capPath,
+                           VG_PATH_CAPABILITY_TANGENT_ALONG_PATH);
+  vgPointAlongPath(capPath, 1, 1, 1.0f, NULL, NULL, &tx, &ty);
+  if (expect_vg_error("OpenVG ignored missing tangent-along-path capability",
+                      VG_PATH_CAPABILITY_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  if (capPath != VG_INVALID_HANDLE)
+    vgDestroyPath(capPath);
+  if (curve != VG_INVALID_HANDLE)
+    vgDestroyPath(curve);
+  if (rect != VG_INVALID_HANDLE)
+    vgDestroyPath(rect);
+  if (multi != VG_INVALID_HANDLE)
+    vgDestroyPath(multi);
+  if (line != VG_INVALID_HANDLE)
+    vgDestroyPath(line);
+  return result;
 }
 
 static int run_review_regression_test(void)
@@ -4049,6 +4361,8 @@ int main(void)
       result = run_image_draw_test(pixels, width, height);
       if (result == 0)
         result = run_gradient_ramp_test(pixels, width, height);
+      if (result == 0)
+        result = run_path_measurement_test();
       if (result == 0)
         result = run_review_regression_test();
       if (result == 0)
