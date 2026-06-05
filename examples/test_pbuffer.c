@@ -935,6 +935,38 @@ static int run_review_regression_test(void)
     goto cleanup;
   }
 
+  if (vgGetParameteri(paint, VG_PAINT_COLOR_RAMP_PREMULTIPLIED) != VG_TRUE ||
+      expect_no_vg_error("OpenVG paint premultiplied default query failed")) {
+    fprintf(stderr, "OpenVG paint color ramp premultiplied default was not VG_TRUE\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetParameteri(paint, VG_PAINT_COLOR_RAMP_PREMULTIPLIED, VG_FALSE);
+  vgSetParameteri(paint, VG_PAINT_COLOR_RAMP_SPREAD_MODE,
+                  VG_COLOR_RAMP_SPREAD_REFLECT);
+  if (expect_no_vg_error("OpenVG paint premultiplied state setup failed") ||
+      vgGetParameteri(paint, VG_PAINT_COLOR_RAMP_PREMULTIPLIED) != VG_FALSE) {
+    fprintf(stderr,
+            "OpenVG paint color ramp premultiplied getter returned the wrong state\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetParameteri(paint, VG_PAINT_COLOR_RAMP_PREMULTIPLIED, 2);
+  if (expect_vg_error("OpenVG accepted an invalid paint premultiplied flag",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+  if (vgGetParameteri(paint, VG_PAINT_COLOR_RAMP_PREMULTIPLIED) != VG_FALSE ||
+      expect_no_vg_error("OpenVG paint premultiplied state changed after invalid set")) {
+    fprintf(stderr,
+            "OpenVG invalid paint premultiplied set changed the stored state\n");
+    result = 1;
+    goto cleanup;
+  }
+
   vgSetParameteri(paint, VG_PAINT_PATTERN_TILING_MODE, 0x1234);
   if (expect_vg_error("OpenVG accepted an invalid pattern tiling mode",
                       VG_ILLEGAL_ARGUMENT_ERROR)) {

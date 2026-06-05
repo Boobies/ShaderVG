@@ -144,6 +144,7 @@ int shIsEnumValid(SHint type, VGint val)
     
   case VG_FILTER_FORMAT_LINEAR:
   case VG_FILTER_FORMAT_PREMULTIPLIED:
+  case VG_PAINT_COLOR_RAMP_PREMULTIPLIED:
     return (val == VG_TRUE ||
             val == VG_FALSE);
     
@@ -703,12 +704,12 @@ static void shGet(VGContext *context, VGParamType type, SHint count, void *value
     
   case VG_MAX_IMAGE_HEIGHT:
     SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
-    shIntToParam(SH_MAX_IMAGE_WIDTH, count, values, floats, 0);
+    shIntToParam(SH_MAX_IMAGE_HEIGHT, count, values, floats, 0);
     break;
     
   case VG_MAX_IMAGE_PIXELS:
     SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
-    shIntToParam(SH_MAX_IMAGE_HEIGHT, count, values, floats, 0);
+    shIntToParam(SH_MAX_IMAGE_PIXELS, count, values, floats, 0);
     break;
     
   case VG_MAX_IMAGE_BYTES:
@@ -971,7 +972,7 @@ static void shSetParameter(VGContext *context, VGHandle object,
     case VG_PAINT_COLOR_RAMP_PREMULTIPLIED:
       SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
       SH_RETURN_ERR_IF(!shIsEnumValid(ptype,ivalue), VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
-      ((SHPaint*)object)->premultiplied = (VGboolean)ivalue;
+      ((SHPaint*)object)->premultiplied = bvalue;
       break;
       
     case VG_PAINT_COLOR_RAMP_STOPS: {
@@ -1221,7 +1222,7 @@ static void shGetParameter(VGContext *context, VGHandle object,
       
     case VG_PAINT_COLOR_RAMP_PREMULTIPLIED:
       SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
-      shIntToParam(((SHPaint*)object)->spreadMode, count, values, floats, 0);
+      shIntToParam(((SHPaint*)object)->premultiplied, count, values, floats, 0);
       break;
       
     case VG_PAINT_COLOR_RAMP_STOPS:{

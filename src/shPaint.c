@@ -186,7 +186,7 @@ void SHPaint_ctor(SHPaint *p)
   CSET(p->color, 0,0,0,1);
   SH_INITOBJ(SHStopArray, p->instops);
   SH_INITOBJ(SHStopArray, p->stops);
-  p->premultiplied = VG_FALSE;
+  p->premultiplied = VG_TRUE;
   p->spreadMode = VG_COLOR_RAMP_SPREAD_PAD;
   p->tilingMode = VG_TILE_FILL;
   for (i=0; i<4; ++i) p->linearGradient[i] = 0.0f;
