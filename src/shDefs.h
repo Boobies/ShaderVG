@@ -134,7 +134,7 @@ static SHint shIsAligned(const void *ptr, size_t alignment)
 /* Implementation limits */
 
 #define SH_MAX_SCISSOR_RECTS             1
-#define SH_MAX_DASH_COUNT                VG_MAXINT
+#define SH_MAX_DASH_COUNT                1024
 #define SH_MAX_IMAGE_WIDTH               VG_MAXINT
 #define SH_MAX_IMAGE_HEIGHT              VG_MAXINT
 #define SH_MAX_IMAGE_PIXELS              VG_MAXINT

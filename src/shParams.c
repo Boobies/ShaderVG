@@ -386,7 +386,8 @@ static void shSet(VGContext *context, VGParamType type, SHint count,
     
   case VG_STROKE_DASH_PATTERN:
     
-    /* TODO: limit by the VG_MAX_DASH_COUNT value */
+    SH_RETURN_ERR_IF(count > SH_MAX_DASH_COUNT,
+                     VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
     shFloatArrayClear(&context->strokeDashPattern);
     for (i=0; i<count; ++i)
       shFloatArrayPushBack(&context->strokeDashPattern,

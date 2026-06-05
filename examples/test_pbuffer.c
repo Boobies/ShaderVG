@@ -921,12 +921,17 @@ static int run_review_regression_test(void)
   VGfloat endCoords[] = {0.0f, 0.0f, 20.0f, 0.0f};
   VGubyte badEndSegments[] = {VG_MOVE_TO_ABS, VG_MOVE_TO_ABS};
   VGfloat badEndCoords[] = {0.0f, 0.0f, 20.0f, 0.0f};
+  VGfloat dashPattern[] = {3.0f, 1.0f, 2.0f, 1.0f};
+  VGfloat dashRead[4];
+  VGfloat *oversizedDashPattern = NULL;
   VGfloat minX = -1.0f;
   VGfloat minY = -1.0f;
   VGfloat width = -1.0f;
   VGfloat height = -1.0f;
   VGint segmentCount;
+  VGint maxDashCount;
   VGboolean interpolated;
+  int i;
   int result = 0;
 
   paint = vgCreatePaint();
@@ -963,6 +968,62 @@ static int run_review_regression_test(void)
       expect_no_vg_error("OpenVG paint premultiplied state changed after invalid set")) {
     fprintf(stderr,
             "OpenVG invalid paint premultiplied set changed the stored state\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  maxDashCount = vgGeti(VG_MAX_DASH_COUNT);
+  if (expect_no_vg_error("OpenVG dash count limit query failed") ||
+      maxDashCount < 16) {
+    fprintf(stderr, "OpenVG VG_MAX_DASH_COUNT was below the required minimum\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  oversizedDashPattern =
+    (VGfloat*)malloc((size_t)(maxDashCount + 1) * sizeof(VGfloat));
+  if (!oversizedDashPattern) {
+    result = 1;
+    goto cleanup;
+  }
+
+  for (i=0; i<=maxDashCount; ++i)
+    oversizedDashPattern[i] = 1.0f;
+
+  vgSetfv(VG_STROKE_DASH_PATTERN, 4, dashPattern);
+  if (expect_no_vg_error("OpenVG dash pattern setup failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_STROKE_DASH_PATTERN,
+          maxDashCount + 1,
+          oversizedDashPattern);
+  if (expect_vg_error("OpenVG accepted too many dash pattern entries",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+  if (vgGetVectorSize(VG_STROKE_DASH_PATTERN) != 4 ||
+      expect_no_vg_error("OpenVG dash pattern size changed after invalid set")) {
+    fprintf(stderr,
+            "OpenVG invalid dash pattern set changed the stored dash count\n");
+    result = 1;
+    goto cleanup;
+  }
+  vgGetfv(VG_STROKE_DASH_PATTERN, 4, dashRead);
+  if (expect_no_vg_error("OpenVG dash pattern readback failed") ||
+      dashRead[0] != dashPattern[0] ||
+      dashRead[1] != dashPattern[1] ||
+      dashRead[2] != dashPattern[2] ||
+      dashRead[3] != dashPattern[3]) {
+    fprintf(stderr,
+            "OpenVG invalid dash pattern set changed the stored dash pattern\n");
+    result = 1;
+    goto cleanup;
+  }
+  vgSetfv(VG_STROKE_DASH_PATTERN, 0, NULL);
+  if (expect_no_vg_error("OpenVG dash pattern reset failed")) {
     result = 1;
     goto cleanup;
   }
@@ -1042,6 +1103,9 @@ static int run_review_regression_test(void)
   }
 
 cleanup:
+  vgSetfv(VG_STROKE_DASH_PATTERN, 0, NULL);
+  vgGetError();
+  free(oversizedDashPattern);
   if (badEnd != VG_INVALID_HANDLE)
     vgDestroyPath(badEnd);
   if (end != VG_INVALID_HANDLE)
