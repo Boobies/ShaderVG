@@ -86,6 +86,24 @@ static int expect_no_vg_error(const char *message)
   return 1;
 }
 
+static void *misaligned_pointer(void *storage, size_t storageSize,
+                                size_t alignment)
+{
+  uintptr_t value = (uintptr_t)storage;
+  uintptr_t end = value + storageSize;
+
+  if (alignment <= 1)
+    return storage;
+
+  while (value < end) {
+    if (value % alignment != 0)
+      return (void*)value;
+    ++value;
+  }
+
+  return NULL;
+}
+
 static VGPath create_glyph_square(void)
 {
   VGPath path;
@@ -2538,7 +2556,8 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   VGubyte lumaRead[4 * 4];
   VGubyte lumaWrite[3 * 3];
   VGubyte alphaWrite[3 * 3];
-  VGubyte translucentPixel[4];
+  VGuint translucentPixelStorage[1];
+  VGubyte *translucentPixel = (VGubyte*)translucentPixelStorage;
   VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGfloat blue[] = {0.0f, 0.0f, 1.0f, 1.0f};
   VGfloat translucentRed[] = {1.0f, 0.0f, 0.0f, 0.25f};
@@ -2556,7 +2575,7 @@ static int run_pixel_transfer_test(unsigned char *pixels,
   memset(lumaRead, 0, sizeof(lumaRead));
   memset(lumaWrite, 0, sizeof(lumaWrite));
   memset(alphaWrite, 0, sizeof(alphaWrite));
-  memset(translucentPixel, 0, sizeof(translucentPixel));
+  memset(translucentPixelStorage, 0, sizeof(translucentPixelStorage));
   lumaWrite[1 * 3 + 1] = 96;
   alphaWrite[1 * 3 + 1] = 128;
   set_rgba(translucentPixel, 4, 0, 0, 255, 0, 0, 128);
@@ -4228,6 +4247,247 @@ static int run_warp_test(void)
   return 0;
 }
 
+static int run_alignment_validation_test(void)
+{
+  VGubyte floatStorage[sizeof(VGfloat) * 64u + 8u];
+  VGubyte intStorage[sizeof(VGint) * 16u + 8u];
+  VGubyte shortStorage[sizeof(VGshort) * 4u + 8u];
+  VGubyte uintStorage[sizeof(VGuint) * 260u + 8u];
+  VGubyte pixel2Storage[32u];
+  VGubyte pixel4Storage[64u];
+  VGfloat *badFloat;
+  VGint *badInt;
+  VGshort *badShort;
+  VGuint *badUint;
+  VGubyte *badPixel2;
+  VGubyte *badPixel4;
+  VGPath path = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGFont font = VG_INVALID_HANDLE;
+  VGImage src = VG_INVALID_HANDLE;
+  VGImage dst = VG_INVALID_HANDLE;
+  VGubyte lineSegments[] = {VG_MOVE_TO_ABS, VG_LINE_TO_ABS};
+  VGfloat lineCoords[] = {0.0f, 0.0f, 10.0f, 0.0f};
+  VGfloat bounds[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  VGfloat glyphOrigin[] = {0.0f, 0.0f};
+  VGfloat escapement[] = {12.0f, 0.0f};
+  VGuint glyphIndices[] = {0u};
+  VGshort goodKernel[] = {1};
+  int result = 0;
+
+#define EXPECT_VG_ILLEGAL(call, message) \
+  do { \
+    vgGetError(); \
+    call; \
+    if (expect_vg_error(message, VG_ILLEGAL_ARGUMENT_ERROR)) { \
+      result = 1; \
+      goto cleanup; \
+    } \
+  } while (0)
+
+#define EXPECT_VGU_ILLEGAL(call, message) \
+  do { \
+    vgGetError(); \
+    if (expect_vgu_error(message, (call), VGU_ILLEGAL_ARGUMENT_ERROR)) { \
+      result = 1; \
+      goto cleanup; \
+    } \
+  } while (0)
+
+  memset(floatStorage, 0, sizeof(floatStorage));
+  memset(intStorage, 0, sizeof(intStorage));
+  memset(shortStorage, 0, sizeof(shortStorage));
+  memset(uintStorage, 0, sizeof(uintStorage));
+  memset(pixel2Storage, 0, sizeof(pixel2Storage));
+  memset(pixel4Storage, 0, sizeof(pixel4Storage));
+
+  badFloat = (VGfloat*)misaligned_pointer(floatStorage,
+                                          sizeof(floatStorage),
+                                          sizeof(VGfloat));
+  badInt = (VGint*)misaligned_pointer(intStorage,
+                                      sizeof(intStorage),
+                                      sizeof(VGint));
+  badShort = (VGshort*)misaligned_pointer(shortStorage,
+                                          sizeof(shortStorage),
+                                          sizeof(VGshort));
+  badUint = (VGuint*)misaligned_pointer(uintStorage,
+                                        sizeof(uintStorage),
+                                        sizeof(VGuint));
+  badPixel2 = (VGubyte*)misaligned_pointer(pixel2Storage,
+                                           sizeof(pixel2Storage), 2u);
+  badPixel4 = (VGubyte*)misaligned_pointer(pixel4Storage,
+                                           sizeof(pixel4Storage), 4u);
+  if (!badFloat || !badInt || !badShort || !badUint ||
+      !badPixel2 || !badPixel4) {
+    fprintf(stderr, "Could not construct misaligned test pointers\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  path = vgCreatePath(VG_PATH_FORMAT_STANDARD, VG_PATH_DATATYPE_F,
+                      1.0f, 0.0f, 2, 4, VG_PATH_CAPABILITY_ALL);
+  paint = vgCreatePaint();
+  font = vgCreateFont(1);
+  src = vgCreateImage(VG_sRGBA_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  dst = vgCreateImage(VG_sRGBA_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  if (path == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE ||
+      font == VG_INVALID_HANDLE ||
+      src == VG_INVALID_HANDLE ||
+      dst == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG alignment test setup failed");
+    goto cleanup;
+  }
+
+  vgAppendPathData(path, 2, lineSegments, lineCoords);
+  if (expect_no_vg_error("OpenVG alignment path setup failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  EXPECT_VG_ILLEGAL(vgSetfv(VG_CLEAR_COLOR, 4, badFloat),
+                    "OpenVG accepted misaligned vgSetfv data");
+  EXPECT_VG_ILLEGAL(vgSetiv(VG_SCISSOR_RECTS, 4, badInt),
+                    "OpenVG accepted misaligned vgSetiv data");
+  EXPECT_VG_ILLEGAL(vgGetfv(VG_CLEAR_COLOR, 4, badFloat),
+                    "OpenVG accepted misaligned vgGetfv data");
+  EXPECT_VG_ILLEGAL(vgGetiv(VG_MATRIX_MODE, 1, badInt),
+                    "OpenVG accepted misaligned vgGetiv data");
+
+  EXPECT_VG_ILLEGAL(vgSetParameterfv(paint, VG_PAINT_COLOR, 4, badFloat),
+                    "OpenVG accepted misaligned vgSetParameterfv data");
+  EXPECT_VG_ILLEGAL(vgSetParameteriv(paint,
+                                     VG_PAINT_COLOR_RAMP_PREMULTIPLIED,
+                                     1, badInt),
+                    "OpenVG accepted misaligned vgSetParameteriv data");
+  EXPECT_VG_ILLEGAL(vgGetParameterfv(paint, VG_PAINT_COLOR, 4, badFloat),
+                    "OpenVG accepted misaligned vgGetParameterfv data");
+  EXPECT_VG_ILLEGAL(vgGetParameteriv(paint, VG_PAINT_TYPE, 1, badInt),
+                    "OpenVG accepted misaligned vgGetParameteriv data");
+
+  EXPECT_VG_ILLEGAL(vgLoadMatrix(badFloat),
+                    "OpenVG accepted misaligned vgLoadMatrix data");
+  EXPECT_VG_ILLEGAL(vgGetMatrix(badFloat),
+                    "OpenVG accepted misaligned vgGetMatrix data");
+  EXPECT_VG_ILLEGAL(vgMultMatrix(badFloat),
+                    "OpenVG accepted misaligned vgMultMatrix data");
+
+  EXPECT_VG_ILLEGAL(vgAppendPathData(path, 2, lineSegments, badFloat),
+                    "OpenVG accepted misaligned vgAppendPathData coordinates");
+  EXPECT_VG_ILLEGAL(vgModifyPathCoords(path, 0, 1, badFloat),
+                    "OpenVG accepted misaligned vgModifyPathCoords data");
+  EXPECT_VG_ILLEGAL(vgPathBounds(path,
+                                 badFloat,
+                                 &bounds[1],
+                                 &bounds[2],
+                                 &bounds[3]),
+                    "OpenVG accepted misaligned vgPathBounds output");
+  EXPECT_VG_ILLEGAL(vgPathTransformedBounds(path,
+                                            badFloat,
+                                            &bounds[1],
+                                            &bounds[2],
+                                            &bounds[3]),
+                    "OpenVG accepted misaligned vgPathTransformedBounds output");
+  EXPECT_VG_ILLEGAL(vgPointAlongPath(path, 0, 1, 0.5f,
+                                     badFloat, &bounds[1],
+                                     NULL, NULL),
+                    "OpenVG accepted misaligned vgPointAlongPath output");
+
+  EXPECT_VG_ILLEGAL(vgSetGlyphToPath(font, 0, path, VG_FALSE,
+                                     badFloat, escapement),
+                    "OpenVG accepted misaligned vgSetGlyphToPath origin");
+  EXPECT_VG_ILLEGAL(vgSetGlyphToImage(font, 0, src,
+                                      badFloat, escapement),
+                    "OpenVG accepted misaligned vgSetGlyphToImage origin");
+  vgSetGlyphToPath(font, 0, path, VG_FALSE, glyphOrigin, escapement);
+  if (expect_no_vg_error("OpenVG alignment glyph setup failed")) {
+    result = 1;
+    goto cleanup;
+  }
+  EXPECT_VG_ILLEGAL(vgDrawGlyphs(font, 1, badUint,
+                                 NULL, NULL,
+                                 VG_FILL_PATH, VG_FALSE),
+                    "OpenVG accepted misaligned vgDrawGlyphs indices");
+  EXPECT_VG_ILLEGAL(vgDrawGlyphs(font, 1, glyphIndices,
+                                 badFloat, NULL,
+                                 VG_FILL_PATH, VG_FALSE),
+                    "OpenVG accepted misaligned vgDrawGlyphs x adjustments");
+  EXPECT_VG_ILLEGAL(vgDrawGlyphs(font, 1, glyphIndices,
+                                 NULL, badFloat,
+                                 VG_FILL_PATH, VG_FALSE),
+                    "OpenVG accepted misaligned vgDrawGlyphs y adjustments");
+
+  EXPECT_VG_ILLEGAL(vgImageSubData(src, badPixel4, 16,
+                                   VG_sRGBA_8888, 0, 0, 1, 1),
+                    "OpenVG accepted misaligned 4-byte image upload data");
+  EXPECT_VG_ILLEGAL(vgGetImageSubData(src, badPixel4, 16,
+                                      VG_sRGBA_8888, 0, 0, 1, 1),
+                    "OpenVG accepted misaligned 4-byte image readback data");
+  EXPECT_VG_ILLEGAL(vgWritePixels(badPixel4, 16,
+                                  VG_sRGBA_8888, 0, 0, 1, 1),
+                    "OpenVG accepted misaligned 4-byte write pixels data");
+  EXPECT_VG_ILLEGAL(vgReadPixels(badPixel4, 16,
+                                 VG_sRGBA_8888, 0, 0, 1, 1),
+                    "OpenVG accepted misaligned 4-byte read pixels data");
+  EXPECT_VG_ILLEGAL(vgImageSubData(src, badPixel2, 2,
+                                   VG_sRGB_565, 0, 0, 1, 1),
+                    "OpenVG accepted misaligned 2-byte image upload data");
+  EXPECT_VG_ILLEGAL(vgWritePixels(badPixel2, 2,
+                                  VG_sRGB_565, 0, 0, 1, 1),
+                    "OpenVG accepted misaligned 2-byte write pixels data");
+
+  EXPECT_VG_ILLEGAL(vgColorMatrix(dst, src, badFloat),
+                    "OpenVG accepted misaligned color matrix data");
+  EXPECT_VG_ILLEGAL(vgConvolve(dst, src, 1, 1, 0, 0,
+                               badShort, 1.0f, 0.0f, VG_TILE_PAD),
+                    "OpenVG accepted misaligned convolution kernel data");
+  EXPECT_VG_ILLEGAL(vgSeparableConvolve(dst, src, 1, 1, 0, 0,
+                                        badShort, goodKernel,
+                                        1.0f, 0.0f, VG_TILE_PAD),
+                    "OpenVG accepted misaligned separable X kernel data");
+  EXPECT_VG_ILLEGAL(vgSeparableConvolve(dst, src, 1, 1, 0, 0,
+                                        goodKernel, badShort,
+                                        1.0f, 0.0f, VG_TILE_PAD),
+                    "OpenVG accepted misaligned separable Y kernel data");
+  EXPECT_VG_ILLEGAL(vgLookupSingle(dst, src, badUint,
+                                   VG_RED, VG_FALSE, VG_FALSE),
+                    "OpenVG accepted misaligned lookup table data");
+
+  EXPECT_VGU_ILLEGAL(vguPolygon(path, badFloat, 2, VG_FALSE),
+                     "VGU accepted misaligned polygon point data");
+  EXPECT_VGU_ILLEGAL(vguComputeWarpSquareToQuad(0.0f, 0.0f,
+                                                1.0f, 0.0f,
+                                                0.0f, 1.0f,
+                                                1.0f, 1.0f,
+                                                badFloat),
+                     "VGU accepted misaligned warp output data");
+  EXPECT_VGU_ILLEGAL(vguGradientGlowKHR(dst, src,
+                                        2.0f, 2.0f, 1u,
+                                        1.0f, 0.0f, 0.0f,
+                                        VG_RED | VG_GREEN |
+                                        VG_BLUE | VG_ALPHA,
+                                        VG_IMAGE_QUALITY_BETTER,
+                                        1u, badFloat),
+                     "VGU accepted misaligned gradient glow stop data");
+
+cleanup:
+  if (dst != VG_INVALID_HANDLE)
+    vgDestroyImage(dst);
+  if (src != VG_INVALID_HANDLE)
+    vgDestroyImage(src);
+  if (font != VG_INVALID_HANDLE)
+    vgDestroyFont(font);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (path != VG_INVALID_HANDLE)
+    vgDestroyPath(path);
+
+#undef EXPECT_VG_ILLEGAL
+#undef EXPECT_VGU_ILLEGAL
+
+  return result;
+}
+
 static int expect_alpha_mask_config(EGLDisplay display,
                                     EGLint requestedSize,
                                     EGLBoolean expectMatch,
@@ -4396,6 +4656,8 @@ int main(void)
         result = run_hardware_query_test();
       if (result == 0)
         result = run_warp_test();
+      if (result == 0)
+        result = run_alignment_validation_test();
       if (result == 0)
         printf("EGL/OpenVG pbuffer smoke test passed on EGL %d.%d\n", major, minor);
     }

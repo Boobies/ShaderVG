@@ -489,7 +489,8 @@ VG_API_CALL void vgAppendPathData(VGPath dstPath, VGint newSegCount,
   VG_RETURN_ERR_IF(!segs || !data || newSegCount <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
-  /* TODO: check segment + data array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(data, shBytesPerDatatype[dst->datatype]),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Count number of coordinatess in appended data */
   newDataCount = shCoordCountForData(newSegCount, segs);
@@ -556,7 +557,8 @@ VG_API_CALL void vgModifyPathCoords(VGPath dstPath, VGint startIndex,
                    startIndex + numSegments > p->segCount,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
-  /* TODO: check data array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(data, shBytesPerDatatype[p->datatype]),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Find start of the coordinates to be changed */
   dataStartCount = shCoordCountForData(startIndex, p->segs);

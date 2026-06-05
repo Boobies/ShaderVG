@@ -252,7 +252,8 @@ VGU_API_CALL VGUErrorCode vguPolygon(VGPath path,
   
   if (points == NULL || count <= 0)
     return VGU_ILLEGAL_ARGUMENT_ERROR;
-  /* TODO: check points array alignment */
+  if (!shIsAligned(points, sizeof(VGfloat)))
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
   
   comm = (VGubyte*)malloc( (count+1) * sizeof(VGubyte) );
   if (comm == NULL) return VGU_OUT_OF_MEMORY_ERROR;
@@ -468,6 +469,8 @@ VGU_API_CALL VGUErrorCode vguComputeWarpQuadToSquare(VGfloat sx0, VGfloat sy0,
 
   if (matrix == NULL)
     return VGU_ILLEGAL_ARGUMENT_ERROR;
+  if (!shIsAligned(matrix, sizeof(VGfloat)))
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
 
   if (!shComputeWarpSquareToQuad(sx0, sy0,
                                  sx1, sy1,
@@ -492,6 +495,8 @@ VGU_API_CALL VGUErrorCode vguComputeWarpSquareToQuad(VGfloat dx0, VGfloat dy0,
   VGfloat squareToQuad[9];
 
   if (matrix == NULL)
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
+  if (!shIsAligned(matrix, sizeof(VGfloat)))
     return VGU_ILLEGAL_ARGUMENT_ERROR;
 
   if (!shComputeWarpSquareToQuad(dx0, dy0,
@@ -520,6 +525,8 @@ VGU_API_CALL VGUErrorCode vguComputeWarpQuadToQuad(VGfloat dx0, VGfloat dy0,
   VGfloat quadToQuad[9];
 
   if (matrix == NULL)
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
+  if (!shIsAligned(matrix, sizeof(VGfloat)))
     return VGU_ILLEGAL_ARGUMENT_ERROR;
 
   if (vguComputeWarpQuadToSquare(sx0, sy0,
@@ -618,6 +625,8 @@ static VGUErrorCode shVguCheckStops(VGuint stopsCount,
   if (stopsCount > (VGuint)(SH_MAX_INT / 5))
     return VGU_ILLEGAL_ARGUMENT_ERROR;
   if (stopsCount > 0 && !stops)
+    return VGU_ILLEGAL_ARGUMENT_ERROR;
+  if (stopsCount > 0 && !shIsAligned(stops, sizeof(VGfloat)))
     return VGU_ILLEGAL_ARGUMENT_ERROR;
   return VGU_NO_ERROR;
 }

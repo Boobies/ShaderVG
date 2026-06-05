@@ -369,6 +369,17 @@ int shIsSupportedImageFormat(VGImageFormat format)
   return 1;
 }
 
+static size_t shImageDataAlignment(VGImageFormat format)
+{
+  SHImageFormatDesc fd;
+
+  if ((format & 0x1F) == VG_BW_1)
+    return 1;
+
+  shSetupImageFormat(format, &fd);
+  return fd.bytes ? (size_t)fd.bytes : 1u;
+}
+
 static void shApplyImageTextureSwizzle(VGImageFormat format)
 {
   SHuint32 baseFormat = format & 0x1F;
@@ -2267,7 +2278,8 @@ VG_API_CALL void vgImageSubData(VGImage image,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0 || !data,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
-  /* TODO: check data array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(data, shImageDataAlignment(dataFormat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   if (shTryDirectImageSubData(i, data, dataStride, dataFormat,
                               x, y, width, height))
@@ -2314,7 +2326,8 @@ VG_API_CALL void vgGetImageSubData(VGImage image,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0 || !data,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
-  /* TODO: check data array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(data, shImageDataAlignment(dataFormat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   if (shTryDirectGetImageSubData(i, data, dataStride, dataFormat,
                                  x, y, width, height))
@@ -2411,9 +2424,9 @@ VG_API_CALL void vgWritePixels(const void * data, VGint dataStride,
                    VG_UNSUPPORTED_IMAGE_FORMAT_ERROR,
                    VG_NO_RETVAL);
 
-  /* TODO: check output data array alignment */
-  
   VG_RETURN_ERR_IF(width <= 0 || height <= 0 || !data,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shIsAligned(data, shImageDataAlignment(dataFormat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   if (shTryDirectWritePixels(context, data, dataStride, dataFormat,
@@ -2484,9 +2497,9 @@ VG_API_CALL void vgReadPixels(void * data, VGint dataStride,
                    VG_UNSUPPORTED_IMAGE_FORMAT_ERROR,
                    VG_NO_RETVAL);
 
-  /* TODO: check output data array alignment */
-  
   VG_RETURN_ERR_IF(width <= 0 || height <= 0 || !data,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shIsAligned(data, shImageDataAlignment(dataFormat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   if (shTryDirectReadPixels(context, data, dataStride, dataFormat,
@@ -2577,17 +2590,6 @@ static VGboolean shImageFilterValidTilingMode(VGTilingMode tilingMode)
           tilingMode == VG_TILE_PAD ||
           tilingMode == VG_TILE_REPEAT ||
           tilingMode == VG_TILE_REFLECT) ? VG_TRUE : VG_FALSE;
-}
-
-static VGboolean shImageFilterAligned(const void *ptr, size_t alignment)
-{
-  uintptr_t value;
-
-  if (!ptr || alignment == 0)
-    return VG_FALSE;
-
-  value = (uintptr_t)ptr;
-  return (value % alignment) == 0 ? VG_TRUE : VG_FALSE;
 }
 
 static VGboolean shImageFilterIsLuminanceFormat(VGImageFormat format)
@@ -3577,7 +3579,7 @@ VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,
                    !shIsValidImage(context, dst),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!matrix ||
-                   !shImageFilterAligned(matrix, sizeof(VGfloat)),
+                   !shIsAligned(matrix, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   s = (SHImage*)src;
@@ -3643,7 +3645,7 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
                    !shIsValidImage(context, dst),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!kernel ||
-                   !shImageFilterAligned(kernel, sizeof(VGshort)) ||
+                   !shIsAligned(kernel, sizeof(VGshort)) ||
                    kernelWidth <= 0 ||
                    kernelHeight <= 0 ||
                    kernelWidth > SH_MAX_KERNEL_SIZE ||
@@ -3715,8 +3717,8 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!kernelX ||
                    !kernelY ||
-                   !shImageFilterAligned(kernelX, sizeof(VGshort)) ||
-                   !shImageFilterAligned(kernelY, sizeof(VGshort)) ||
+                   !shIsAligned(kernelX, sizeof(VGshort)) ||
+                   !shIsAligned(kernelY, sizeof(VGshort)) ||
                    kernelWidth <= 0 ||
                    kernelHeight <= 0 ||
                    kernelWidth > SH_MAX_SEPARABLE_KERNEL_SIZE ||
@@ -4331,7 +4333,7 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
                    !shIsValidImage(context, dst),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!lookupTable ||
-                   !shImageFilterAligned(lookupTable, sizeof(VGuint)),
+                   !shIsAligned(lookupTable, sizeof(VGuint)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(sourceChannel != VG_RED &&
                    sourceChannel != VG_GREEN &&

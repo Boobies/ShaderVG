@@ -1558,7 +1558,8 @@ VG_API_CALL void vgLoadMatrix(const VGfloat * mm)
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!mm, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  /* TODO: check matrix array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(mm, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   m = shCurrentMatrix(context);
 
@@ -1589,7 +1590,8 @@ VG_API_CALL void vgGetMatrix(VGfloat * mm)
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!mm, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  /* TODO: check matrix array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(mm, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   m = shCurrentMatrix(context);
   
@@ -1612,7 +1614,8 @@ VG_API_CALL void vgMultMatrix(const VGfloat * mm)
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!mm, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  /* TODO: check matrix array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(mm, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   m = shCurrentMatrix(context);
   

@@ -503,7 +503,8 @@ VG_API_CALL void vgSetfv(VGParamType type, VGint count,
 {
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  /* TODO: check input array alignment */
+  VG_RETURN_ERR_IF(count > 0 && !shIsAligned(values, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shSet */
   shSet(context, type, count, values, 1);
@@ -519,7 +520,8 @@ VG_API_CALL void vgSetiv(VGParamType type, VGint count,
 {
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  /* TODO: check input array alignment */
+  VG_RETURN_ERR_IF(count > 0 && !shIsAligned(values, sizeof(VGint)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code wil be set by shSet */
   shSet(context, type, count, values, 0);
@@ -804,7 +806,8 @@ VG_API_CALL void vgGetfv(VGParamType type, VGint count, VGfloat * values)
 {
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  /* TODO: check output array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(values, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shGet */
   shGet(context, type, count, values, 1);
@@ -819,7 +822,8 @@ VG_API_CALL void vgGetiv(VGParamType type, VGint count, VGint * values)
 {
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  /* TODO: check output array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(values, sizeof(VGint)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shGet */
   shGet(context, type, count, values, 0);
@@ -1111,7 +1115,8 @@ VG_API_CALL void vgSetParameterfv(VGHandle object, VGint paramType,
   VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  /* TODO: Check for input array alignment */
+  VG_RETURN_ERR_IF(count > 0 && !shIsAligned(values, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
   shSetParameter(context, object, resType, paramType, count, values, 1);
@@ -1133,7 +1138,8 @@ VG_API_CALL void vgSetParameteriv(VGHandle object, VGint paramType,
   VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  /* TODO: Check for input array alignment */
+  VG_RETURN_ERR_IF(count > 0 && !shIsAligned(values, sizeof(VGint)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
   shSetParameter(context, object, resType, paramType, count, values, 0);
@@ -1369,7 +1375,8 @@ VG_API_CALL void vgGetParameterfv(VGHandle object, VGint paramType,
   VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  /* TODO: Check output array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(values, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shGetParameter() */
   shGetParameter(context, object, resType, paramType, count, values, 1);
@@ -1391,7 +1398,8 @@ VG_API_CALL void vgGetParameteriv(VGHandle object, VGint paramType,
   VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  /* TODO: Check output array alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(values, sizeof(VGint)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shGetParameter() */
   shGetParameter(context, object, resType, paramType, count, values, 0);

@@ -120,6 +120,17 @@ SHfloat getMaxFloat();
 #define SH_DEINITOBJ(type,obj) { type ## _dtor(&obj); }
 #define SH_DELETEOBJ(type,obj) { if(obj) type ## _dtor(obj); free(obj); }
 
+static SHint shIsAligned(const void *ptr, size_t alignment)
+{
+  uintptr_t value;
+
+  if (!ptr || alignment == 0)
+    return 0;
+
+  value = (uintptr_t)ptr;
+  return (value % alignment) == 0;
+}
+
 /* Implementation limits */
 
 #define SH_MAX_SCISSOR_RECTS             1

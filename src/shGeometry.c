@@ -863,7 +863,11 @@ VG_API_CALL void vgPathBounds(VGPath path,
                    width == NULL || height == NULL,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  /* TODO: check output pointer alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(minX, sizeof(VGfloat)) ||
+                   !shIsAligned(minY, sizeof(VGfloat)) ||
+                   !shIsAligned(width, sizeof(VGfloat)) ||
+                   !shIsAligned(height, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   p = (SHPath*)path;
   VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_PATH_BOUNDS),
@@ -902,7 +906,11 @@ VG_API_CALL void vgPathTransformedBounds(VGPath path,
                    width == NULL || height == NULL,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  /* TODO: check output pointer alignment */
+  VG_RETURN_ERR_IF(!shIsAligned(minX, sizeof(VGfloat)) ||
+                   !shIsAligned(minY, sizeof(VGfloat)) ||
+                   !shIsAligned(width, sizeof(VGfloat)) ||
+                   !shIsAligned(height, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   p = (SHPath*)path;
   VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_PATH_BOUNDS),
@@ -969,11 +977,6 @@ static SHint shPathRangeValid(SHPath *p,
     return 0;
 
   return 1;
-}
-
-static SHint shPathFloatAligned(const VGfloat *value)
-{
-  return ((uintptr_t)value % sizeof(VGfloat)) == 0;
 }
 
 static SHfloat shPathDistance(SHVector2 *a, SHVector2 *b)
@@ -1312,10 +1315,10 @@ VG_API_CALL void vgPointAlongPath(VGPath path,
                    SH_ISNAN(distance),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF((x && !shPathFloatAligned(x)) ||
-                   (y && !shPathFloatAligned(y)) ||
-                   (tangentX && !shPathFloatAligned(tangentX)) ||
-                   (tangentY && !shPathFloatAligned(tangentY)),
+  VG_RETURN_ERR_IF((x && !shIsAligned(x, sizeof(VGfloat))) ||
+                   (y && !shIsAligned(y, sizeof(VGfloat))) ||
+                   (tangentX && !shIsAligned(tangentX, sizeof(VGfloat))) ||
+                   (tangentY && !shIsAligned(tangentY, sizeof(VGfloat))),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   ranges = (SHPathSegmentRange*)malloc(sizeof(SHPathSegmentRange) *

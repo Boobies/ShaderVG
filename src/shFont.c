@@ -165,6 +165,9 @@ VG_API_CALL void vgSetGlyphToPath(VGFont font,
   VG_RETURN_ERR_IF(path != VG_INVALID_HANDLE &&
                    !shIsValidPath(context, path),
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shIsAligned(glyphOrigin, sizeof(VGfloat)) ||
+                   !shIsAligned(escapement, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   f = (SHFont*)font;
   glyph = shFontEnsureGlyph(f, glyphIndex);
@@ -208,6 +211,9 @@ VG_API_CALL void vgSetGlyphToImage(VGFont font,
   VG_RETURN_ERR_IF(image != VG_INVALID_HANDLE &&
                    shImageIsRenderTarget((SHImage*)image),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shIsAligned(glyphOrigin, sizeof(VGfloat)) ||
+                   !shIsAligned(escapement, sizeof(VGfloat)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   f = (SHFont*)font;
   glyph = shFontEnsureGlyph(f, glyphIndex);
@@ -321,6 +327,12 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
   VG_RETURN_ERR_IF(glyphCount <= 0 || !glyphIndices,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(!shIsAligned(glyphIndices, sizeof(VGuint)) ||
+                   (adjustments_x &&
+                    !shIsAligned(adjustments_x, sizeof(VGfloat))) ||
+                   (adjustments_y &&
+                    !shIsAligned(adjustments_y, sizeof(VGfloat))),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   f = (SHFont*)font;
