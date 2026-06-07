@@ -648,24 +648,17 @@ void shUpdateImageTextureSize(SHImage *i)
 
 void shUpdateImageTexture(SHImage *i, VGContext *c)
 {
-  GLint activeTexture;
-  GLint previousTexture;
-  GLint unpackAlignment;
-  GLint unpackRowLength;
-  GLint unpackSkipPixels;
-  GLint unpackSkipRows;
+  SHGLActiveTextureState activeTexture;
+  SHGLTextureBindingState texture;
+  SHGLUnpackState unpack;
 
   /* Store pixels to texture */
   if (i->texture == 0)
     glGenTextures(1, &i->texture);
 
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
-  glActiveTexture(GL_TEXTURE0);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
-  glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpackAlignment);
-  glGetIntegerv(GL_UNPACK_ROW_LENGTH, &unpackRowLength);
-  glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &unpackSkipPixels);
-  glGetIntegerv(GL_UNPACK_SKIP_ROWS, &unpackSkipRows);
+  shSaveActiveTextureState(&activeTexture);
+  shSaveTextureBindingState(&texture, GL_TEXTURE0);
+  shSaveUnpackState(&unpack);
 
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -677,12 +670,9 @@ void shUpdateImageTexture(SHImage *i, VGContext *c)
                i->fd.glformat, i->fd.gltype, i->data);
   shApplyImageTextureSwizzle(i->fd.vgformat);
 
-  glPixelStorei(GL_UNPACK_ALIGNMENT, unpackAlignment);
-  glPixelStorei(GL_UNPACK_ROW_LENGTH, unpackRowLength);
-  glPixelStorei(GL_UNPACK_SKIP_PIXELS, unpackSkipPixels);
-  glPixelStorei(GL_UNPACK_SKIP_ROWS, unpackSkipRows);
-  glBindTexture(GL_TEXTURE_2D, previousTexture);
-  glActiveTexture(activeTexture);
+  shRestoreUnpackState(&unpack);
+  shRestoreTextureBindingState(&texture);
+  shRestoreActiveTextureState(&activeTexture);
 
   i->gpuDataDirty = VG_FALSE;
   i->surfaceDataPremultiplied = VG_FALSE;
@@ -1165,123 +1155,71 @@ static VGboolean shResolveTransferStride(VGint dataStride,
 
 typedef struct
 {
-  GLint activeTexture;
-  GLint textureBinding;
-  GLint unpackAlignment;
-  GLint unpackRowLength;
-  GLint unpackSkipPixels;
-  GLint unpackSkipRows;
+  SHGLActiveTextureState activeTexture;
+  SHGLTextureBindingState texture;
+  SHGLUnpackState unpack;
 } SHImageUploadGLState;
 
 static void shSaveImageUploadGLState(SHImageUploadGLState *state)
 {
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
-  glActiveTexture(GL_TEXTURE0);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->textureBinding);
-  glGetIntegerv(GL_UNPACK_ALIGNMENT, &state->unpackAlignment);
-  glGetIntegerv(GL_UNPACK_ROW_LENGTH, &state->unpackRowLength);
-  glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &state->unpackSkipPixels);
-  glGetIntegerv(GL_UNPACK_SKIP_ROWS, &state->unpackSkipRows);
+  shSaveActiveTextureState(&state->activeTexture);
+  shSaveTextureBindingState(&state->texture, GL_TEXTURE0);
+  shSaveUnpackState(&state->unpack);
 }
 
 static void shRestoreImageUploadGLState(const SHImageUploadGLState *state)
 {
-  glPixelStorei(GL_UNPACK_ALIGNMENT, state->unpackAlignment);
-  glPixelStorei(GL_UNPACK_ROW_LENGTH, state->unpackRowLength);
-  glPixelStorei(GL_UNPACK_SKIP_PIXELS, state->unpackSkipPixels);
-  glPixelStorei(GL_UNPACK_SKIP_ROWS, state->unpackSkipRows);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, state->textureBinding);
-  glActiveTexture(state->activeTexture);
+  shRestoreUnpackState(&state->unpack);
+  shRestoreTextureBindingState(&state->texture);
+  shRestoreActiveTextureState(&state->activeTexture);
 }
 
 typedef struct
 {
-  GLint framebuffer;
-  GLint renderbuffer;
-  GLint drawBuffer;
-  GLint readBuffer;
-  GLint packAlignment;
-  GLint packRowLength;
-  GLint packSkipPixels;
-  GLint packSkipRows;
+  SHGLFramebufferState framebuffer;
+  SHGLPackState pack;
 } SHImageReadGLState;
 
 static void shSaveImageReadGLState(SHImageReadGLState *state)
 {
-  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
-  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
-  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
-  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
-  glGetIntegerv(GL_PACK_ALIGNMENT, &state->packAlignment);
-  glGetIntegerv(GL_PACK_ROW_LENGTH, &state->packRowLength);
-  glGetIntegerv(GL_PACK_SKIP_PIXELS, &state->packSkipPixels);
-  glGetIntegerv(GL_PACK_SKIP_ROWS, &state->packSkipRows);
+  shSaveFramebufferState(&state->framebuffer);
+  shSavePackState(&state->pack);
 }
 
 static void shRestoreImageReadGLState(const SHImageReadGLState *state)
 {
-  glPixelStorei(GL_PACK_ALIGNMENT, state->packAlignment);
-  glPixelStorei(GL_PACK_ROW_LENGTH, state->packRowLength);
-  glPixelStorei(GL_PACK_SKIP_PIXELS, state->packSkipPixels);
-  glPixelStorei(GL_PACK_SKIP_ROWS, state->packSkipRows);
-  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
-  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
-  glDrawBuffer(state->drawBuffer);
-  glReadBuffer(state->readBuffer);
+  shRestorePackState(&state->pack);
+  shRestoreFramebufferState(&state->framebuffer);
 }
 
 typedef struct
 {
-  GLint framebuffer;
-  GLint renderbuffer;
-  GLint viewport[4];
-  GLint activeTexture;
-  GLint textureBinding;
-  GLint drawBuffer;
-  GLint readBuffer;
-  GLint scissorBox[4];
-  GLfloat clearColor[4];
-  GLboolean scissor;
-  GLboolean colorMask[4];
+  SHGLFramebufferState framebuffer;
+  SHGLViewportState viewport;
+  SHGLActiveTextureState activeTexture;
+  SHGLTextureBindingState texture;
+  SHGLScissorState scissor;
+  SHGLColorState color;
 } SHImageTargetGLState;
 
 static void shSaveImageTargetGLState(SHImageTargetGLState *state)
 {
-  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
-  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
-  glGetIntegerv(GL_VIEWPORT, state->viewport);
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
-  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
-  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
-  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
-  glGetFloatv(GL_COLOR_CLEAR_VALUE, state->clearColor);
-  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
-  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
-  glActiveTexture(GL_TEXTURE0);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->textureBinding);
+  shSaveFramebufferState(&state->framebuffer);
+  shSaveViewportState(&state->viewport);
+  shSaveActiveTextureState(&state->activeTexture);
+  shSaveScissorState(&state->scissor);
+  shSaveColorState(&state->color);
+  shSaveTextureBindingState(&state->texture, GL_TEXTURE0);
 }
 
 static void shRestoreImageTargetGLState(const SHImageTargetGLState *state)
 {
-  if (state->scissor) glEnable(GL_SCISSOR_TEST);
-  else glDisable(GL_SCISSOR_TEST);
-
-  glScissor(state->scissorBox[0], state->scissorBox[1],
-            state->scissorBox[2], state->scissorBox[3]);
-  glColorMask(state->colorMask[0], state->colorMask[1],
-              state->colorMask[2], state->colorMask[3]);
-  glClearColor(state->clearColor[0], state->clearColor[1],
-               state->clearColor[2], state->clearColor[3]);
-  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
-  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
-  glDrawBuffer(state->drawBuffer);
-  glReadBuffer(state->readBuffer);
-  glViewport(state->viewport[0], state->viewport[1],
-             state->viewport[2], state->viewport[3]);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, state->textureBinding);
-  glActiveTexture(state->activeTexture);
+  shRestoreScissorState(&state->scissor);
+  shRestoreColorState(&state->color);
+  shRestoreFramebufferState(&state->framebuffer);
+  shRestoreViewportState(&state->viewport);
+  shRestoreTextureBindingState(&state->texture);
+  shRestoreActiveTextureState(&state->activeTexture);
 }
 
 static VGboolean shTryDirectImageSubData(SHImage *image,
@@ -1657,28 +1595,16 @@ cleanup:
   return success;
 }
 
-typedef struct
-{
-  GLint packAlignment;
-  GLint packRowLength;
-  GLint packSkipPixels;
-  GLint packSkipRows;
-} SHSurfaceReadGLState;
+typedef SHGLPackState SHSurfaceReadGLState;
 
 static void shSaveSurfaceReadGLState(SHSurfaceReadGLState *state)
 {
-  glGetIntegerv(GL_PACK_ALIGNMENT, &state->packAlignment);
-  glGetIntegerv(GL_PACK_ROW_LENGTH, &state->packRowLength);
-  glGetIntegerv(GL_PACK_SKIP_PIXELS, &state->packSkipPixels);
-  glGetIntegerv(GL_PACK_SKIP_ROWS, &state->packSkipRows);
+  shSavePackState(state);
 }
 
 static void shRestoreSurfaceReadGLState(const SHSurfaceReadGLState *state)
 {
-  glPixelStorei(GL_PACK_ALIGNMENT, state->packAlignment);
-  glPixelStorei(GL_PACK_ROW_LENGTH, state->packRowLength);
-  glPixelStorei(GL_PACK_SKIP_PIXELS, state->packSkipPixels);
-  glPixelStorei(GL_PACK_SKIP_ROWS, state->packSkipRows);
+  shRestorePackState(state);
 }
 
 static VGboolean shTryDirectReadPixels(VGContext *context,
@@ -1737,83 +1663,41 @@ static VGboolean shTryDirectReadPixels(VGContext *context,
 
 typedef struct
 {
-  GLint viewport[4];
-  GLint program;
-  GLint vertexArray;
-  GLint arrayBuffer;
-  GLint activeTexture;
-  GLint textureBinding;
-  GLint scissorBox[4];
-  GLint blendSrcRgb;
-  GLint blendDstRgb;
-  GLint blendSrcAlpha;
-  GLint blendDstAlpha;
-  GLint blendEquationRgb;
-  GLint blendEquationAlpha;
-  GLboolean blend;
-  GLboolean scissor;
-  GLboolean depth;
-  GLboolean stencil;
-  GLboolean colorMask[4];
+  SHGLViewportState viewport;
+  SHGLProgramState program;
+  SHVertexState vertex;
+  SHGLActiveTextureState activeTexture;
+  SHGLTextureBindingState texture;
+  SHGLScissorState scissor;
+  SHGLCapabilityState capabilities;
+  SHGLBlendState blend;
+  SHGLColorState color;
 } SHSurfacePixelGLState;
 
 static void shSaveSurfacePixelGLState(SHSurfacePixelGLState *state)
 {
-  glGetIntegerv(GL_VIEWPORT, state->viewport);
-  glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
-  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
-  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
-  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
-  glGetIntegerv(GL_BLEND_SRC_RGB, &state->blendSrcRgb);
-  glGetIntegerv(GL_BLEND_DST_RGB, &state->blendDstRgb);
-  glGetIntegerv(GL_BLEND_SRC_ALPHA, &state->blendSrcAlpha);
-  glGetIntegerv(GL_BLEND_DST_ALPHA, &state->blendDstAlpha);
-  glGetIntegerv(GL_BLEND_EQUATION_RGB, &state->blendEquationRgb);
-  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &state->blendEquationAlpha);
-  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
-  state->blend = glIsEnabled(GL_BLEND);
-  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
-  state->depth = glIsEnabled(GL_DEPTH_TEST);
-  state->stencil = glIsEnabled(GL_STENCIL_TEST);
-  glActiveTexture(GL_TEXTURE0);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->textureBinding);
+  shSaveViewportState(&state->viewport);
+  shSaveProgramState(&state->program);
+  shSaveVertexBindingState(&state->vertex);
+  shSaveActiveTextureState(&state->activeTexture);
+  shSaveScissorState(&state->scissor);
+  shSaveBlendState(&state->blend);
+  shSaveColorState(&state->color);
+  shSaveCapabilityState(&state->capabilities);
+  shSaveTextureBindingState(&state->texture, GL_TEXTURE0);
 }
 
 static void shRestoreSurfacePixelGLState(const SHSurfacePixelGLState *state)
 {
-  if (state->blend) glEnable(GL_BLEND);
-  else glDisable(GL_BLEND);
-
-  if (state->scissor) glEnable(GL_SCISSOR_TEST);
-  else glDisable(GL_SCISSOR_TEST);
-
-  if (state->depth) glEnable(GL_DEPTH_TEST);
-  else glDisable(GL_DEPTH_TEST);
-
-  if (state->stencil) glEnable(GL_STENCIL_TEST);
-  else glDisable(GL_STENCIL_TEST);
-
-  glBlendFuncSeparate(state->blendSrcRgb, state->blendDstRgb,
-                      state->blendSrcAlpha, state->blendDstAlpha);
-  glBlendEquationSeparate(state->blendEquationRgb,
-                          state->blendEquationAlpha);
-  glScissor(state->scissorBox[0], state->scissorBox[1],
-            state->scissorBox[2], state->scissorBox[3]);
-  glColorMask(state->colorMask[0], state->colorMask[1],
-              state->colorMask[2], state->colorMask[3]);
-  glUseProgram(state->program);
-  if (state->vertexArray == 0 ||
-      glIsVertexArray((GLuint)state->vertexArray))
-    glBindVertexArray((GLuint)state->vertexArray);
-  else
-    glBindVertexArray(0);
-  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
-  glViewport(state->viewport[0], state->viewport[1],
-             state->viewport[2], state->viewport[3]);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, state->textureBinding);
-  glActiveTexture(state->activeTexture);
+  shRestoreCapabilityState(&state->capabilities);
+  shRestoreBlendState(&state->blend);
+  shRestoreScissorState(&state->scissor);
+  shRestoreColorState(&state->color);
+  shRestoreProgramState(&state->program);
+  shRestoreVertexBindingState(&state->vertex);
+  shRestoreViewportState(&state->viewport);
+  shRestoreTextureBindingState(&state->texture);
+  shRestoreActiveTextureState(&state->activeTexture);
 }
 
 static VGboolean shClipSurfaceTransfer(VGContext *context,
@@ -2640,25 +2524,18 @@ enum
 
 typedef struct
 {
-  GLint framebuffer;
-  GLint renderbuffer;
-  GLint viewport[4];
-  GLint program;
-  GLint vertexArray;
-  GLint arrayBuffer;
-  GLint activeTexture;
-  GLint sourceTextureBinding;
-  GLint auxTextureBinding;
-  GLint highlightTextureBinding;
-  GLint shadowTextureBinding;
-  GLint drawBuffer;
-  GLint readBuffer;
-  GLint scissorBox[4];
-  GLboolean blend;
-  GLboolean scissor;
-  GLboolean depth;
-  GLboolean stencil;
-  GLboolean colorMask[4];
+  SHGLFramebufferState framebuffer;
+  SHGLViewportState viewport;
+  SHGLProgramState program;
+  SHVertexState vertex;
+  SHGLActiveTextureState activeTexture;
+  SHGLTextureBindingState sourceTexture;
+  SHGLTextureBindingState auxTexture;
+  SHGLTextureBindingState highlightTexture;
+  SHGLTextureBindingState shadowTexture;
+  SHGLScissorState scissor;
+  SHGLCapabilityState capabilities;
+  SHGLColorState color;
 } SHImageFilterGLState;
 
 typedef struct
@@ -2700,72 +2577,35 @@ typedef struct
 
 static void shSaveImageFilterGLState(SHImageFilterGLState *state)
 {
-  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
-  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
-  glGetIntegerv(GL_VIEWPORT, state->viewport);
-  glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
-  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
-  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
-  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
-  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
-  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
-  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
-  state->blend = glIsEnabled(GL_BLEND);
-  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
-  state->depth = glIsEnabled(GL_DEPTH_TEST);
-  state->stencil = glIsEnabled(GL_STENCIL_TEST);
-  glActiveTexture(GL_TEXTURE0);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->sourceTextureBinding);
-  glActiveTexture(GL_TEXTURE1);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->auxTextureBinding);
-  glActiveTexture(GL_TEXTURE2);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->highlightTextureBinding);
-  glActiveTexture(GL_TEXTURE3);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->shadowTextureBinding);
-  glActiveTexture(state->activeTexture);
+  shSaveFramebufferState(&state->framebuffer);
+  shSaveViewportState(&state->viewport);
+  shSaveProgramState(&state->program);
+  shSaveVertexBindingState(&state->vertex);
+  shSaveActiveTextureState(&state->activeTexture);
+  shSaveScissorState(&state->scissor);
+  shSaveColorState(&state->color);
+  shSaveCapabilityState(&state->capabilities);
+  shSaveTextureBindingState(&state->sourceTexture, GL_TEXTURE0);
+  shSaveTextureBindingState(&state->auxTexture, GL_TEXTURE1);
+  shSaveTextureBindingState(&state->highlightTexture, GL_TEXTURE2);
+  shSaveTextureBindingState(&state->shadowTexture, GL_TEXTURE3);
+  shRestoreActiveTextureState(&state->activeTexture);
 }
 
 static void shRestoreImageFilterGLState(const SHImageFilterGLState *state)
 {
-  if (state->blend) glEnable(GL_BLEND);
-  else glDisable(GL_BLEND);
-
-  if (state->scissor) glEnable(GL_SCISSOR_TEST);
-  else glDisable(GL_SCISSOR_TEST);
-
-  if (state->depth) glEnable(GL_DEPTH_TEST);
-  else glDisable(GL_DEPTH_TEST);
-
-  if (state->stencil) glEnable(GL_STENCIL_TEST);
-  else glDisable(GL_STENCIL_TEST);
-
-  glScissor(state->scissorBox[0], state->scissorBox[1],
-            state->scissorBox[2], state->scissorBox[3]);
-  glColorMask(state->colorMask[0], state->colorMask[1],
-              state->colorMask[2], state->colorMask[3]);
-  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
-  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
-  glDrawBuffer(state->drawBuffer);
-  glReadBuffer(state->readBuffer);
-  glUseProgram(state->program);
-  if (state->vertexArray == 0 ||
-      glIsVertexArray((GLuint)state->vertexArray))
-    glBindVertexArray((GLuint)state->vertexArray);
-  else
-    glBindVertexArray(0);
-  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
-  glViewport(state->viewport[0], state->viewport[1],
-             state->viewport[2], state->viewport[3]);
-  glActiveTexture(GL_TEXTURE3);
-  glBindTexture(GL_TEXTURE_2D, (GLuint)state->shadowTextureBinding);
-  glActiveTexture(GL_TEXTURE2);
-  glBindTexture(GL_TEXTURE_2D, (GLuint)state->highlightTextureBinding);
-  glActiveTexture(GL_TEXTURE1);
-  glBindTexture(GL_TEXTURE_2D, (GLuint)state->auxTextureBinding);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, (GLuint)state->sourceTextureBinding);
-  glActiveTexture(state->activeTexture);
+  shRestoreCapabilityState(&state->capabilities);
+  shRestoreScissorState(&state->scissor);
+  shRestoreColorState(&state->color);
+  shRestoreFramebufferState(&state->framebuffer);
+  shRestoreProgramState(&state->program);
+  shRestoreVertexBindingState(&state->vertex);
+  shRestoreViewportState(&state->viewport);
+  shRestoreTextureBindingState(&state->shadowTexture);
+  shRestoreTextureBindingState(&state->highlightTexture);
+  shRestoreTextureBindingState(&state->auxTexture);
+  shRestoreTextureBindingState(&state->sourceTexture);
+  shRestoreActiveTextureState(&state->activeTexture);
 }
 
 static void shImageFilterPremultiplyColor(GLfloat color[4])

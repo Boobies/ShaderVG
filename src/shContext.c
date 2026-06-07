@@ -107,8 +107,7 @@ void shBindContextVertexState(VGContext *context, SHVertexState *state)
   if (!context || !state)
     return;
 
-  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
-  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
+  shSaveVertexBindingState(state);
   glBindVertexArray(context->arrayObject);
   glBindBuffer(GL_ARRAY_BUFFER, context->arrayBuffer);
 }
@@ -118,12 +117,7 @@ void shRestoreVertexState(const SHVertexState *state)
   if (!state)
     return;
 
-  if (state->vertexArray == 0 ||
-      glIsVertexArray((GLuint)state->vertexArray))
-    glBindVertexArray((GLuint)state->vertexArray);
-  else
-    glBindVertexArray(0);
-  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
+  shRestoreVertexBindingState(state);
 }
 
 #define SH_MASK_SOURCE_CONSTANT 0
@@ -914,121 +908,47 @@ VG_API_CALL void vgFinish(void)
 
 typedef struct
 {
-  GLint framebuffer;
-  GLint renderbuffer;
-  GLint viewport[4];
-  GLint program;
-  GLint vertexArray;
-  GLint arrayBuffer;
-  GLint activeTexture;
-  GLint maskTextureBinding;
-  GLint drawBuffer;
-  GLint readBuffer;
-  GLint scissorBox[4];
-  GLint blendSrcRgb;
-  GLint blendDstRgb;
-  GLint blendSrcAlpha;
-  GLint blendDstAlpha;
-  GLint blendEquationRgb;
-  GLint blendEquationAlpha;
-  GLint stencilFunc;
-  GLint stencilRef;
-  GLint stencilValueMask;
-  GLint stencilFail;
-  GLint stencilPassDepthFail;
-  GLint stencilPassDepthPass;
-  GLint stencilWriteMask;
-  GLint clearStencil;
-  GLfloat clearColor[4];
-  GLboolean blend;
-  GLboolean scissor;
-  GLboolean depth;
-  GLboolean stencil;
-  GLboolean colorMask[4];
+  SHGLFramebufferState framebuffer;
+  SHGLViewportState viewport;
+  SHGLProgramState program;
+  SHVertexState vertex;
+  SHGLActiveTextureState activeTexture;
+  SHGLTextureBindingState maskTexture;
+  SHGLScissorState scissor;
+  SHGLCapabilityState capabilities;
+  SHGLBlendState blend;
+  SHGLStencilState stencil;
+  SHGLColorState color;
 } SHMaskGLState;
 
 static void shSaveMaskGLState(SHMaskGLState *state)
 {
-  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
-  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
-  glGetIntegerv(GL_VIEWPORT, state->viewport);
-  glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
-  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
-  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
-  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
-  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
-  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
-  glGetIntegerv(GL_BLEND_SRC_RGB, &state->blendSrcRgb);
-  glGetIntegerv(GL_BLEND_DST_RGB, &state->blendDstRgb);
-  glGetIntegerv(GL_BLEND_SRC_ALPHA, &state->blendSrcAlpha);
-  glGetIntegerv(GL_BLEND_DST_ALPHA, &state->blendDstAlpha);
-  glGetIntegerv(GL_BLEND_EQUATION_RGB, &state->blendEquationRgb);
-  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &state->blendEquationAlpha);
-  glGetIntegerv(GL_STENCIL_FUNC, &state->stencilFunc);
-  glGetIntegerv(GL_STENCIL_REF, &state->stencilRef);
-  glGetIntegerv(GL_STENCIL_VALUE_MASK, &state->stencilValueMask);
-  glGetIntegerv(GL_STENCIL_FAIL, &state->stencilFail);
-  glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &state->stencilPassDepthFail);
-  glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &state->stencilPassDepthPass);
-  glGetIntegerv(GL_STENCIL_WRITEMASK, &state->stencilWriteMask);
-  glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &state->clearStencil);
-  glGetFloatv(GL_COLOR_CLEAR_VALUE, state->clearColor);
-  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
-  state->blend = glIsEnabled(GL_BLEND);
-  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
-  state->depth = glIsEnabled(GL_DEPTH_TEST);
-  state->stencil = glIsEnabled(GL_STENCIL_TEST);
-  glActiveTexture(SH_TEXTURE_MASK);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->maskTextureBinding);
+  shSaveFramebufferState(&state->framebuffer);
+  shSaveViewportState(&state->viewport);
+  shSaveProgramState(&state->program);
+  shSaveVertexBindingState(&state->vertex);
+  shSaveActiveTextureState(&state->activeTexture);
+  shSaveScissorState(&state->scissor);
+  shSaveBlendState(&state->blend);
+  shSaveStencilState(&state->stencil);
+  shSaveColorState(&state->color);
+  shSaveCapabilityState(&state->capabilities);
+  shSaveTextureBindingState(&state->maskTexture, SH_TEXTURE_MASK);
 }
 
 static void shRestoreMaskGLState(const SHMaskGLState *state)
 {
-  if (state->blend) glEnable(GL_BLEND);
-  else glDisable(GL_BLEND);
-
-  if (state->scissor) glEnable(GL_SCISSOR_TEST);
-  else glDisable(GL_SCISSOR_TEST);
-
-  if (state->depth) glEnable(GL_DEPTH_TEST);
-  else glDisable(GL_DEPTH_TEST);
-
-  if (state->stencil) glEnable(GL_STENCIL_TEST);
-  else glDisable(GL_STENCIL_TEST);
-
-  glBlendFuncSeparate(state->blendSrcRgb, state->blendDstRgb,
-                      state->blendSrcAlpha, state->blendDstAlpha);
-  glBlendEquationSeparate(state->blendEquationRgb,
-                          state->blendEquationAlpha);
-  glStencilFunc(state->stencilFunc, state->stencilRef,
-                state->stencilValueMask);
-  glStencilOp(state->stencilFail, state->stencilPassDepthFail,
-              state->stencilPassDepthPass);
-  glStencilMask(state->stencilWriteMask);
-  glClearStencil(state->clearStencil);
-  glScissor(state->scissorBox[0], state->scissorBox[1],
-            state->scissorBox[2], state->scissorBox[3]);
-  glColorMask(state->colorMask[0], state->colorMask[1],
-              state->colorMask[2], state->colorMask[3]);
-  glClearColor(state->clearColor[0], state->clearColor[1],
-               state->clearColor[2], state->clearColor[3]);
-  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
-  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
-  glDrawBuffer(state->drawBuffer);
-  glReadBuffer(state->readBuffer);
-  glUseProgram(state->program);
-  if (state->vertexArray == 0 ||
-      glIsVertexArray((GLuint)state->vertexArray))
-    glBindVertexArray((GLuint)state->vertexArray);
-  else
-    glBindVertexArray(0);
-  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
-  glViewport(state->viewport[0], state->viewport[1],
-             state->viewport[2], state->viewport[3]);
-  glActiveTexture(SH_TEXTURE_MASK);
-  glBindTexture(GL_TEXTURE_2D, state->maskTextureBinding);
-  glActiveTexture(state->activeTexture);
+  shRestoreCapabilityState(&state->capabilities);
+  shRestoreBlendState(&state->blend);
+  shRestoreStencilState(&state->stencil);
+  shRestoreScissorState(&state->scissor);
+  shRestoreColorState(&state->color);
+  shRestoreFramebufferState(&state->framebuffer);
+  shRestoreProgramState(&state->program);
+  shRestoreVertexBindingState(&state->vertex);
+  shRestoreViewportState(&state->viewport);
+  shRestoreTextureBindingState(&state->maskTexture);
+  shRestoreActiveTextureState(&state->activeTexture);
 }
 
 static void shSetMaskBlendOperation(VGMaskOperation operation)

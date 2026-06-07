@@ -1,11 +1,4 @@
-EXTRA_DIST =\
-	autogen.sh\
-	projects/visualc7/ShaderVG.sln\
-	projects/visualc7/ShaderVG.suo\
-	projects/visualc7/*.vcproj\
-	projects/visualc8/ShaderVG.sln\
-	projects/visualc8/ShaderVG.suo\
-	projects/visualc8/*.vcproj
+EXTRA_DIST = autogen.sh
 
 if BUILD_EXAMPLES
 MAYBE_EXAMPLES = examples

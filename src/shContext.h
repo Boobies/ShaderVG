@@ -28,6 +28,7 @@
 #include "shPaint.h"
 #include "shImage.h"
 #include "shFont.h"
+#include "shGLState.h"
 
 typedef struct
 {
@@ -279,11 +280,7 @@ typedef struct VGContext
 
 } VGContext;
 
-typedef struct
-{
-  GLint vertexArray;
-  GLint arrayBuffer;
-} SHVertexState;
+typedef SHGLVertexBindingState SHVertexState;
 
 void VGContext_ctor(VGContext *c);
 void VGContext_dtor(VGContext *c);

@@ -52,87 +52,45 @@ static void shEnsurePaintTexture(SHPaint *p)
 
 typedef struct
 {
-  GLint framebuffer;
-  GLint renderbuffer;
-  GLint viewport[4];
-  GLint program;
-  GLint vertexArray;
-  GLint arrayBuffer;
-  GLint activeTexture;
-  GLint texture1Binding;
-  GLint drawBuffer;
-  GLint readBuffer;
-  GLint scissorBox[4];
-  GLint unpackAlignment;
-  GLfloat clearColor[4];
-  GLboolean blend;
-  GLboolean scissor;
-  GLboolean depth;
-  GLboolean stencil;
-  GLboolean colorMask[4];
+  SHGLFramebufferState framebuffer;
+  SHGLViewportState viewport;
+  SHGLProgramState program;
+  SHVertexState vertex;
+  SHGLActiveTextureState activeTexture;
+  SHGLTextureBindingState texture1;
+  SHGLScissorState scissor;
+  SHGLCapabilityState capabilities;
+  SHGLColorState color;
+  SHGLUnpackState unpack;
 } SHColorRampGLState;
 
 static void shSaveColorRampGLState(SHColorRampGLState *state)
 {
-  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &state->framebuffer);
-  glGetIntegerv(GL_RENDERBUFFER_BINDING, &state->renderbuffer);
-  glGetIntegerv(GL_VIEWPORT, state->viewport);
-  glGetIntegerv(GL_CURRENT_PROGRAM, &state->program);
-  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &state->vertexArray);
-  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &state->arrayBuffer);
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &state->activeTexture);
-  glGetIntegerv(GL_DRAW_BUFFER, &state->drawBuffer);
-  glGetIntegerv(GL_READ_BUFFER, &state->readBuffer);
-  glGetIntegerv(GL_SCISSOR_BOX, state->scissorBox);
-  glGetIntegerv(GL_UNPACK_ALIGNMENT, &state->unpackAlignment);
-  glGetFloatv(GL_COLOR_CLEAR_VALUE, state->clearColor);
-  glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask);
-  state->blend = glIsEnabled(GL_BLEND);
-  state->scissor = glIsEnabled(GL_SCISSOR_TEST);
-  state->depth = glIsEnabled(GL_DEPTH_TEST);
-  state->stencil = glIsEnabled(GL_STENCIL_TEST);
-  glActiveTexture(GL_TEXTURE1);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &state->texture1Binding);
-  glActiveTexture(state->activeTexture);
+  shSaveFramebufferState(&state->framebuffer);
+  shSaveViewportState(&state->viewport);
+  shSaveProgramState(&state->program);
+  shSaveVertexBindingState(&state->vertex);
+  shSaveActiveTextureState(&state->activeTexture);
+  shSaveScissorState(&state->scissor);
+  shSaveUnpackState(&state->unpack);
+  shSaveColorState(&state->color);
+  shSaveCapabilityState(&state->capabilities);
+  shSaveTextureBindingState(&state->texture1, GL_TEXTURE1);
+  shRestoreActiveTextureState(&state->activeTexture);
 }
 
 static void shRestoreColorRampGLState(const SHColorRampGLState *state)
 {
-  if (state->blend) glEnable(GL_BLEND);
-  else glDisable(GL_BLEND);
-
-  if (state->scissor) glEnable(GL_SCISSOR_TEST);
-  else glDisable(GL_SCISSOR_TEST);
-
-  if (state->depth) glEnable(GL_DEPTH_TEST);
-  else glDisable(GL_DEPTH_TEST);
-
-  if (state->stencil) glEnable(GL_STENCIL_TEST);
-  else glDisable(GL_STENCIL_TEST);
-
-  glScissor(state->scissorBox[0], state->scissorBox[1],
-            state->scissorBox[2], state->scissorBox[3]);
-  glColorMask(state->colorMask[0], state->colorMask[1],
-              state->colorMask[2], state->colorMask[3]);
-  glClearColor(state->clearColor[0], state->clearColor[1],
-               state->clearColor[2], state->clearColor[3]);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, state->unpackAlignment);
-  glBindFramebuffer(GL_FRAMEBUFFER, state->framebuffer);
-  glBindRenderbuffer(GL_RENDERBUFFER, state->renderbuffer);
-  glDrawBuffer(state->drawBuffer);
-  glReadBuffer(state->readBuffer);
-  glUseProgram(state->program);
-  if (state->vertexArray == 0 ||
-      glIsVertexArray((GLuint)state->vertexArray))
-    glBindVertexArray((GLuint)state->vertexArray);
-  else
-    glBindVertexArray(0);
-  glBindBuffer(GL_ARRAY_BUFFER, (GLuint)state->arrayBuffer);
-  glViewport(state->viewport[0], state->viewport[1],
-             state->viewport[2], state->viewport[3]);
-  glActiveTexture(GL_TEXTURE1);
-  glBindTexture(GL_TEXTURE_2D, state->texture1Binding);
-  glActiveTexture(state->activeTexture);
+  shRestoreCapabilityState(&state->capabilities);
+  shRestoreScissorState(&state->scissor);
+  shRestoreColorState(&state->color);
+  shRestoreUnpackState(&state->unpack);
+  shRestoreFramebufferState(&state->framebuffer);
+  shRestoreProgramState(&state->program);
+  shRestoreVertexBindingState(&state->vertex);
+  shRestoreViewportState(&state->viewport);
+  shRestoreTextureBindingState(&state->texture1);
+  shRestoreActiveTextureState(&state->activeTexture);
 }
 
 static GLfloat shRampWindowXToClip(SHfloat x)
