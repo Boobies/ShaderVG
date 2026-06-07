@@ -37,6 +37,7 @@
 #define __SHARRAYBASE_H
 
 #include "shDefs.h"
+#include <string.h>
 
 #define VAL(x,y) x ## y
 #define JN(x,y) VAL(x,y)
@@ -397,11 +398,17 @@ SHint JN(_FUNC_T,Find) (_ARRAY_T *a, _ITEM_T item)
 void JN(_FUNC_T,RemoveAt) (_ARRAY_T *a, SHint index)
 #ifdef _ARRAY_DEFINE
 {
-  int i;
+  SHint count;
+
   SH_ASSERT(index >= 0);
   SH_ASSERT(index < a->size);
-  for (i=index; i<a->size-1; ++i)
-    a->items[i] = a->items[i+1];
+
+  count = a->size - index - 1;
+  if (count > 0)
+    memmove(&a->items[index],
+            &a->items[index + 1],
+            (size_t)count * sizeof(_ITEM_T));
+
   a->size--;
 }
 #else

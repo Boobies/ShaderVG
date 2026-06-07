@@ -1475,20 +1475,42 @@ VG_API_CALL void vgCopyMask(VGMaskLayer maskLayer,
 
 VG_API_CALL void vgClear(VGint x, VGint y, VGint width, VGint height)
 {
+  VGint clearX = x;
+  VGint clearY = y;
+  VGint clearWidth = width;
+  VGint clearHeight = height;
   VG_GETCONTEXT(VG_NO_RETVAL);
-  
+
+  VG_RETURN_ERR_IF(width <= 0 || height <= 0,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+
   /* Clip to window */
-  if (x < 0) x = 0;
-  if (y < 0) y = 0;
-  if (width > context->surfaceWidth) width = context->surfaceWidth;
-  if (height > context->surfaceHeight) height = context->surfaceHeight;
-  
+  if (clearX < 0) {
+    clearWidth += clearX;
+    clearX = 0;
+  }
+  if (clearY < 0) {
+    clearHeight += clearY;
+    clearY = 0;
+  }
+  if (clearWidth <= 0 || clearHeight <= 0 ||
+      clearX >= context->surfaceWidth ||
+      clearY >= context->surfaceHeight)
+    VG_RETURN(VG_NO_RETVAL);
+
+  if (clearWidth > context->surfaceWidth - clearX)
+    clearWidth = context->surfaceWidth - clearX;
+  if (clearHeight > context->surfaceHeight - clearY)
+    clearHeight = context->surfaceHeight - clearY;
+  if (clearWidth <= 0 || clearHeight <= 0)
+    VG_RETURN(VG_NO_RETVAL);
+
   /* Check if scissoring needed */
-  if (x > 0 || y > 0 ||
-      width < context->surfaceWidth ||
-      height < context->surfaceHeight) {
+  if (clearX > 0 || clearY > 0 ||
+      clearWidth < context->surfaceWidth ||
+      clearHeight < context->surfaceHeight) {
     
-    glScissor(x, y, width, height);
+    glScissor(clearX, clearY, clearWidth, clearHeight);
     glEnable(GL_SCISSOR_TEST);
   }
   

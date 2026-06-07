@@ -247,6 +247,8 @@ VGU_API_CALL VGUErrorCode vguPolygon(VGPath path,
                                      VGboolean closed)
 {
   VGint i;
+  VGint commSize;
+  VGubyte stackComm[64];
   VGubyte *comm = NULL;
   VGUErrorCode err = VGU_NO_ERROR;
   
@@ -254,19 +256,28 @@ VGU_API_CALL VGUErrorCode vguPolygon(VGPath path,
     return VGU_ILLEGAL_ARGUMENT_ERROR;
   if (!shIsAligned(points, sizeof(VGfloat)))
     return VGU_ILLEGAL_ARGUMENT_ERROR;
-  
-  comm = (VGubyte*)malloc( (count+1) * sizeof(VGubyte) );
-  if (comm == NULL) return VGU_OUT_OF_MEMORY_ERROR;
-  
+
+  if (closed && count == SH_MAX_INT)
+    return VGU_OUT_OF_MEMORY_ERROR;
+
+  commSize = count + (closed ? 1 : 0);
+  if (commSize <= (VGint)sizeof(stackComm)) {
+    comm = stackComm;
+  } else {
+    comm = (VGubyte*)malloc((size_t)commSize * sizeof(VGubyte));
+    if (comm == NULL) return VGU_OUT_OF_MEMORY_ERROR;
+  }
+
   comm[0] = VG_MOVE_TO_ABS;
   for (i=1; i<count; ++i)
     comm[i] = VG_LINE_TO_ABS;
-  comm[count] = VG_CLOSE_PATH;
+  if (closed)
+    comm[count] = VG_CLOSE_PATH;
   
-  if (closed) err = shAppend(path, count+1, comm, count*2, points);
-  else        err = shAppend(path, count, comm, count*2, points);
+  err = shAppend(path, commSize, comm, count*2, points);
   
-  free(comm);
+  if (comm != stackComm)
+    free(comm);
   return err;
 }
 

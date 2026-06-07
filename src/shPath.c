@@ -1296,8 +1296,8 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
                                         VGPath endPath, VGfloat amount)
 {
   SHPath *dst, *start, *end;
-  SHuint8 *procSegs1, *procSegs2;
-  SHfloat *procData1, *procData2;
+  SHuint8 *procSegs1 = NULL, *procSegs2 = NULL;
+  SHfloat *procData1 = NULL, *procData2 = NULL;
   SHint procSegCount1=0, procSegCount2=0;
   SHint procDataCount1=0, procDataCount2=0;
   SHuint8 *newSegs = NULL, *newData = NULL;
@@ -1305,6 +1305,8 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
   SHint segment1, segment2;
   SHint oldSegCount, oldDataCount;
   SHint segindex, s,d,i;
+  VGErrorCode error = VG_NO_ERROR;
+  VGboolean result = VG_FALSE;
   SHint processFlags =
     SH_PROCESS_SIMPLIFY_LINES |
     SH_PROCESS_SIMPLIFY_CURVES;
@@ -1334,8 +1336,8 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
   procData1 = (SHfloat*)malloc(procDataCount1 * sizeof(SHfloat));
   procData2 = (SHfloat*)malloc(procDataCount2 * sizeof(SHfloat));
   if (!procSegs1 || !procSegs2 || !procData1 || !procData2) {
-    free(procSegs1); free(procSegs2); free(procData1); free(procData2);
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_FALSE);
+    error = VG_OUT_OF_MEMORY_ERROR;
+    goto cleanup;
   }
   
   /* Process data of start path */
@@ -1357,9 +1359,8 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
   oldDataCount = dst->dataCount;
   shResizePathData(dst, procSegCount1, procDataCount1, &newSegs, &newData);
   if (!newData) {
-    free(procSegs1); free(procData1);
-    free(procSegs2); free(procData2);
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_FALSE);
+    error = VG_OUT_OF_MEMORY_ERROR;
+    goto cleanup;
   }
   
   /* Interpolate data between paths */
@@ -1380,10 +1381,8 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
     
     /* Segment types must match */
     if (segment1 != segment2) {
-      free(procSegs1); free(procData1);
-      free(procSegs2); free(procData2);
-      free(newSegs); free(newData);
-      VG_RETURN_ERR(VG_NO_ERROR, VG_FALSE);
+      error = VG_NO_ERROR;
+      goto cleanup;
     }
     
     /* Interpolate values */
@@ -1397,20 +1396,24 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
     }
   }
   
-  /* Free processed data */
-  free(procSegs1); free(procData1);
-  free(procSegs2); free(procData2);
-  
   /* Assign interpolated data */
   free(dst->segs);
   free(dst->data);
   dst->segs = newSegs;
   dst->data = newData;
+  newSegs = NULL;
+  newData = NULL;
   dst->segCount = oldSegCount + procSegCount1;
   dst->dataCount = oldDataCount + procDataCount1;
 
   /* Mark change */
   dst->cacheDataValid = VG_FALSE;
+  result = VG_TRUE;
+
+cleanup:
+  free(procSegs1); free(procData1);
+  free(procSegs2); free(procData2);
+  free(newSegs); free(newData);
   
-  VG_RETURN_ERR(VG_NO_ERROR, VG_TRUE);
+  VG_RETURN_ERR(error, result);
 }
