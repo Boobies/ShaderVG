@@ -197,6 +197,11 @@ VG_API_CALL void vgDestroyPaint(VGPaint paint)
   /* Check if handle valid */
   index = shPaintArrayFind(&context->resources->paints, (SHPaint*)paint);
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+
+  if (context->fillPaint == (SHPaint*)paint)
+    context->fillPaint = NULL;
+  if (context->strokePaint == (SHPaint*)paint)
+    context->strokePaint = NULL;
   
   /* Delete object and remove resource */
   SH_DELETEOBJ(SHPaint, (SHPaint*)paint);
@@ -215,7 +220,8 @@ VG_API_CALL void vgSetPaint(VGPaint paint, VGbitfield paintModes)
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Check for invalid mode */
-  VG_RETURN_ERR_IF(paintModes & ~(VG_STROKE_PATH | VG_FILL_PATH),
+  VG_RETURN_ERR_IF(paintModes == 0 ||
+                   (paintModes & ~(VG_STROKE_PATH | VG_FILL_PATH)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Set stroke / fill */
@@ -225,6 +231,19 @@ VG_API_CALL void vgSetPaint(VGPaint paint, VGbitfield paintModes)
     context->fillPaint = (SHPaint*)paint;
   
   VG_RETURN(VG_NO_RETVAL);
+}
+
+VG_API_CALL VGPaint vgGetPaint(VGPaintMode paintMode)
+{
+  VG_GETCONTEXT(VG_INVALID_HANDLE);
+
+  VG_RETURN_ERR_IF(paintMode != VG_STROKE_PATH &&
+                   paintMode != VG_FILL_PATH,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
+
+  VG_RETURN((VGPaint)(paintMode == VG_STROKE_PATH ?
+                      context->strokePaint :
+                      context->fillPaint));
 }
 
 static SHfloat shColorByteToFloat(SHuint32 value)

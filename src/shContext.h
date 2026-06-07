@@ -139,6 +139,10 @@ typedef struct VGContext
   VGboolean         filterFormatLinear;
   VGboolean         filterFormatPremultiplied;
   VGbitfield        filterChannelMask;
+
+  /* Color transform */
+  VGboolean         colorTransform;
+  SHfloat           colorTransformValues[8];
   
   /* Matrices */
   SHMatrix3x3       pathTransform;
@@ -306,6 +310,7 @@ void shMarkRenderTargetDirty(VGContext *c);
 VGboolean shCanDeleteResourceGL(void);
 void shBindContextVertexState(VGContext *c, SHVertexState *state);
 void shRestoreVertexState(const SHVertexState *state);
+void shApplyColorTransform(VGContext *context);
 void shEnsureMaskTexture(VGContext *c);
 VGboolean shApplyMaskTextureToSurface(VGContext *c,
                                       GLuint texture,

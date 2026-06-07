@@ -133,6 +133,28 @@ $ ./test_tiger_shader
   Draws vector glyphs through the OpenVG font API, including glyphs whose
   source paths have already been destroyed by the application.
 
+### Conformance testing
+
+Khronos publishes the OpenVG Conformance Test Suite at
+https://github.com/KhronosGroup/OpenVG-CTS. ShaderVG does not vendor that tree
+or run it as part of the normal build, but `tools/run_openvg_cts.sh` can build
+the OpenVG 1.1 CTS generation harness against this checkout:
+
+```
+$ tools/run_openvg_cts.sh --clone --build-only
+$ tools/run_openvg_cts.sh --cts-dir /tmp/OpenVG-CTS --test A10101
+```
+
+The script stores generated answers, config info, and logs under
+`cts-results/`, which is ignored by Git. It links the CTS generator against the
+uninstalled `src/.libs/libShaderVGEGL.so` and `src/.libs/libOpenVG.so`, with
+ShaderVG's EGL entry points ordered before the platform EGL library.
+
+Use CTS results as development triage until the remaining TODO items are closed.
+The public CTS is useful for local testing, but official OpenVG conformance and
+trademark claims require Khronos' adopter process:
+https://www.khronos.org/conformance/
+
 ## Implementation status
 
 #### General                                                        
@@ -350,8 +372,10 @@ eglSwapBuffers(dpy, surface);
 `libShaderVGEGL` delegates native display, surface, and backing OpenGL context
 creation to the platform EGL implementation. ShaderVG only supplies the OpenVG
 implementation and the glue needed for `EGL_OPENVG_API` / `EGL_OPENVG_BIT` to
-select a ShaderVG OpenVG context. OpenVG-capable configs advertise
-`EGL_ALPHA_MASK_SIZE == 8`, matching ShaderVG's 8-bit GPU mask surface.
+select a ShaderVG OpenVG context. OpenVG-capable configs expose
+`EGL_OPENVG_BIT` through `EGL_RENDERABLE_TYPE` and `EGL_CONFORMANT`, and
+advertise `EGL_ALPHA_MASK_SIZE == 8`, matching ShaderVG's 8-bit GPU mask
+surface.
 
 ShaderVG supports antialiasing through `VG_RENDERING_QUALITY` on single-sample
 surfaces, but applications should prefer EGL multisampled surfaces when

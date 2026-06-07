@@ -427,6 +427,22 @@ static void shResizeSurface(VGContext *context, VGint width, VGint height)
   }
 }
 
+void shApplyColorTransform(VGContext *context)
+{
+  static const GLfloat identity[8] = {
+    1.0f, 1.0f, 1.0f, 1.0f,
+    0.0f, 0.0f, 0.0f, 0.0f
+  };
+
+  if (!context)
+    return;
+
+  glUniform4fv(context->locationDraw.scaleFactorBias, 2,
+               context->colorTransform == VG_TRUE ?
+               (const GLfloat*)context->colorTransformValues :
+               identity);
+}
+
 static VGboolean shInitContextVertexState(VGContext *context)
 {
   if (context->arrayObject == 0)
@@ -737,6 +753,17 @@ void VGContext_ctor(VGContext *c)
   c->filterFormatLinear = VG_FALSE;
   c->filterFormatPremultiplied = VG_FALSE;
   c->filterChannelMask = VG_RED|VG_GREEN|VG_BLUE|VG_ALPHA;
+
+  /* Color transform */
+  c->colorTransform = VG_FALSE;
+  c->colorTransformValues[0] = 1.0f;
+  c->colorTransformValues[1] = 1.0f;
+  c->colorTransformValues[2] = 1.0f;
+  c->colorTransformValues[3] = 1.0f;
+  c->colorTransformValues[4] = 0.0f;
+  c->colorTransformValues[5] = 0.0f;
+  c->colorTransformValues[6] = 0.0f;
+  c->colorTransformValues[7] = 0.0f;
   
   /* Matrices */
   SH_INITOBJ(SHMatrix3x3, c->pathTransform);

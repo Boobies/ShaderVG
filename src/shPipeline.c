@@ -933,6 +933,7 @@ static VGboolean shRenderPathCoverage(VGContext *context,
   }
 
   glUseProgram(context->progDraw);
+  shApplyColorTransform(context);
   shMatrixToGL(&context->pathTransform, mgl);
   volume = fmax(context->surfaceWidth, context->surfaceHeight) / 2.0f;
   shCalcOrtho2D(projection,
@@ -1012,6 +1013,7 @@ static VGboolean shRenderPathPassToMask(VGContext *context,
   renderCoverage = shSetRenderToMaskScissor(context);
 
   glUseProgram(context->progDraw);
+  shApplyColorTransform(context);
   shMatrixToGL(&context->pathTransform, mgl);
   glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, mgl);
   glUniform1i(context->locationDraw.drawMode, 0);
@@ -1116,6 +1118,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   /* Apply transformation */
   shMatrixToGL(&context->pathTransform, mgl);
   glUseProgram(context->progDraw);
+  shApplyColorTransform(context);
   glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, mgl);
   glUniform1i(context->locationDraw.drawMode, 0); /* drawMode: path */
   glUniform1i(context->locationDraw.coveragePass, 0);
@@ -1392,6 +1395,7 @@ void shDrawImage(VGContext *context, SHImage *i)
   /* Apply image-user-to-surface transformation */
   shMatrixToGL(&context->imageTransform, mgl);
   glUseProgram(context->progDraw);
+  shApplyColorTransform(context);
   glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, mgl);
   glUniform1i(context->locationDraw.drawMode, 1); /* drawMode: image */
   glUniform1i(context->locationDraw.imagePremultiplied, 0);

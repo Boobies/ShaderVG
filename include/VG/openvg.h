@@ -110,6 +110,10 @@ typedef enum {
   /* Destination write enable mask for image filters */
   VG_FILTER_CHANNEL_MASK                      = 0x1152,
 
+  /* Color transform */
+  VG_COLOR_TRANSFORM                          = 0x1170,
+  VG_COLOR_TRANSFORM_VALUES                   = 0x1171,
+
   /* Implementation limits (read-only) */
   VG_MAX_SCISSOR_RECTS                        = 0x1160,
   VG_MAX_DASH_COUNT                           = 0x1161,
@@ -316,6 +320,8 @@ typedef enum {
   VG_lL_8                                     = 10,
   VG_A_8                                      = 11,
   VG_BW_1                                     = 12,
+  VG_A_1                                      = 13,
+  VG_A_4                                      = 14,
 
   /* {A,X}RGB channel ordering */
   VG_sXRGB_8888                               =  0 | (1 << 6),

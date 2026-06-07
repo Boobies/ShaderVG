@@ -51,3 +51,7 @@ examples/test_parametric_filter
 *.o
 *.deps
 *.dirstamp
+
+# Optional external CTS workflow
+/OpenVG-CTS/
+/cts-results/

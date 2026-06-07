@@ -1083,10 +1083,8 @@ void shInitPiplelineShaders(void) {
   context->locationDraw.coveragePass   = glGetUniformLocation(context->progDraw, "coveragePass");
   GL_CHECK_ERROR;
 
-  // TODO: Support color transform to remove this from here
   glUseProgram(context->progDraw);
-  GLfloat factor_bias[8] = {1.0,1.0,1.0,1.0,0.0,0.0,0.0,0.0};
-  glUniform4fv(context->locationDraw.scaleFactorBias, 2, factor_bias);
+  shApplyColorTransform(context);
   glUniform1i(context->locationDraw.maskEnabled, 0);
   glUniform1i(context->locationDraw.maskSampler, SH_TEXTURE_MASK_INDEX);
   glUniform1i(context->locationDraw.blendMode, 0);

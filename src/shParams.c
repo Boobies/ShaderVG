@@ -38,6 +38,7 @@ int shIsParamVector(SHint type)
      type == VG_TILE_FILL_COLOR ||
      type == VG_GLYPH_ORIGIN ||
      type == VG_CLEAR_COLOR ||
+     type == VG_COLOR_TRANSFORM_VALUES ||
      type == VG_PAINT_COLOR ||
      type == VG_PAINT_COLOR_RAMP_STOPS ||
      type == VG_PAINT_LINEAR_GRADIENT ||
@@ -130,6 +131,7 @@ int shIsEnumValid(SHint type, VGint val)
             val == VG_JOIN_BEVEL);
     
   case VG_STROKE_DASH_PHASE_RESET:
+  case VG_COLOR_TRANSFORM:
   case VG_SCISSORING:
   case VG_MASKING:
     return (val == VG_TRUE ||
@@ -166,8 +168,7 @@ int shIsEnumValid(SHint type, VGint val)
             val == VG_TILE_REFLECT);
     
   case VG_IMAGE_FORMAT:
-    return (val >= VG_sRGBX_8888 &&
-            val <= VG_lABGR_8888_PRE);
+    return shIsValidImageFormat((VGImageFormat)val);
     
   default:
     return 1;
@@ -353,6 +354,12 @@ static void shSet(VGContext *context, VGParamType type, SHint count,
     SH_RETURN_ERR_IF(count!=1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
     context->filterFormatPremultiplied = bvalue;
     break;
+
+  case VG_COLOR_TRANSFORM:
+    SH_RETURN_ERR_IF(count!=1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    SH_RETURN_ERR_IF(!shIsEnumValid(type,ivalue), VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    context->colorTransform = bvalue;
+    break;
     
   case VG_STROKE_DASH_PHASE_RESET:
     SH_RETURN_ERR_IF(count!=1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
@@ -413,6 +420,13 @@ static void shSet(VGContext *context, VGParamType type, SHint count,
          shParamToFloat(values, floats, 3));
     
     break;
+  case VG_COLOR_TRANSFORM_VALUES:
+
+    SH_RETURN_ERR_IF(count!=8, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    for (i=0; i<8; ++i)
+      context->colorTransformValues[i] = shParamToFloat(values, floats, i);
+    break;
+
   case VG_GLYPH_ORIGIN:
 
     SH_RETURN_ERR_IF(count!=2, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
@@ -603,6 +617,11 @@ static void shGet(VGContext *context, VGParamType type, SHint count, void *value
     SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
     shIntToParam((SHint)context->filterFormatPremultiplied, count, values, floats, 0);
     break;
+
+  case VG_COLOR_TRANSFORM:
+    SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    shIntToParam((SHint)context->colorTransform, count, values, floats, 0);
+    break;
     
   case VG_STROKE_DASH_PHASE_RESET:
     SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
@@ -662,6 +681,13 @@ static void shGet(VGContext *context, VGParamType type, SHint count, void *value
     shFloatToParam(context->clearColor.a, count, values, floats, 3);
     
     break;
+  case VG_COLOR_TRANSFORM_VALUES:
+
+    SH_RETURN_ERR_IF(count > 8, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    for (i=0; i<8; ++i)
+      shFloatToParam(context->colorTransformValues[i], count, values, floats, i);
+    break;
+
   case VG_GLYPH_ORIGIN:
 
     SH_RETURN_ERR_IF(count > 2, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
@@ -856,6 +882,7 @@ VG_API_CALL VGint vgGetVectorSize(VGParamType type)
   case VG_FILTER_CHANNEL_MASK:
   case VG_FILTER_FORMAT_LINEAR:
   case VG_FILTER_FORMAT_PREMULTIPLIED:
+  case VG_COLOR_TRANSFORM:
   case VG_STROKE_DASH_PHASE_RESET:
   case VG_MASKING:
   case VG_SCISSORING:
@@ -882,6 +909,10 @@ VG_API_CALL VGint vgGetVectorSize(VGParamType type)
   case VG_TILE_FILL_COLOR:
   case VG_CLEAR_COLOR:
     retval = 4;
+    break;
+
+  case VG_COLOR_TRANSFORM_VALUES:
+    retval = 8;
     break;
 
   case VG_GLYPH_ORIGIN:

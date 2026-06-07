@@ -300,6 +300,8 @@ static EGLBoolean shConfigMatchesImage(SHEGLDisplay *display,
   if (baseFormat == VG_sL_8 ||
       baseFormat == VG_lL_8 ||
       baseFormat == VG_A_8 ||
+      baseFormat == VG_A_1 ||
+      baseFormat == VG_A_4 ||
       baseFormat == VG_BW_1) {
     shSetEGLError(EGL_BAD_MATCH);
     return EGL_FALSE;
@@ -524,6 +526,8 @@ static EGLint *shTranslateConfigAttribs(const EGLint *attribs,
     if (key == EGL_RENDERABLE_TYPE) {
       foundRenderable = 1;
       value = (value & ~EGL_OPENVG_BIT) | EGL_OPENGL_BIT;
+    } else if (key == EGL_CONFORMANT) {
+      value = (value & ~EGL_OPENVG_BIT) | EGL_OPENGL_BIT;
     }
     out[j++] = value;
   }
@@ -708,7 +712,11 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy, EGLConfig confi
   }
 
   result = g_egl.GetConfigAttrib(display->realDisplay, config, attribute, value);
-  if (result && attribute == EGL_RENDERABLE_TYPE && value && (*value & EGL_OPENGL_BIT))
+  if (result &&
+      (attribute == EGL_RENDERABLE_TYPE ||
+       attribute == EGL_CONFORMANT) &&
+      value &&
+      (*value & EGL_OPENGL_BIT))
     *value |= EGL_OPENVG_BIT;
   return result;
 }
