@@ -143,12 +143,18 @@ the OpenVG 1.1 CTS generation harness against this checkout:
 ```
 $ tools/run_openvg_cts.sh --clone --build-only
 $ tools/run_openvg_cts.sh --cts-dir /tmp/OpenVG-CTS --test A10101
+$ tools/run_openvg_cts.sh --cts-dir /tmp/OpenVG-CTS \
+    --list-file tools/openvg_cts_smoke.txt --config 1 --verbose 2
 ```
 
 The script stores generated answers, config info, and logs under
 `cts-results/`, which is ignored by Git. It links the CTS generator against the
 uninstalled `src/.libs/libShaderVGEGL.so` and `src/.libs/libOpenVG.so`, with
 ShaderVG's EGL entry points ordered before the platform EGL library.
+
+`tools/openvg_cts_smoke.txt` tracks the CTS groups expected to pass today.
+`tools/openvg_cts_blocked.txt` lists useful groups that currently expose known
+compliance gaps and should be promoted into the smoke list as those gaps close.
 
 Use CTS results as development triage until the remaining TODO items are closed.
 The public CTS is useful for local testing, but official OpenVG conformance and

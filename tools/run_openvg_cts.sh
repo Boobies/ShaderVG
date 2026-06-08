@@ -55,7 +55,7 @@ Environment:
 Examples:
   $0 --clone --build-only
   $0 --cts-dir /tmp/OpenVG-CTS --test A10101
-  $0 --cts-dir /tmp/OpenVG-CTS --list-file smoke-tests.txt
+  $0 --cts-dir /tmp/OpenVG-CTS --list-file tools/openvg_cts_smoke.txt --config 1 --verbose 2
 EOF
 }
 
@@ -134,6 +134,13 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -z "$test_name" ] || [ -z "$list_file" ] || die "--test and --list-file are mutually exclusive"
+
+if [ -n "$list_file" ]; then
+    case "$list_file" in
+        /*) ;;
+        *) list_file=$repo_root/$list_file ;;
+    esac
+fi
 
 if [ ! -d "$cts_dir" ]; then
     if [ "$clone_cts" -eq 1 ]; then
@@ -229,6 +236,11 @@ echo "Running OpenVG CTS generator..."
     "$cts_bin" "${run_args[@]}"
 ) >"$run_log" 2>&1
 status=$?
+
+if [ "$status" -eq 0 ] && grep -q 'Failed' "$run_log"; then
+    echo "CTS reported failures; see $run_log" >&2
+    status=1
+fi
 
 echo "CTS run log: $run_log"
 echo "CTS answer output: $answer_dir"
