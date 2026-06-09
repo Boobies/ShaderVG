@@ -546,6 +546,271 @@ static int expect_rgba_at(const VGubyte *data,
   return 1;
 }
 
+static int run_child_image_filter_test(void)
+{
+  VGImage sourceParent = VG_INVALID_HANDLE;
+  VGImage sourceChild = VG_INVALID_HANDLE;
+  VGImage destParent = VG_INVALID_HANDLE;
+  VGImage destChild = VG_INVALID_HANDLE;
+  VGImage destSmall = VG_INVALID_HANDLE;
+  VGImage paramSource = VG_INVALID_HANDLE;
+  VGImage blurParent = VG_INVALID_HANDLE;
+  VGImage blurChild = VG_INVALID_HANDLE;
+  VGImage sharedParent = VG_INVALID_HANDLE;
+  VGImage sharedSource = VG_INVALID_HANDLE;
+  VGImage sharedOverlap = VG_INVALID_HANDLE;
+  VGImage sharedDisjoint = VG_INVALID_HANDLE;
+  VGPaint highlightPaint = VG_INVALID_HANDLE;
+  VGubyte sourceParentData[5 * 4 * 4];
+  VGubyte destParentData[5 * 4 * 4];
+  VGubyte smallData[2 * 2 * 4];
+  VGubyte readParent[5 * 4 * 4];
+  VGubyte readSmall[2 * 2 * 4];
+  VGubyte blurData[4 * 3];
+  VGubyte sharedData[5 * 2 * 4];
+  VGubyte sharedRead[5 * 2 * 4];
+  VGubyte redLut[256];
+  VGubyte greenLut[256];
+  VGubyte blueLut[256];
+  VGubyte alphaLut[256];
+  VGuint singleLut[256];
+  VGfloat identityMatrix[20] = {
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f,
+    0.0f, 0.0f, 0.0f, 0.0f
+  };
+  VGshort childEdgeKernel[] = {0, 0, 1};
+  VGshort childIdentityKernel[] = {1};
+  VGfloat highlightColor[] = {1.0f, 0.0f, 0.0f, 1.0f};
+  int x, y, i;
+  int result = 0;
+
+  memset(sourceParentData, 0, sizeof(sourceParentData));
+  memset(destParentData, 0, sizeof(destParentData));
+  memset(smallData, 0, sizeof(smallData));
+  memset(readParent, 0, sizeof(readParent));
+  memset(readSmall, 0, sizeof(readSmall));
+  memset(blurData, 0, sizeof(blurData));
+  memset(sharedData, 0, sizeof(sharedData));
+  memset(sharedRead, 0, sizeof(sharedRead));
+
+  for (y=0; y<4; ++y) {
+    for (x=0; x<5; ++x) {
+      set_rgba(sourceParentData, 5 * 4, x, y, 240, 0, 240, 255);
+      set_rgba(destParentData, 5 * 4, x, y, 7, 8, 9, 200);
+    }
+  }
+  set_rgba(sourceParentData, 5 * 4, 1, 1, 10, 20, 30, 255);
+  set_rgba(sourceParentData, 5 * 4, 2, 1, 40, 50, 60, 255);
+  set_rgba(sourceParentData, 5 * 4, 1, 2, 70, 80, 90, 255);
+  set_rgba(sourceParentData, 5 * 4, 2, 2, 100, 110, 120, 255);
+
+  for (y=0; y<2; ++y)
+    for (x=0; x<2; ++x)
+      set_rgba(smallData, 2 * 4, x, y, 0, 0, 0, 0);
+
+  for (i=0; i<256; ++i) {
+    redLut[i] = (VGubyte)(255 - i);
+    greenLut[i] = (VGubyte)i;
+    blueLut[i] = 0;
+    alphaLut[i] = 255;
+    singleLut[i] = ((VGuint)i << 24) |
+                   ((VGuint)(255 - i) << 16) |
+                   ((VGuint)51 << 8) |
+                   (VGuint)255;
+  }
+
+  sourceParent = vgCreateImage(VG_lABGR_8888, 5, 4,
+                               VG_IMAGE_QUALITY_BETTER);
+  destParent = vgCreateImage(VG_lABGR_8888, 5, 4,
+                             VG_IMAGE_QUALITY_BETTER);
+  destSmall = vgCreateImage(VG_lABGR_8888, 2, 2,
+                            VG_IMAGE_QUALITY_BETTER);
+  paramSource = vgCreateImage(VG_lABGR_8888, 2, 2,
+                              VG_IMAGE_QUALITY_BETTER);
+  blurParent = vgCreateImage(VG_A_8, 4, 3, VG_IMAGE_QUALITY_BETTER);
+  sharedParent = vgCreateImage(VG_lABGR_8888, 5, 2,
+                               VG_IMAGE_QUALITY_BETTER);
+  highlightPaint = vgCreatePaint();
+  if (sourceParent == VG_INVALID_HANDLE ||
+      destParent == VG_INVALID_HANDLE ||
+      destSmall == VG_INVALID_HANDLE ||
+      paramSource == VG_INVALID_HANDLE ||
+      blurParent == VG_INVALID_HANDLE ||
+      sharedParent == VG_INVALID_HANDLE ||
+      highlightPaint == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG child image filter test setup failed");
+    goto cleanup;
+  }
+
+  sourceChild = vgChildImage(sourceParent, 1, 1, 2, 2);
+  destChild = vgChildImage(destParent, 2, 1, 2, 2);
+  blurChild = vgChildImage(blurParent, 1, 1, 2, 2);
+  sharedSource = vgChildImage(sharedParent, 0, 0, 2, 2);
+  sharedOverlap = vgChildImage(sharedParent, 1, 0, 2, 2);
+  sharedDisjoint = vgChildImage(sharedParent, 3, 0, 2, 2);
+  if (sourceChild == VG_INVALID_HANDLE ||
+      destChild == VG_INVALID_HANDLE ||
+      blurChild == VG_INVALID_HANDLE ||
+      sharedSource == VG_INVALID_HANDLE ||
+      sharedOverlap == VG_INVALID_HANDLE ||
+      sharedDisjoint == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG child image filter child setup failed");
+    goto cleanup;
+  }
+
+  vgSetParameterfv(highlightPaint, VG_PAINT_COLOR, 4, highlightColor);
+  vgSeti(VG_FILTER_FORMAT_LINEAR, VG_TRUE);
+  vgSeti(VG_FILTER_CHANNEL_MASK,
+         VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
+
+  vgImageSubData(sourceParent, sourceParentData, 5 * 4,
+                 VG_lABGR_8888, 0, 0, 5, 4);
+  vgImageSubData(destParent, destParentData, 5 * 4,
+                 VG_lABGR_8888, 0, 0, 5, 4);
+  vgColorMatrix(destChild, sourceChild, identityMatrix);
+  vgGetImageSubData(destParent, readParent, 5 * 4,
+                    VG_lABGR_8888, 0, 0, 5, 4);
+  if (expect_no_vg_error("OpenVG child color matrix filter failed") ||
+      expect_rgba_at(readParent, 5 * 4, 2, 1, 10, 20, 30, 255,
+                     "OpenVG child filter did not write the child destination origin") ||
+      expect_rgba_at(readParent, 5 * 4, 3, 2, 100, 110, 120, 255,
+                     "OpenVG child filter did not align child image corners") ||
+      expect_rgba_at(readParent, 5 * 4, 1, 1, 7, 8, 9, 200,
+                     "OpenVG child filter wrote outside the destination child") ||
+      expect_rgba_at(readParent, 5 * 4, 4, 3, 7, 8, 9, 200,
+                     "OpenVG child filter modified unrelated parent storage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgImageSubData(destSmall, smallData, 2 * 4,
+                 VG_lABGR_8888, 0, 0, 2, 2);
+  vgLookup(destSmall, sourceChild, redLut, greenLut, blueLut, alphaLut,
+           VG_TRUE, VG_FALSE);
+  vgGetImageSubData(destSmall, readSmall, 2 * 4,
+                    VG_lABGR_8888, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG child lookup filter failed") ||
+      expect_rgba_at(readSmall, 2 * 4, 0, 0, 245, 20, 0, 255,
+                     "OpenVG child lookup sampled outside the child source")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgLookupSingle(destSmall, sourceChild, singleLut,
+                 VG_GREEN, VG_TRUE, VG_FALSE);
+  vgGetImageSubData(destSmall, readSmall, 2 * 4,
+                    VG_lABGR_8888, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG child lookup single filter failed") ||
+      expect_rgba_at(readSmall, 2 * 4, 0, 0, 20, 235, 51, 255,
+                     "OpenVG child lookup single used the wrong child pixel")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgConvolve(destSmall, sourceChild, 3, 1, 1, 0,
+             childEdgeKernel, 1.0f, 0.0f, VG_TILE_PAD);
+  vgGetImageSubData(destSmall, readSmall, 2 * 4,
+                    VG_lABGR_8888, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG child convolve filter failed") ||
+      expect_rgba_at(readSmall, 2 * 4, 0, 0, 10, 20, 30, 255,
+                     "OpenVG child convolve did not pad from the child edge")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeparableConvolve(destSmall, sourceChild, 3, 1, 1, 0,
+                      childEdgeKernel, childIdentityKernel,
+                      1.0f, 0.0f, VG_TILE_PAD);
+  vgGetImageSubData(destSmall, readSmall, 2 * 4,
+                    VG_lABGR_8888, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG child separable filter failed") ||
+      expect_rgba_at(readSmall, 2 * 4, 0, 0, 10, 20, 30, 255,
+                     "OpenVG child separable filter did not pad from the child edge")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  blurData[1 * 4 + 2] = 255;
+  vgImageSubData(paramSource, smallData, 2 * 4,
+                 VG_lABGR_8888, 0, 0, 2, 2);
+  vgImageSubData(destSmall, smallData, 2 * 4,
+                 VG_lABGR_8888, 0, 0, 2, 2);
+  vgImageSubData(blurParent, blurData, 4, VG_A_8, 0, 0, 4, 3);
+  vgParametricFilterKHR(destSmall, paramSource, blurChild,
+                        1.0f, 1.0f, 0.0f,
+                        VG_PF_OUTER_FLAG_KHR,
+                        highlightPaint, VG_INVALID_HANDLE);
+  vgGetImageSubData(destSmall, readSmall, 2 * 4,
+                    VG_lABGR_8888, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG child parametric filter failed") ||
+      expect_rgba_at(readSmall, 2 * 4, 0, 0, 255, 0, 0, 255,
+                     "OpenVG child parametric filter ignored the blur child origin")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  for (y=0; y<2; ++y)
+    for (x=0; x<5; ++x)
+      set_rgba(sharedData, 5 * 4, x, y, 3, 4, 5, 255);
+  set_rgba(sharedData, 5 * 4, 0, 0, 11, 22, 33, 255);
+  set_rgba(sharedData, 5 * 4, 1, 1, 44, 55, 66, 255);
+  vgImageSubData(sharedParent, sharedData, 5 * 4,
+                 VG_lABGR_8888, 0, 0, 5, 2);
+
+  vgColorMatrix(sharedOverlap, sharedSource, identityMatrix);
+  if (expect_vg_error("OpenVG accepted overlapping child filter operands",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgColorMatrix(sharedDisjoint, sharedSource, identityMatrix);
+  vgGetImageSubData(sharedParent, sharedRead, 5 * 4,
+                    VG_lABGR_8888, 0, 0, 5, 2);
+  if (expect_no_vg_error("OpenVG rejected disjoint child filter operands") ||
+      expect_rgba_at(sharedRead, 5 * 4, 3, 0, 11, 22, 33, 255,
+                     "OpenVG disjoint child filter did not copy the source") ||
+      expect_rgba_at(sharedRead, 5 * 4, 2, 0, 3, 4, 5, 255,
+                     "OpenVG disjoint child filter wrote outside the child destination")) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
+  vgSeti(VG_FILTER_FORMAT_LINEAR, VG_FALSE);
+  if (highlightPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(highlightPaint);
+  if (sharedDisjoint != VG_INVALID_HANDLE)
+    vgDestroyImage(sharedDisjoint);
+  if (sharedOverlap != VG_INVALID_HANDLE)
+    vgDestroyImage(sharedOverlap);
+  if (sharedSource != VG_INVALID_HANDLE)
+    vgDestroyImage(sharedSource);
+  if (sharedParent != VG_INVALID_HANDLE)
+    vgDestroyImage(sharedParent);
+  if (blurChild != VG_INVALID_HANDLE)
+    vgDestroyImage(blurChild);
+  if (blurParent != VG_INVALID_HANDLE)
+    vgDestroyImage(blurParent);
+  if (paramSource != VG_INVALID_HANDLE)
+    vgDestroyImage(paramSource);
+  if (destSmall != VG_INVALID_HANDLE)
+    vgDestroyImage(destSmall);
+  if (destChild != VG_INVALID_HANDLE)
+    vgDestroyImage(destChild);
+  if (destParent != VG_INVALID_HANDLE)
+    vgDestroyImage(destParent);
+  if (sourceChild != VG_INVALID_HANDLE)
+    vgDestroyImage(sourceChild);
+  if (sourceParent != VG_INVALID_HANDLE)
+    vgDestroyImage(sourceParent);
+  return result;
+}
+
 static int expect_gl_pack_state(GLint alignment,
                                 GLint rowLength,
                                 GLint skipPixels,
@@ -1289,6 +1554,11 @@ static int run_image_filter_test(void)
       expect_no_vg_error("OpenVG iterative average blur vector size query failed")) {
     fprintf(stderr,
             "OpenVG reported the wrong iterative average blur vector size\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  if (run_child_image_filter_test()) {
     result = 1;
     goto cleanup;
   }
