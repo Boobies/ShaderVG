@@ -49,7 +49,7 @@ void shSetupImageFormat(VGImageFormat vg, SHImageFormatDesc *f)
 {
   SHuint8 abits = 0;
   SHuint8 tshift = 0;
-  SHuint8 tmask = 0;
+  SHuint32 tmask = 0;
   SHuint32 amsbBit = 0;
   SHuint32 bgrBit = 0;
 
@@ -326,9 +326,9 @@ void shSetupImageFormat(VGImageFormat vg, SHImageFormatDesc *f)
     break;
   case VG_BW_1:
 
-    f->glintformat = 0;
-    f->glformat = 0;
-    f->gltype = 0;
+    f->glintformat = GL_R8;
+    f->glformat = GL_RED;
+    f->gltype = GL_UNSIGNED_BYTE;
     break;
   }
 }
@@ -347,6 +347,7 @@ int shIsValidImageFormat(VGImageFormat format)
   SHint isRgba = (baseFormat == VG_sRGBX_8888     ||
                   baseFormat == VG_sRGBA_8888     ||
                   baseFormat == VG_sRGBA_8888_PRE ||
+                  baseFormat == VG_sRGB_565       ||
                   baseFormat == VG_sRGBA_5551     ||
                   baseFormat == VG_sRGBA_4444     ||
                   baseFormat == VG_lRGBX_8888     ||
@@ -366,19 +367,31 @@ int shIsValidImageFormat(VGImageFormat format)
 
 int shIsSupportedImageFormat(VGImageFormat format)
 {
-  SHuint32 baseFormat = (format & 0x1F);
-  if (baseFormat == VG_sRGBA_8888_PRE ||
-      baseFormat == VG_lRGBA_8888_PRE ||
-      baseFormat == VG_BW_1)
-      return 0;
+  return shIsValidImageFormat(format);
+}
 
-  return 1;
+static VGboolean shIsPremultipliedImageFormat(VGImageFormat format)
+{
+  SHuint32 baseFormat = (SHuint32)format & 0x1Fu;
+  return (baseFormat == VG_sRGBA_8888_PRE ||
+          baseFormat == VG_lRGBA_8888_PRE) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shIsBWFormat(VGImageFormat format)
+{
+  return (((SHuint32)format & 0x1Fu) == VG_BW_1) ? VG_TRUE : VG_FALSE;
 }
 
 static VGboolean shIsBitPackedAlphaFormat(VGImageFormat format)
 {
   SHuint32 baseFormat = (SHuint32)format & 0x1Fu;
   return (baseFormat == VG_A_1 || baseFormat == VG_A_4) ? VG_TRUE : VG_FALSE;
+}
+
+static VGboolean shIsBitPackedFormat(VGImageFormat format)
+{
+  return (shIsBitPackedAlphaFormat(format) ||
+          shIsBWFormat(format)) ? VG_TRUE : VG_FALSE;
 }
 
 static VGboolean shIsAlphaOnlyFormat(VGImageFormat format)
@@ -389,15 +402,36 @@ static VGboolean shIsAlphaOnlyFormat(VGImageFormat format)
           baseFormat == VG_A_4) ? VG_TRUE : VG_FALSE;
 }
 
-static VGImageFormat shImageStorageFormat(VGImageFormat format)
+static VGImageFormat shStraightImageFormat(VGImageFormat format)
 {
-  return shIsBitPackedAlphaFormat(format) ? VG_A_8 : format;
+  SHuint32 orderBits = (SHuint32)format & ~0x1Fu;
+  SHuint32 baseFormat = (SHuint32)format & 0x1Fu;
+
+  if (baseFormat == VG_sRGBA_8888_PRE)
+    return (VGImageFormat)(orderBits | VG_sRGBA_8888);
+  if (baseFormat == VG_lRGBA_8888_PRE)
+    return (VGImageFormat)(orderBits | VG_lRGBA_8888);
+  return format;
 }
 
-static SHint shPackedAlphaBits(VGImageFormat format)
+static VGImageFormat shImageStorageFormat(VGImageFormat format)
 {
   SHuint32 baseFormat = (SHuint32)format & 0x1Fu;
-  if (baseFormat == VG_A_1)
+  SHuint32 bgrBit = (SHuint32)format & (1u << 7);
+
+  if (shIsBitPackedAlphaFormat(format))
+    return VG_A_8;
+  if (shIsBWFormat(format))
+    return VG_sL_8;
+  if (baseFormat == VG_sRGB_565 && bgrBit != 0)
+    return VG_sRGB_565;
+  return shStraightImageFormat(format);
+}
+
+static SHint shPackedBits(VGImageFormat format)
+{
+  SHuint32 baseFormat = (SHuint32)format & 0x1Fu;
+  if (baseFormat == VG_A_1 || baseFormat == VG_BW_1)
     return 1;
   if (baseFormat == VG_A_4)
     return 4;
@@ -407,7 +441,7 @@ static SHint shPackedAlphaBits(VGImageFormat format)
 static SHint shImageFormatStrideBytes(VGImageFormat format, SHint width)
 {
   SHImageFormatDesc fd;
-  SHint bits = shPackedAlphaBits(format);
+  SHint bits = shPackedBits(format);
   size_t bitCount;
   size_t byteCount;
 
@@ -433,10 +467,7 @@ static size_t shImageDataAlignment(VGImageFormat format)
 {
   SHImageFormatDesc fd;
 
-  if (shIsBitPackedAlphaFormat(format))
-    return 1;
-
-  if ((format & 0x1F) == VG_BW_1)
+  if (shIsBitPackedFormat(format))
     return 1;
 
   shSetupImageFormat(format, &fd);
@@ -450,7 +481,9 @@ static void shApplyImageTextureSwizzle(VGImageFormat format)
   if (shIsAlphaOnlyFormat(format)) {
     GLint swizzle[4] = {GL_ONE, GL_ONE, GL_ONE, GL_RED};
     glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
-  } else if (baseFormat == VG_sL_8 || baseFormat == VG_lL_8) {
+  } else if (baseFormat == VG_sL_8 ||
+             baseFormat == VG_lL_8 ||
+             baseFormat == VG_BW_1) {
     GLint swizzle[4] = {GL_RED, GL_RED, GL_RED, GL_ONE};
     glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
   } else if (baseFormat == VG_sRGBX_8888 ||
@@ -463,6 +496,27 @@ static void shApplyImageTextureSwizzle(VGImageFormat format)
   }
 }
 
+static void shPremultiplyColor(SHColor *c)
+{
+  c->r *= c->a;
+  c->g *= c->a;
+  c->b *= c->a;
+}
+
+static void shUnpremultiplyColor(SHColor *c)
+{
+  if (c->a <= 0.0f) {
+    c->r = 0.0f;
+    c->g = 0.0f;
+    c->b = 0.0f;
+    return;
+  }
+
+  c->r = SH_MIN(c->r, c->a) / c->a;
+  c->g = SH_MIN(c->g, c->a) / c->a;
+  c->b = SH_MIN(c->b, c->a) / c->a;
+}
+
 /*--------------------------------------------------------
  * Packs the pixel color components into memory at given
  * address according to given format
@@ -470,12 +524,6 @@ static void shApplyImageTextureSwizzle(VGImageFormat format)
 
 void shStoreColor(SHColor *c, void *data, SHImageFormatDesc *f)
 {
-  /*
-  TODO: unsupported formats:
-  - s and l both behave linearly
-  - 1-bit black & white (BW_1)
-  */
-
   SHfloat l = 0.0f;
   SHuint32 out = 0x0;
 
@@ -509,12 +557,6 @@ void shStoreColor(SHColor *c, void *data, SHImageFormatDesc *f)
 
 void shLoadColor(SHColor *c, const void *data, SHImageFormatDesc *f)
 {
-  /*
-  TODO: unsupported formats:
-  - s and l both behave linearly
-  - 1-bit black & white (BW_1)
-  */
-
   SHuint32 in = 0x0;
   
   /* Load from buffer */
@@ -816,10 +858,12 @@ void shUpdateImageTexture(SHImage *i, VGContext *c)
   glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
   glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
   glBindTexture(GL_TEXTURE_2D, shImageTexture(i));
-  glTexImage2D(GL_TEXTURE_2D, 0, i->fd.glintformat,
+  glTexImage2D(GL_TEXTURE_2D, 0, i->storageFormat.glintformat,
                i->texwidth, i->texheight, 0,
-               i->fd.glformat, i->fd.gltype, i->data);
-  shApplyImageTextureSwizzle(i->fd.vgformat);
+               i->storageFormat.glformat,
+               i->storageFormat.gltype,
+               i->data);
+  shApplyImageTextureSwizzle(i->storageFormat.vgformat);
 
   shRestoreUnpackState(&unpack);
   shRestoreTextureBindingState(&texture);
@@ -933,6 +977,7 @@ VG_API_CALL VGImage vgCreateImage(VGImageFormat format,
 {
   SHImage *i = NULL;
   SHImageFormatDesc fd;
+  SHImageFormatDesc storageFd;
   size_t dataSize = 0;
   VG_GETCONTEXT(VG_INVALID_HANDLE);
   
@@ -948,9 +993,10 @@ VG_API_CALL VGImage vgCreateImage(VGImageFormat format,
   
   /* Reject invalid sizes */
   shSetupImageFormat(format, &fd);
+  shSetupImageFormat(shImageStorageFormat(format), &storageFd);
   VG_RETURN_ERR_IF(width <= 0 || width > SH_MAX_IMAGE_WIDTH ||
                    height <= 0 || height > SH_MAX_IMAGE_HEIGHT ||
-                   !shImageDataSize(width, height, fd.bytes,
+                   !shImageDataSize(width, height, storageFd.bytes,
                                     NULL, &dataSize),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
   
@@ -966,10 +1012,11 @@ VG_API_CALL VGImage vgCreateImage(VGImageFormat format,
   i->width = width;
   i->height = height;
   i->fd = fd;
+  i->storageFormat = storageFd;
   
   /* Allocate data memory */
   shUpdateImageTextureSize(i);
-  if (!shImageDataSize(i->texwidth, i->texheight, fd.bytes,
+  if (!shImageDataSize(i->texwidth, i->texheight, storageFd.bytes,
                        NULL, &dataSize)) {
     SH_DELETEOBJ(SHImage, i);
     VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
@@ -1088,21 +1135,31 @@ static void shLoadPixelColor(SHColor *c,
                              SHint x,
                              SHImageFormatDesc *format)
 {
-  SHint bits = shPackedAlphaBits(format->vgformat);
+  SHint bits = shPackedBits(format->vgformat);
   SHuint8 value;
   SHuint8 maxValue;
 
   if (bits == 0) {
     shLoadColor(c, row + (size_t)x * (size_t)format->bytes, format);
+    if (shIsPremultipliedImageFormat(format->vgformat))
+      shUnpremultiplyColor(c);
     return;
   }
 
   value = shLoadPackedAlpha(row, x, bits);
   maxValue = (SHuint8)((1u << bits) - 1u);
-  c->r = 1.0f;
-  c->g = 1.0f;
-  c->b = 1.0f;
-  c->a = (SHfloat)value / (SHfloat)maxValue;
+  if (shIsBWFormat(format->vgformat)) {
+    SHfloat l = value ? 1.0f : 0.0f;
+    c->r = l;
+    c->g = l;
+    c->b = l;
+    c->a = 1.0f;
+  } else {
+    c->r = 1.0f;
+    c->g = 1.0f;
+    c->b = 1.0f;
+    c->a = (SHfloat)value / (SHfloat)maxValue;
+  }
 }
 
 static void shStorePixelColor(SHuint8 *row,
@@ -1110,20 +1167,30 @@ static void shStorePixelColor(SHuint8 *row,
                               SHImageFormatDesc *format,
                               SHColor *c)
 {
-  SHint bits = shPackedAlphaBits(format->vgformat);
+  SHint bits = shPackedBits(format->vgformat);
   SHuint8 maxValue;
-  SHfloat alpha;
+  SHfloat valueFloat;
   SHuint8 value;
+  SHColor stored;
 
   if (bits == 0) {
-    shStoreColor(c, row + (size_t)x * (size_t)format->bytes, format);
+    CSETC(stored, (*c));
+    if (shIsPremultipliedImageFormat(format->vgformat))
+      shPremultiplyColor(&stored);
+    shStoreColor(&stored, row + (size_t)x * (size_t)format->bytes, format);
     return;
   }
 
-  alpha = c->a;
-  SH_CLAMP(alpha, 0.0f, 1.0f);
-  maxValue = (SHuint8)((1u << bits) - 1u);
-  value = (SHuint8)(alpha * (SHfloat)maxValue + 0.5f);
+  if (shIsBWFormat(format->vgformat)) {
+    valueFloat = 0.2126f * c->r + 0.7152f * c->g + 0.0722f * c->b;
+    SH_CLAMP(valueFloat, 0.0f, 1.0f);
+    value = valueFloat >= 0.5f ? 1u : 0u;
+  } else {
+    valueFloat = c->a;
+    SH_CLAMP(valueFloat, 0.0f, 1.0f);
+    maxValue = (SHuint8)((1u << bits) - 1u);
+    value = (SHuint8)(valueFloat * (SHfloat)maxValue + 0.5f);
+  }
   shStorePackedAlpha(row, x, bits, value);
 }
 
@@ -1223,7 +1290,7 @@ void shCopyPixels(SHuint8 *dst, VGImageFormat dstFormat, SHint dstStride,
       (sheight > 1 && srcStride < srcMinStride))
     return;
   
-  if (srcFormat == dstFormat && !shIsBitPackedAlphaFormat(srcFormat)) {
+  if (srcFormat == dstFormat && !shIsBitPackedFormat(srcFormat)) {
     
     /* Walk pixels and copy */
     for (SY=sy, DY=dy; SY < sy+height; ++SY, ++DY) {
@@ -1346,8 +1413,10 @@ static VGboolean shCanDirectImageFormat(const SHImage *image,
           root->texwidth == root->width &&
           root->texheight == root->height &&
           image->fd.vgformat == dataFormat &&
-          !shIsBitPackedAlphaFormat(dataFormat) &&
-          shFormatHasDirectGLStorage(&image->fd)) ? VG_TRUE : VG_FALSE;
+          image->storageFormat.vgformat == dataFormat &&
+          !shIsBitPackedFormat(dataFormat) &&
+          shFormatHasDirectGLStorage(&image->storageFormat)) ?
+         VG_TRUE : VG_FALSE;
 }
 
 static VGboolean shResolveTransferStride(VGint dataStride,
@@ -1399,7 +1468,7 @@ static VGboolean shResolveClientTransferStride(VGint dataStride,
   if (logicalWidth <= 0 || logicalHeight <= 0)
     return VG_FALSE;
 
-  if (shIsBitPackedAlphaFormat(format)) {
+  if (shIsBitPackedFormat(format)) {
     minStride = shImageFormatStrideBytes(format, logicalWidth);
     if (minStride <= 0)
       return VG_FALSE;
@@ -1513,7 +1582,7 @@ static VGboolean shTryDirectImageSubData(SHImage *image,
   if (!data)
     return VG_FALSE;
 
-  if (shIsBitPackedAlphaFormat(dataFormat))
+  if (shIsBitPackedFormat(dataFormat))
     return VG_FALSE;
 
   if (!shClipImageTransfer(image->width, image->height,
@@ -1524,13 +1593,14 @@ static VGboolean shTryDirectImageSubData(SHImage *image,
     return VG_TRUE;
 
   if (!shCanDirectImageFormat(image, dataFormat) ||
-      !shResolveTransferStride(dataStride, width, height, image->fd.bytes,
+      !shResolveTransferStride(dataStride, width, height,
+                               image->storageFormat.bytes,
                                &resolvedStride, &rowLength))
     return VG_FALSE;
 
   source = (const SHuint8*)data +
            (size_t)copySy * (size_t)resolvedStride +
-           (size_t)copySx * (size_t)image->fd.bytes;
+           (size_t)copySx * (size_t)image->storageFormat.bytes;
 
   shSaveImageUploadGLState(&state);
   glActiveTexture(GL_TEXTURE0);
@@ -1543,7 +1613,9 @@ static VGboolean shTryDirectImageSubData(SHImage *image,
                   shImageStorageX(image) + copyDx,
                   shImageStorageY(image) + copyDy,
                   copyWidth, copyHeight,
-                  image->fd.glformat, image->fd.gltype, source);
+                  image->storageFormat.glformat,
+                  image->storageFormat.gltype,
+                  source);
   shRestoreImageUploadGLState(&state);
 
   if (glGetError() != GL_NO_ERROR)
@@ -1582,10 +1654,10 @@ static VGboolean shCanDirectClearImage(const SHImage *image)
       root->texture == 0 ||
       root->texwidth != root->width ||
       root->texheight != root->height ||
-      !shFormatHasDirectGLStorage(&image->fd))
+      !shFormatHasDirectGLStorage(&image->storageFormat))
     return VG_FALSE;
 
-  internalFormat = image->fd.glintformat;
+  internalFormat = image->storageFormat.glintformat;
   if (internalFormat == GL_RGBA)
     return VG_TRUE;
   return (internalFormat == GL_RGB ||
@@ -1603,10 +1675,15 @@ static void shGetImageClearColor(const SHImage *image,
     out[1] = 0.0f;
     out[2] = 0.0f;
     out[3] = 0.0f;
-  } else if (baseFormat == VG_sL_8 || baseFormat == VG_lL_8) {
-    out[0] = 0.2126f * clear->r +
-             0.7152f * clear->g +
-             0.0722f * clear->b;
+  } else if (baseFormat == VG_sL_8 ||
+             baseFormat == VG_lL_8 ||
+             baseFormat == VG_BW_1) {
+    SHfloat l = 0.2126f * clear->r +
+                0.7152f * clear->g +
+                0.0722f * clear->b;
+    if (baseFormat == VG_BW_1)
+      l = l >= 0.5f ? 1.0f : 0.0f;
+    out[0] = l;
     out[1] = 0.0f;
     out[2] = 0.0f;
     out[3] = 1.0f;
@@ -1704,13 +1781,14 @@ static VGboolean shTryDirectGetImageSubData(SHImage *image,
     return VG_TRUE;
 
   if (!shCanDirectImageFormat(image, dataFormat) ||
-      !shResolveTransferStride(dataStride, width, height, image->fd.bytes,
+      !shResolveTransferStride(dataStride, width, height,
+                               image->storageFormat.bytes,
                                &resolvedStride, &rowLength))
     return VG_FALSE;
 
   dest = (SHuint8*)data +
          (size_t)copyDy * (size_t)resolvedStride +
-         (size_t)copyDx * (size_t)image->fd.bytes;
+         (size_t)copyDx * (size_t)image->storageFormat.bytes;
 
   shSaveImageReadGLState(&state);
   if (!shBindTextureReadFramebuffer(shImageTexture(image), &framebuffer))
@@ -1723,7 +1801,9 @@ static VGboolean shTryDirectGetImageSubData(SHImage *image,
   glReadPixels(shImageStorageX(image) + copySx,
                shImageStorageY(image) + copySy,
                copyWidth, copyHeight,
-               image->fd.glformat, image->fd.gltype, dest);
+               image->storageFormat.glformat,
+               image->storageFormat.gltype,
+               dest);
   success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
 
 cleanup:
@@ -1767,15 +1847,15 @@ static VGboolean shTryConvertedImageSubData(SHImage *image,
   if (!shResolveClientTransferStride(dataStride, width, height, dataFormat,
                                &resolvedStride, NULL) ||
       !shPixelBufferSize(copyWidth, copyHeight,
-                         image->fd.bytes, &convertedBytes))
+                         image->storageFormat.bytes, &convertedBytes))
     return VG_FALSE;
 
   converted = (SHuint8*)malloc(convertedBytes);
   if (!converted)
     return VG_FALSE;
 
-  shCopyPixels(converted, shImageStorageFormat(image->fd.vgformat),
-               copyWidth * image->fd.bytes,
+  shCopyPixels(converted, image->storageFormat.vgformat,
+               copyWidth * image->storageFormat.bytes,
                (const SHuint8*)data, dataFormat, resolvedStride,
                copyWidth, copyHeight, width, height,
                0, 0, copySx, copySy, copyWidth, copyHeight);
@@ -1791,7 +1871,9 @@ static VGboolean shTryConvertedImageSubData(SHImage *image,
                   shImageStorageX(image) + copyDx,
                   shImageStorageY(image) + copyDy,
                   copyWidth, copyHeight,
-                  image->fd.glformat, image->fd.gltype, converted);
+                  image->storageFormat.glformat,
+                  image->storageFormat.gltype,
+                  converted);
   success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
   shRestoreImageUploadGLState(&state);
 
@@ -1837,7 +1919,7 @@ static VGboolean shTryConvertedGetImageSubData(SHImage *image,
   if (!shResolveClientTransferStride(dataStride, width, height, dataFormat,
                                &resolvedStride, NULL) ||
       !shPixelBufferSize(copyWidth, copyHeight,
-                         image->fd.bytes, &nativeBytes))
+                         image->storageFormat.bytes, &nativeBytes))
     return VG_FALSE;
 
   nativePixels = (SHuint8*)malloc(nativeBytes);
@@ -1855,13 +1937,15 @@ static VGboolean shTryConvertedGetImageSubData(SHImage *image,
   glReadPixels(shImageStorageX(image) + copySx,
                shImageStorageY(image) + copySy,
                copyWidth, copyHeight,
-               image->fd.glformat, image->fd.gltype, nativePixels);
+               image->storageFormat.glformat,
+               image->storageFormat.gltype,
+               nativePixels);
   if (glGetError() != GL_NO_ERROR)
     goto cleanup;
 
   shCopyPixels((SHuint8*)data, dataFormat, resolvedStride,
-               nativePixels, shImageStorageFormat(image->fd.vgformat),
-               copyWidth * image->fd.bytes,
+               nativePixels, image->storageFormat.vgformat,
+               copyWidth * image->storageFormat.bytes,
                width, height, copyWidth, copyHeight,
                copyDx, copyDy, 0, 0, copyWidth, copyHeight);
   success = VG_TRUE;
@@ -2119,7 +2203,8 @@ static VGboolean shCanDrawSurfaceImageTexture(const SHImage *image)
           root->texture != 0 &&
           root->texwidth == root->width &&
           root->texheight == root->height &&
-          shCanDrawSurfaceTextureFormat(&image->fd)) ? VG_TRUE : VG_FALSE;
+          shCanDrawSurfaceTextureFormat(&image->storageFormat)) ?
+         VG_TRUE : VG_FALSE;
 }
 
 static VGboolean shDrawSurfaceTexture(VGContext *context,
@@ -2316,7 +2401,10 @@ static VGboolean shTryDirectWritePixels(VGContext *context,
                              width, height))
     return VG_TRUE;
 
-  if (shIsBitPackedAlphaFormat(dataFormat))
+  if (shIsBitPackedFormat(dataFormat))
+    return VG_FALSE;
+
+  if (shImageStorageFormat(dataFormat) != dataFormat)
     return VG_FALSE;
 
   shSetupImageFormat(dataFormat, &fd);
@@ -2355,7 +2443,8 @@ static VGboolean shTryDirectWritePixels(VGContext *context,
     success = shDrawSurfaceTexture(context, texture,
                                    copyDx, copyDy,
                                    copyWidth, copyHeight,
-                                   copyWidth, copyHeight, 0, 0, VG_FALSE);
+                                   copyWidth, copyHeight, 0, 0,
+                                   shIsPremultipliedImageFormat(dataFormat));
 
   glDeleteTextures(1, &texture);
   return success;
@@ -2383,8 +2472,13 @@ static VGboolean shTryConvertedWritePixels(VGContext *context,
   GLuint texture = 0;
   VGboolean success = VG_FALSE;
   SHImageUploadGLState state;
+  VGImageFormat storageFormat;
 
-  if (!data || !shIsBitPackedAlphaFormat(dataFormat))
+  if (!data)
+    return VG_FALSE;
+
+  storageFormat = shImageStorageFormat(dataFormat);
+  if (storageFormat == dataFormat && !shIsBitPackedFormat(dataFormat))
     return VG_FALSE;
 
   if (!shClipSurfaceTransfer(context,
@@ -2394,21 +2488,21 @@ static VGboolean shTryConvertedWritePixels(VGContext *context,
                              width, height))
     return VG_TRUE;
 
+  shSetupImageFormat(storageFormat, &fd);
   if (!shResolveClientTransferStride(dataStride, width, height, dataFormat,
                                      &resolvedStride, NULL) ||
-      !shPixelBufferSize(copyWidth, copyHeight, 1, &convertedBytes))
+      !shPixelBufferSize(copyWidth, copyHeight, fd.bytes, &convertedBytes))
     return VG_FALSE;
 
   converted = (SHuint8*)malloc(convertedBytes);
   if (!converted)
     return VG_FALSE;
 
-  shCopyPixels(converted, VG_A_8, copyWidth,
+  shCopyPixels(converted, storageFormat, copyWidth * fd.bytes,
                (const SHuint8*)data, dataFormat, resolvedStride,
                copyWidth, copyHeight, width, height,
                0, 0, copySx, copySy, copyWidth, copyHeight);
 
-  shSetupImageFormat(VG_A_8, &fd);
   glGenTextures(1, &texture);
   if (texture == 0)
     goto cleanup;
@@ -2420,7 +2514,7 @@ static VGboolean shTryConvertedWritePixels(VGContext *context,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  shApplyImageTextureSwizzle(VG_A_8);
+  shApplyImageTextureSwizzle(storageFormat);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
@@ -2882,6 +2976,7 @@ VG_API_CALL VGImage vgChildImage(VGImage parent,
   child->width = width;
   child->height = height;
   child->fd = parentImage->fd;
+  child->storageFormat = parentImage->storageFormat;
   child->texwidth = rootImage->texwidth;
   child->texheight = rootImage->texheight;
   child->texwidthK = rootImage->texwidthK;
@@ -2954,7 +3049,9 @@ static VGboolean shImageFilterIsLuminanceFormat(VGImageFormat format)
 {
   SHuint32 base = (SHuint32)format & 0x1Fu;
 
-  return (base == VG_sL_8 || base == VG_lL_8) ? VG_TRUE : VG_FALSE;
+  return (base == VG_sL_8 ||
+          base == VG_lL_8 ||
+          base == VG_BW_1) ? VG_TRUE : VG_FALSE;
 }
 
 static VGboolean shImageFilterFormatIsLinear(VGImageFormat format)
@@ -2986,7 +3083,8 @@ enum
   SH_IMAGE_FILTER_STORE_RGBA = 0,
   SH_IMAGE_FILTER_STORE_ALPHA = 1,
   SH_IMAGE_FILTER_STORE_LUMINANCE = 2,
-  SH_IMAGE_FILTER_STORE_FLOAT = 3
+  SH_IMAGE_FILTER_STORE_FLOAT = 3,
+  SH_IMAGE_FILTER_STORE_BW = 4
 };
 
 enum
@@ -3120,6 +3218,8 @@ static SHint shImageFilterStorageMode(const SHImage *image)
   base = (SHuint32)image->fd.vgformat & 0x1Fu;
   if (shIsAlphaOnlyFormat(image->fd.vgformat))
     return SH_IMAGE_FILTER_STORE_ALPHA;
+  if (base == VG_BW_1)
+    return SH_IMAGE_FILTER_STORE_BW;
   if (shImageFilterIsLuminanceFormat(image->fd.vgformat))
     return SH_IMAGE_FILTER_STORE_LUMINANCE;
   return SH_IMAGE_FILTER_STORE_RGBA;
@@ -3133,7 +3233,8 @@ static void shImageFilterSetColorMask(const SHImage *dst,
 
   if (storageMode == SH_IMAGE_FILTER_STORE_FLOAT) {
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  } else if (storageMode == SH_IMAGE_FILTER_STORE_LUMINANCE) {
+  } else if (storageMode == SH_IMAGE_FILTER_STORE_LUMINANCE ||
+             storageMode == SH_IMAGE_FILTER_STORE_BW) {
     glColorMask(GL_TRUE, GL_FALSE, GL_FALSE, GL_FALSE);
   } else if (storageMode == SH_IMAGE_FILTER_STORE_ALPHA) {
     glColorMask((channelMask & VG_ALPHA) ? GL_TRUE : GL_FALSE,
@@ -3596,7 +3697,8 @@ static VGboolean shImageTransferCanUseImage(const SHImage *image)
           root->texture != 0 &&
           root->texwidth == root->width &&
           root->texheight == root->height &&
-          shFormatHasDirectGLStorage(&image->fd)) ? VG_TRUE : VG_FALSE;
+          shFormatHasDirectGLStorage(&image->storageFormat)) ?
+         VG_TRUE : VG_FALSE;
 }
 
 static VGboolean shImageTransferCreateTexture(GLuint *texture,

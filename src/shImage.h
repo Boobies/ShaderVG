@@ -79,6 +79,7 @@ struct SHImage
   SHint width;
   SHint height;
   SHImageFormatDesc fd;
+  SHImageFormatDesc storageFormat;
   
   SHint texwidth;
   SHint texheight;

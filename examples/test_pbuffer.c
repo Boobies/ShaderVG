@@ -3557,6 +3557,239 @@ cleanup:
   return result;
 }
 
+static int run_core_image_format_test(unsigned char *pixels,
+                                      EGLint width,
+                                      EGLint height)
+{
+  static const VGImageFormat formats[] = {
+    VG_sRGBX_8888,
+    VG_sRGBA_8888,
+    VG_sRGBA_8888_PRE,
+    VG_sRGB_565,
+    VG_sRGBA_5551,
+    VG_sRGBA_4444,
+    VG_sL_8,
+    VG_lRGBX_8888,
+    VG_lRGBA_8888,
+    VG_lRGBA_8888_PRE,
+    VG_lL_8,
+    VG_A_8,
+    VG_BW_1,
+    VG_A_1,
+    VG_A_4,
+    VG_sXRGB_8888,
+    VG_sARGB_8888,
+    VG_sARGB_8888_PRE,
+    VG_sARGB_1555,
+    VG_sARGB_4444,
+    VG_lXRGB_8888,
+    VG_lARGB_8888,
+    VG_lARGB_8888_PRE,
+    VG_sBGRX_8888,
+    VG_sBGRA_8888,
+    VG_sBGRA_8888_PRE,
+    VG_sBGR_565,
+    VG_sBGRA_5551,
+    VG_sBGRA_4444,
+    VG_lBGRX_8888,
+    VG_lBGRA_8888,
+    VG_lBGRA_8888_PRE,
+    VG_sXBGR_8888,
+    VG_sABGR_8888,
+    VG_sABGR_8888_PRE,
+    VG_sABGR_1555,
+    VG_sABGR_4444,
+    VG_lXBGR_8888,
+    VG_lABGR_8888,
+    VG_lABGR_8888_PRE
+  };
+  VGImage created[sizeof(formats) / sizeof(formats[0])];
+  VGImage preImage = VG_INVALID_HANDLE;
+  VGImage a1Image = VG_INVALID_HANDLE;
+  VGImage a4Image = VG_INVALID_HANDLE;
+  VGImage bwImage = VG_INVALID_HANDLE;
+  VGImage bgr565Image = VG_INVALID_HANDLE;
+  VGubyte preData[2 * 2 * 4];
+  VGubyte straightRead[2 * 2 * 4];
+  VGubyte preRead[2 * 2 * 4];
+  VGubyte a1Data[] = {0x80};
+  VGubyte a4Data[] = {0xf0};
+  VGubyte aRead[8];
+  VGubyte bwData[] = {0xa5, 0x3c};
+  VGubyte bwRead[2];
+  VGubyte bwExpanded[8 * 2 * 4];
+  VGubyte bwWrite[] = {0x40};
+  unsigned short bgr565Red = 0x001fu;
+  VGint bgr565X = width - 10;
+  VGint bwWriteX = width - 8;
+  VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat white[] = {1.0f, 1.0f, 1.0f, 1.0f};
+  size_t i;
+  int result = 0;
+
+  for (i=0; i<sizeof(created) / sizeof(created[0]); ++i)
+    created[i] = VG_INVALID_HANDLE;
+
+  for (i=0; i<sizeof(formats) / sizeof(formats[0]); ++i) {
+    created[i] = vgCreateImage(formats[i], 2, 2,
+                               VG_IMAGE_QUALITY_BETTER);
+    if (created[i] == VG_INVALID_HANDLE ||
+        vgGetParameteri(created[i], VG_IMAGE_FORMAT) != formats[i]) {
+      fprintf(stderr, "OpenVG core image format 0x%x failed\n",
+              (unsigned int)formats[i]);
+      result = fail_vg("OpenVG core image format creation failed");
+      goto cleanup;
+    }
+  }
+  if (expect_no_vg_error("OpenVG core image format query failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  preImage = vgCreateImage(VG_lABGR_8888_PRE, 2, 2,
+                           VG_IMAGE_QUALITY_BETTER);
+  a1Image = vgCreateImage(VG_A_1, 8, 1, VG_IMAGE_QUALITY_BETTER);
+  a4Image = vgCreateImage(VG_A_4, 2, 1, VG_IMAGE_QUALITY_BETTER);
+  bwImage = vgCreateImage(VG_BW_1, 8, 2, VG_IMAGE_QUALITY_BETTER);
+  bgr565Image = vgCreateImage(VG_sBGR_565, 1, 1,
+                              VG_IMAGE_QUALITY_BETTER);
+  if (preImage == VG_INVALID_HANDLE ||
+      a1Image == VG_INVALID_HANDLE ||
+      a4Image == VG_INVALID_HANDLE ||
+      bwImage == VG_INVALID_HANDLE ||
+      bgr565Image == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG core image format test setup failed");
+    goto cleanup;
+  }
+
+  memset(preData, 0, sizeof(preData));
+  memset(straightRead, 0, sizeof(straightRead));
+  memset(preRead, 0, sizeof(preRead));
+  set_rgba(preData, 2 * 4, 0, 0, 128, 0, 0, 128);
+  vgImageSubData(preImage, preData, 2 * 4,
+                 VG_lABGR_8888_PRE, 0, 0, 2, 2);
+  vgGetImageSubData(preImage, straightRead, 2 * 4,
+                    VG_lABGR_8888, 0, 0, 2, 2);
+  vgGetImageSubData(preImage, preRead, 2 * 4,
+                    VG_lABGR_8888_PRE, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG premultiplied image roundtrip failed") ||
+      expect_rgba_at(straightRead, 2 * 4, 0, 0, 255, 0, 0, 128,
+                     "OpenVG PRE image did not unpremultiply on readback") ||
+      expect_rgba_at(preRead, 2 * 4, 0, 0, 128, 0, 0, 128,
+                     "OpenVG PRE image did not premultiply on readback")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSetPixels(62, 8, preImage, 0, 0, 1, 1);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG PRE image vgSetPixels failed") ||
+      expect_rgba_at(pixels, width * 4, 62, 8, 255, 0, 0, 128,
+                     "OpenVG PRE image draw used associated color as straight color")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgImageSubData(bgr565Image, &bgr565Red, sizeof(bgr565Red),
+                 VG_sBGR_565, 0, 0, 1, 1);
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSetPixels(bgr565X, 8, bgr565Image, 0, 0, 1, 1);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG BGR_565 image upload failed") ||
+      expect_rgba_at(pixels, width * 4, bgr565X, 8, 255, 0, 0, 255,
+                     "OpenVG BGR_565 image did not preserve channel order")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  memset(aRead, 0, sizeof(aRead));
+  vgImageSubData(a1Image, a1Data, 1, VG_A_1, 0, 0, 8, 1);
+  vgGetImageSubData(a1Image, aRead, 8, VG_A_8, 0, 0, 8, 1);
+  if (expect_no_vg_error("OpenVG A_1 image conversion failed") ||
+      aRead[0] < 250 ||
+      aRead[1] > 5) {
+    fprintf(stderr, "OpenVG A_1 image did not expand packed alpha\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  memset(aRead, 0, sizeof(aRead));
+  vgImageSubData(a4Image, a4Data, 1, VG_A_4, 0, 0, 2, 1);
+  vgGetImageSubData(a4Image, aRead, 2, VG_A_8, 0, 0, 2, 1);
+  if (expect_no_vg_error("OpenVG A_4 image conversion failed") ||
+      aRead[0] < 250 ||
+      aRead[1] > 5) {
+    fprintf(stderr, "OpenVG A_4 image did not expand packed alpha\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  memset(bwRead, 0, sizeof(bwRead));
+  memset(bwExpanded, 0, sizeof(bwExpanded));
+  vgImageSubData(bwImage, bwData, 1, VG_BW_1, 0, 0, 8, 2);
+  vgGetImageSubData(bwImage, bwRead, 1, VG_BW_1, 0, 0, 8, 2);
+  vgGetImageSubData(bwImage, bwExpanded, 8 * 4,
+                    VG_lABGR_8888, 0, 0, 8, 2);
+  if (expect_no_vg_error("OpenVG BW_1 image roundtrip failed") ||
+      bwRead[0] != 0xa5 ||
+      bwRead[1] != 0x3c ||
+      expect_rgba_at(bwExpanded, 8 * 4, 0, 0, 255, 255, 255, 255,
+                     "OpenVG BW_1 image did not expand one bits to white") ||
+      expect_rgba_at(bwExpanded, 8 * 4, 1, 0, 0, 0, 0, 255,
+                     "OpenVG BW_1 image did not expand zero bits to black")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, white);
+  vgClearImage(bwImage, 1, 1, 1, 1);
+  memset(bwExpanded, 0, sizeof(bwExpanded));
+  vgGetImageSubData(bwImage, bwExpanded, 8 * 4,
+                    VG_lABGR_8888, 0, 0, 8, 2);
+  if (expect_no_vg_error("OpenVG BW_1 image clear failed") ||
+      expect_rgba_at(bwExpanded, 8 * 4, 1, 1, 255, 255, 255, 255,
+                     "OpenVG BW_1 clear did not threshold to white")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgWritePixels(bwWrite, 1, VG_BW_1, bwWriteX, 8, 8, 1);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG BW_1 vgWritePixels failed") ||
+      expect_rgba_at(pixels, width * 4, bwWriteX, 8, 0, 0, 0, 255,
+                     "OpenVG BW_1 vgWritePixels wrote the wrong zero bit") ||
+      expect_rgba_at(pixels, width * 4, bwWriteX + 1, 8,
+                     255, 255, 255, 255,
+                     "OpenVG BW_1 vgWritePixels did not write the one bit")) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  if (bgr565Image != VG_INVALID_HANDLE)
+    vgDestroyImage(bgr565Image);
+  if (bwImage != VG_INVALID_HANDLE)
+    vgDestroyImage(bwImage);
+  if (a4Image != VG_INVALID_HANDLE)
+    vgDestroyImage(a4Image);
+  if (a1Image != VG_INVALID_HANDLE)
+    vgDestroyImage(a1Image);
+  if (preImage != VG_INVALID_HANDLE)
+    vgDestroyImage(preImage);
+  for (i=0; i<sizeof(created) / sizeof(created[0]); ++i)
+    if (created[i] != VG_INVALID_HANDLE)
+      vgDestroyImage(created[i]);
+  return result;
+}
+
 static int run_child_image_test(unsigned char *pixels,
                                 EGLint width,
                                 EGLint height)
@@ -4524,18 +4757,49 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
     goto cleanup;
   }
 
+  if (!eglDestroySurface(display, imageSurface)) {
+    result = fail_egl("EGL could not destroy an OpenVG image pbuffer");
+    goto cleanup;
+  }
+  imageSurface = EGL_NO_SURFACE;
+  vgDestroyImage(image);
+  image = VG_INVALID_HANDLE;
+
+  image = vgCreateImage(VG_sRGBA_8888_PRE, imageWidth, imageHeight,
+                        VG_IMAGE_QUALITY_BETTER);
+  if (image == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG PRE image-backed pbuffer setup failed");
+    goto cleanup;
+  }
+
+  imageSurface = eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
+                                                 (EGLClientBuffer)image,
+                                                 config, NULL);
+  if (imageSurface == EGL_NO_SURFACE) {
+    result = fail_egl("EGL PRE OpenVG image pbuffer creation failed");
+    goto cleanup;
+  }
+
+  if (!eglQuerySurface(display, imageSurface, EGL_VG_COLORSPACE, &value) ||
+      value != EGL_VG_COLORSPACE_sRGB ||
+      !eglQuerySurface(display, imageSurface, EGL_VG_ALPHA_FORMAT, &value) ||
+      value != EGL_VG_ALPHA_FORMAT_PRE) {
+    result = fail_egl("EGL PRE OpenVG image pbuffer surface query failed");
+    goto cleanup;
+  }
+
 cleanup:
   if ((eglGetCurrentContext() != context ||
        eglGetCurrentSurface(EGL_DRAW) != baseSurface) &&
       !eglMakeCurrent(display, baseSurface, baseSurface, context) &&
       result == 0)
     result = fail_egl("EGL could not restore the base pbuffer during cleanup");
-  if (image != VG_INVALID_HANDLE)
-    vgDestroyImage(image);
   if (imageSurface != EGL_NO_SURFACE &&
       !eglDestroySurface(display, imageSurface) &&
       result == 0)
     result = fail_egl("EGL could not destroy an OpenVG image pbuffer");
+  if (image != VG_INVALID_HANDLE)
+    vgDestroyImage(image);
   if (result == 0 &&
       !eglMakeCurrent(display, baseSurface, baseSurface, context))
     result = fail_egl("EGL could not leave the base pbuffer current");
@@ -5845,6 +6109,8 @@ int main(void)
                                                 context, pixels, width, height);
       if (result == 0)
         result = run_pixel_transfer_test(pixels, width, height);
+      if (result == 0)
+        result = run_core_image_format_test(pixels, width, height);
       if (result == 0)
         result = run_child_image_test(pixels, width, height);
       if (result == 0)
