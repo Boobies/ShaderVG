@@ -2,11 +2,32 @@
 # Keep comments on separate lines; the CTS list parser only treats lines that
 # start with '#' as comments.
 #
+# Broad API error coverage reaches known unimplemented validation cases.
+A10102
+#
 # Context/screen-layout and implementation-limit state still needs triage.
 A20301
 #
 # Image parameter coverage reaches unsupported core image-format combinations.
 A30201
+#
+# Scissoring coverage exposes a path rendering state mismatch.
+E10301
+#
+# Mask image format/default-state coverage reaches unsupported mask formats.
+F10201
+F10203
+F10204
+F20103
+#
+# Path interpolation mismatch validation currently aborts instead of reporting a spec error.
+G20602
+G20604
+#
+# These path rendering CTS groups make the generator grow without bound in this
+# environment. Keep them isolated until the resource issue is understood.
+G70108
+G70109
 #
 # Image API error and behavior tests are blocked on child-image support.
 H10201
@@ -16,6 +37,9 @@ H30201
 H30202
 H30204
 H30205
+J30101
+J30201
+J40106
 #
 # Broad image-format matrices cover VG_BW_1 and premultiplied image storage.
 H10101
@@ -24,3 +48,28 @@ J40108
 J40109
 K20203
 K20204
+#
+# Draw-image and image operation coverage exposes format conversion, sampling,
+# clamping, and premultiplied image storage gaps.
+H10316
+H10317
+H10318
+H10319
+H10320
+H10321
+H10322
+H10323
+H10324
+H10325
+H10326
+H10327
+H10328
+H10331
+H10402
+H30203
+J40102
+J40110
+K20401
+#
+# Pattern paint validation/rendering still has a spec mismatch.
+I10202

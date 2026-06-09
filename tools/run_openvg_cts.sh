@@ -18,6 +18,9 @@ test_name=
 list_file=
 config_id=
 verbose=1
+chunk_size=${CTS_CHUNK_SIZE:-50}
+memory_limit_kb=${CTS_MEMORY_LIMIT_KB:-3145728}
+timeout_seconds=${CTS_TIMEOUT_SECONDS:-0}
 extra_cts_args=()
 
 usage()
@@ -40,6 +43,9 @@ Options:
   --list-file FILE           Run test ids listed in FILE
   --config ID                Run one EGL config id
   --verbose N                CTS verbose level, 0 through 2 (default: $verbose)
+  --chunk-size N             Split list-file runs into chunks (default: $chunk_size, 0 disables)
+  --memory-limit-kb N        Limit CTS generator virtual memory (default: $memory_limit_kb, 0 disables)
+  --timeout SECONDS          Time limit for each CTS generator process (default: $timeout_seconds, 0 disables)
   -h, --help                 Show this help
 
 Environment:
@@ -50,6 +56,9 @@ Environment:
   CTS_CFLAGS_EXTRA           Extra CFLAGS for the CTS build
   CTS_LDFLAGS_EXTRA          Extra LDFLAGS for the CTS build
   CTS_LIBS_EXTRA             Extra libraries for the CTS build
+  CTS_CHUNK_SIZE             Same as --chunk-size
+  CTS_MEMORY_LIMIT_KB        Same as --memory-limit-kb
+  CTS_TIMEOUT_SECONDS        Same as --timeout
   MAKE, CC                   Build tools
 
 Examples:
@@ -118,6 +127,21 @@ while [ "$#" -gt 0 ]; do
             verbose=$2
             shift 2
             ;;
+        --chunk-size)
+            [ "$#" -ge 2 ] || die "--chunk-size requires a non-negative integer"
+            chunk_size=$2
+            shift 2
+            ;;
+        --memory-limit-kb)
+            [ "$#" -ge 2 ] || die "--memory-limit-kb requires a non-negative integer"
+            memory_limit_kb=$2
+            shift 2
+            ;;
+        --timeout)
+            [ "$#" -ge 2 ] || die "--timeout requires a non-negative integer"
+            timeout_seconds=$2
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -134,6 +158,16 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -z "$test_name" ] || [ -z "$list_file" ] || die "--test and --list-file are mutually exclusive"
+
+case "$chunk_size" in
+    ''|*[!0-9]*) die "--chunk-size requires a non-negative integer" ;;
+esac
+case "$memory_limit_kb" in
+    ''|*[!0-9]*) die "--memory-limit-kb requires a non-negative integer" ;;
+esac
+case "$timeout_seconds" in
+    ''|*[!0-9]*) die "--timeout requires a non-negative integer" ;;
+esac
 
 if [ -n "$list_file" ]; then
     case "$list_file" in
@@ -230,12 +264,72 @@ timestamp=$(date +%Y%m%d-%H%M%S)
 run_log=$log_dir/run-$timestamp.log
 
 echo "Running OpenVG CTS generator..."
-(
-    export LD_LIBRARY_PATH="$lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cd "$cts_make_dir" || exit $?
-    "$cts_bin" "${run_args[@]}"
-) >"$run_log" 2>&1
-status=$?
+
+run_generator()
+{
+    (
+        export LD_LIBRARY_PATH="$lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        cd "$cts_make_dir" || exit $?
+        if [ "$memory_limit_kb" -gt 0 ]; then
+            ulimit -v "$memory_limit_kb" || exit $?
+        fi
+        if [ "$timeout_seconds" -gt 0 ]; then
+            timeout --foreground "$timeout_seconds" "$cts_bin" "$@"
+        else
+            "$cts_bin" "$@"
+        fi
+    ) >>"$run_log" 2>&1
+}
+
+status=0
+: >"$run_log" || exit $?
+if [ -n "$list_file" ] && [ "$chunk_size" -gt 0 ]; then
+    chunk_dir=$(mktemp -d "${TMPDIR:-/tmp}/openvg-cts-list.XXXXXX") || exit $?
+    trap 'rm -rf "$chunk_dir"' EXIT HUP INT TERM
+    awk -v dir="$chunk_dir" -v chunk_size="$chunk_size" '
+        /^[[:space:]]*#/ || NF == 0 { next }
+        {
+            if (count % chunk_size == 0) {
+                chunk++
+                file = sprintf("%s/chunk-%04d.txt", dir, chunk)
+                print "#Test Lists" > file
+            }
+            print $1 >> file
+            count++
+        }
+        END {
+            print chunk > (dir "/chunk-count")
+        }
+    ' "$list_file" || exit $?
+    chunk_count=$(cat "$chunk_dir/chunk-count")
+    [ "$chunk_count" -gt 0 ] || die "list file contains no CTS test ids: $list_file"
+
+    chunk_index=1
+    while [ "$chunk_index" -le "$chunk_count" ]; do
+        chunk_file=$(printf '%s/chunk-%04d.txt' "$chunk_dir" "$chunk_index")
+        echo "[CTS chunk $chunk_index/$chunk_count: $chunk_file]" >>"$run_log"
+        chunk_args=(-v "$verbose")
+        if [ -n "$config_id" ]; then
+            chunk_args+=(-c "$config_id")
+        fi
+        chunk_args+=(-f "$chunk_file")
+        if [ "${#extra_cts_args[@]}" -gt 0 ]; then
+            chunk_args+=("${extra_cts_args[@]}")
+        fi
+        run_generator "${chunk_args[@]}"
+        status=$?
+        if [ "$status" -ne 0 ] || grep -q 'Failed' "$run_log"; then
+            if [ "$status" -eq 0 ]; then
+                status=1
+            fi
+            break
+        fi
+        chunk_index=$((chunk_index + 1))
+    done
+else
+    run_generator "${run_args[@]}"
+    status=$?
+fi
 
 if [ "$status" -eq 0 ] && grep -q 'Failed' "$run_log"; then
     echo "CTS reported failures; see $run_log" >&2

@@ -145,6 +145,8 @@ $ tools/run_openvg_cts.sh --clone --build-only
 $ tools/run_openvg_cts.sh --cts-dir /tmp/OpenVG-CTS --test A10101
 $ tools/run_openvg_cts.sh --cts-dir /tmp/OpenVG-CTS \
     --list-file tools/openvg_cts_smoke.txt --config 1 --verbose 2
+$ tools/run_openvg_cts.sh --cts-dir /tmp/OpenVG-CTS \
+    --list-file tools/openvg_cts_msaa.txt --config 5 --verbose 2
 ```
 
 The script stores generated answers, config info, and logs under
@@ -153,8 +155,15 @@ uninstalled `src/.libs/libShaderVGEGL.so` and `src/.libs/libOpenVG.so`, with
 ShaderVG's EGL entry points ordered before the platform EGL library.
 
 `tools/openvg_cts_smoke.txt` tracks the CTS groups expected to pass today.
-`tools/openvg_cts_blocked.txt` lists useful groups that currently expose known
-compliance gaps and should be promoted into the smoke list as those gaps close.
+`tools/openvg_cts_msaa.txt` tracks CTS groups that require an EGL config with
+sample buffers. `tools/openvg_cts_blocked.txt` lists useful groups that
+currently expose known compliance gaps and should be promoted into the smoke
+list as those gaps close.
+
+List-file runs are split into chunks by default and the CTS generator is run
+with a virtual-memory cap, because some large visual CTS groups can grow without
+bound in this environment. Use `--chunk-size`, `--memory-limit-kb`, `--timeout`,
+or the matching `CTS_*` environment variables to adjust those limits.
 
 Use CTS results as development triage until the remaining TODO items are closed.
 The public CTS is useful for local testing, but official OpenVG conformance and
