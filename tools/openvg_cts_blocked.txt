@@ -29,18 +29,6 @@ G20604
 G70108
 G70109
 #
-# Image API error and behavior tests are blocked on child-image support.
-H10201
-H10202
-H10203
-H30201
-H30202
-H30204
-H30205
-J30101
-J30201
-J40106
-#
 # Broad image-format matrices cover VG_BW_1 and premultiplied image storage.
 H10101
 H30101
@@ -51,6 +39,7 @@ K20204
 #
 # Draw-image and image operation coverage exposes format conversion, sampling,
 # clamping, and premultiplied image storage gaps.
+H30202
 H10316
 H10317
 H10318

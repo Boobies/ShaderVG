@@ -564,17 +564,66 @@ void SHImage_ctor(SHImage *i)
   i->glyphRefs = 0;
   i->gpuDataDirty = VG_FALSE;
   i->surfaceDataPremultiplied = VG_FALSE;
+  i->parent = NULL;
+  i->storageX = 0;
+  i->storageY = 0;
+  i->ownsStorage = VG_TRUE;
 }
 
 void SHImage_dtor(SHImage *i)
 {
-  if (i->data != NULL)
+  SHImage *parent = i->parent;
+
+  if (i->ownsStorage && i->data != NULL)
     free(i->data);
   
-  if (shCanDeleteResourceGL() &&
+  if (i->ownsStorage &&
+      shCanDeleteResourceGL() &&
       i->texture != 0 &&
       glIsTexture(i->texture))
     glDeleteTextures(1, &i->texture);
+
+  if (parent)
+    shImageRelease(parent);
+}
+
+SHImage *shImageRoot(SHImage *i)
+{
+  if (!i)
+    return NULL;
+  while (i->parent)
+    i = i->parent;
+  return i;
+}
+
+const SHImage *shImageRootConst(const SHImage *i)
+{
+  if (!i)
+    return NULL;
+  while (i->parent)
+    i = i->parent;
+  return i;
+}
+
+GLuint shImageTexture(const SHImage *i)
+{
+  const SHImage *root = shImageRootConst(i);
+  return root ? root->texture : 0;
+}
+
+SHint shImageStorageX(const SHImage *i)
+{
+  return i ? i->storageX : 0;
+}
+
+SHint shImageStorageY(const SHImage *i)
+{
+  return i ? i->storageY : 0;
+}
+
+VGboolean shImageOwnsStorage(const SHImage *i)
+{
+  return (i && i->ownsStorage) ? VG_TRUE : VG_FALSE;
 }
 
 void shImageAddRef(SHImage *i)
@@ -595,86 +644,125 @@ void shImageRelease(SHImage *i)
 
 void shImageAddEGLPbufferRef(SHImage *i)
 {
-  if (!i)
+  SHImage *root = shImageRoot(i);
+
+  if (!root)
     return;
 
-  ++i->eglPbufferRefs;
-  shImageAddRef(i);
+  ++root->eglPbufferRefs;
+  shImageAddRef(root);
 }
 
 void shImageReleaseEGLPbufferRef(SHImage *i)
 {
-  if (!i)
+  SHImage *root = shImageRoot(i);
+
+  if (!root)
     return;
 
-  if (i->eglPbufferRefs > 0)
-    --i->eglPbufferRefs;
-  shImageRelease(i);
+  if (root->eglPbufferRefs > 0)
+    --root->eglPbufferRefs;
+  shImageRelease(root);
 }
 
 void shImageAddPaintPatternRef(SHImage *i)
 {
+  SHImage *root = shImageRoot(i);
+
   if (i)
     ++i->paintPatternRefs;
+  if (root && root != i)
+    ++root->paintPatternRefs;
 }
 
 void shImageReleasePaintPatternRef(SHImage *i)
 {
+  SHImage *root = shImageRoot(i);
+
   if (i && i->paintPatternRefs > 0)
     --i->paintPatternRefs;
+  if (root && root != i && root->paintPatternRefs > 0)
+    --root->paintPatternRefs;
 }
 
 void shImageAddGlyphRef(SHImage *i)
 {
+  SHImage *root = shImageRoot(i);
+
   if (i)
     ++i->glyphRefs;
+  if (root && root != i)
+    ++root->glyphRefs;
 }
 
 void shImageReleaseGlyphRef(SHImage *i)
 {
+  SHImage *root = shImageRoot(i);
+
   if (i && i->glyphRefs > 0)
     --i->glyphRefs;
+  if (root && root != i && root->glyphRefs > 0)
+    --root->glyphRefs;
 }
 
 void shImageBeginRenderTarget(SHImage *i)
 {
-  if (i)
-    ++i->renderTargetRefs;
+  SHImage *root = shImageRoot(i);
+
+  if (root)
+    ++root->renderTargetRefs;
 }
 
 void shImageEndRenderTarget(SHImage *i)
 {
-  if (i && i->renderTargetRefs > 0)
-    --i->renderTargetRefs;
+  SHImage *root = shImageRoot(i);
+
+  if (root && root->renderTargetRefs > 0)
+    --root->renderTargetRefs;
 }
 
 VGboolean shImageIsEGLPbufferBound(SHImage *i)
 {
-  return (i && i->eglPbufferRefs > 0) ? VG_TRUE : VG_FALSE;
+  SHImage *root = shImageRoot(i);
+
+  return (root && root->eglPbufferRefs > 0) ? VG_TRUE : VG_FALSE;
 }
 
 VGboolean shImageIsRenderTarget(SHImage *i)
 {
-  return (i && i->renderTargetRefs > 0) ? VG_TRUE : VG_FALSE;
+  SHImage *root = shImageRoot(i);
+
+  return (root && root->renderTargetRefs > 0) ? VG_TRUE : VG_FALSE;
 }
 
 VGboolean shImageIsRenderTargetEligible(SHImage *i)
 {
+  SHImage *root = shImageRoot(i);
+
   return (i &&
+          root == i &&
           i->paintPatternRefs == 0 &&
           i->glyphRefs == 0) ? VG_TRUE : VG_FALSE;
 }
 
 void shImageMarkGpuDataDirty(SHImage *i)
 {
+  SHImage *root = shImageRoot(i);
+
   if (i)
     i->gpuDataDirty = VG_TRUE;
+  if (root)
+    root->gpuDataDirty = VG_TRUE;
 }
 
 void shImageMarkSurfaceDataPremultiplied(SHImage *i)
 {
+  SHImage *root = shImageRoot(i);
+
   if (i)
     i->surfaceDataPremultiplied = VG_TRUE;
+  if (root)
+    root->surfaceDataPremultiplied = VG_TRUE;
 }
 
 /*--------------------------------------------------------
@@ -727,7 +815,7 @@ void shUpdateImageTexture(SHImage *i, VGContext *c)
   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
   glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
-  glBindTexture(GL_TEXTURE_2D, i->texture);
+  glBindTexture(GL_TEXTURE_2D, shImageTexture(i));
   glTexImage2D(GL_TEXTURE_2D, 0, i->fd.glintformat,
                i->texwidth, i->texheight, 0,
                i->fd.glformat, i->fd.gltype, i->data);
@@ -1250,10 +1338,13 @@ static VGboolean shFormatHasDirectGLStorage(const SHImageFormatDesc *format)
 static VGboolean shCanDirectImageFormat(const SHImage *image,
                                         VGImageFormat dataFormat)
 {
+  const SHImage *root = shImageRootConst(image);
+
   return (image &&
-          image->texture != 0 &&
-          image->texwidth == image->width &&
-          image->texheight == image->height &&
+          root &&
+          root->texture != 0 &&
+          root->texwidth == root->width &&
+          root->texheight == root->height &&
           image->fd.vgformat == dataFormat &&
           !shIsBitPackedAlphaFormat(dataFormat) &&
           shFormatHasDirectGLStorage(&image->fd)) ? VG_TRUE : VG_FALSE;
@@ -1443,20 +1534,22 @@ static VGboolean shTryDirectImageSubData(SHImage *image,
 
   shSaveImageUploadGLState(&state);
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, image->texture);
+  glBindTexture(GL_TEXTURE_2D, shImageTexture(image));
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, rowLength);
   glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
   glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
   glTexSubImage2D(GL_TEXTURE_2D, 0,
-                  copyDx, copyDy, copyWidth, copyHeight,
+                  shImageStorageX(image) + copyDx,
+                  shImageStorageY(image) + copyDy,
+                  copyWidth, copyHeight,
                   image->fd.glformat, image->fd.gltype, source);
   shRestoreImageUploadGLState(&state);
 
   if (glGetError() != GL_NO_ERROR)
     return VG_FALSE;
 
-  image->gpuDataDirty = VG_TRUE;
+  shImageMarkGpuDataDirty(image);
   return VG_TRUE;
 }
 
@@ -1481,12 +1574,14 @@ static VGboolean shBindTextureReadFramebuffer(GLuint texture,
 
 static VGboolean shCanDirectClearImage(const SHImage *image)
 {
+  const SHImage *root = shImageRootConst(image);
   GLenum internalFormat;
 
   if (!image ||
-      image->texture == 0 ||
-      image->texwidth != image->width ||
-      image->texheight != image->height ||
+      !root ||
+      root->texture == 0 ||
+      root->texwidth != root->width ||
+      root->texheight != root->height ||
       !shFormatHasDirectGLStorage(&image->fd))
     return VG_FALSE;
 
@@ -1552,13 +1647,15 @@ static VGboolean shTryDirectClearImage(SHImage *image,
     return VG_FALSE;
 
   shSaveImageTargetGLState(&state);
-  if (!shBindTextureReadFramebuffer(image->texture, &framebuffer))
+  if (!shBindTextureReadFramebuffer(shImageTexture(image), &framebuffer))
     goto cleanup;
 
   shGetImageClearColor(image, clear, clearColor);
-  glViewport(0, 0, image->width, image->height);
+  glViewport(0, 0, shImageRoot(image)->width, shImageRoot(image)->height);
   glEnable(GL_SCISSOR_TEST);
-  glScissor(copyDx, copyDy, copyWidth, copyHeight);
+  glScissor(shImageStorageX(image) + copyDx,
+            shImageStorageY(image) + copyDy,
+            copyWidth, copyHeight);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   glClearColor(clearColor[0], clearColor[1],
                clearColor[2], clearColor[3]);
@@ -1570,7 +1667,7 @@ cleanup:
   if (framebuffer != 0)
     glDeleteFramebuffers(1, &framebuffer);
   if (success)
-    image->gpuDataDirty = VG_TRUE;
+    shImageMarkGpuDataDirty(image);
   return success;
 }
 
@@ -1616,14 +1713,16 @@ static VGboolean shTryDirectGetImageSubData(SHImage *image,
          (size_t)copyDx * (size_t)image->fd.bytes;
 
   shSaveImageReadGLState(&state);
-  if (!shBindTextureReadFramebuffer(image->texture, &framebuffer))
+  if (!shBindTextureReadFramebuffer(shImageTexture(image), &framebuffer))
     goto cleanup;
 
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
   glPixelStorei(GL_PACK_ROW_LENGTH, rowLength);
   glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
   glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-  glReadPixels(copySx, copySy, copyWidth, copyHeight,
+  glReadPixels(shImageStorageX(image) + copySx,
+               shImageStorageY(image) + copySy,
+               copyWidth, copyHeight,
                image->fd.glformat, image->fd.gltype, dest);
   success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
 
@@ -1655,7 +1754,7 @@ static VGboolean shTryConvertedImageSubData(SHImage *image,
   VGboolean success = VG_FALSE;
   SHImageUploadGLState state;
 
-  if (!data || !image || image->texture == 0)
+  if (!data || !image || shImageTexture(image) == 0)
     return VG_FALSE;
 
   if (!shClipImageTransfer(image->width, image->height,
@@ -1683,13 +1782,15 @@ static VGboolean shTryConvertedImageSubData(SHImage *image,
 
   shSaveImageUploadGLState(&state);
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, image->texture);
+  glBindTexture(GL_TEXTURE_2D, shImageTexture(image));
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
   glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
   glTexSubImage2D(GL_TEXTURE_2D, 0,
-                  copyDx, copyDy, copyWidth, copyHeight,
+                  shImageStorageX(image) + copyDx,
+                  shImageStorageY(image) + copyDy,
+                  copyWidth, copyHeight,
                   image->fd.glformat, image->fd.gltype, converted);
   success = (glGetError() == GL_NO_ERROR) ? VG_TRUE : VG_FALSE;
   shRestoreImageUploadGLState(&state);
@@ -1697,7 +1798,7 @@ static VGboolean shTryConvertedImageSubData(SHImage *image,
   free(converted);
 
   if (success)
-    image->gpuDataDirty = VG_TRUE;
+    shImageMarkGpuDataDirty(image);
   return success;
 }
 
@@ -1723,7 +1824,7 @@ static VGboolean shTryConvertedGetImageSubData(SHImage *image,
   VGboolean success = VG_FALSE;
   SHImageReadGLState state;
 
-  if (!data || !image || image->texture == 0)
+  if (!data || !image || shImageTexture(image) == 0)
     return VG_FALSE;
 
   if (!shClipImageTransfer(width, height,
@@ -1744,14 +1845,16 @@ static VGboolean shTryConvertedGetImageSubData(SHImage *image,
     return VG_FALSE;
 
   shSaveImageReadGLState(&state);
-  if (!shBindTextureReadFramebuffer(image->texture, &framebuffer))
+  if (!shBindTextureReadFramebuffer(shImageTexture(image), &framebuffer))
     goto cleanup;
 
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
   glPixelStorei(GL_PACK_ROW_LENGTH, 0);
   glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
   glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-  glReadPixels(copySx, copySy, copyWidth, copyHeight,
+  glReadPixels(shImageStorageX(image) + copySx,
+               shImageStorageY(image) + copySy,
+               copyWidth, copyHeight,
                image->fd.glformat, image->fd.gltype, nativePixels);
   if (glGetError() != GL_NO_ERROR)
     goto cleanup;
@@ -2009,10 +2112,13 @@ static VGboolean shCanDrawSurfaceTextureFormat(const SHImageFormatDesc *format)
 
 static VGboolean shCanDrawSurfaceImageTexture(const SHImage *image)
 {
+  const SHImage *root = shImageRootConst(image);
+
   return (image &&
-          image->texture != 0 &&
-          image->texwidth == image->width &&
-          image->texheight == image->height &&
+          root &&
+          root->texture != 0 &&
+          root->texwidth == root->width &&
+          root->texheight == root->height &&
           shCanDrawSurfaceTextureFormat(&image->fd)) ? VG_TRUE : VG_FALSE;
 }
 
@@ -2167,11 +2273,14 @@ static VGboolean shTryDirectSetPixels(VGContext *context,
   if (!shCanDrawSurfaceImageTexture(image))
     return VG_FALSE;
 
-  return shDrawSurfaceTexture(context, image->texture,
+  return shDrawSurfaceTexture(context, shImageTexture(image),
                               copyDx, copyDy,
                               copyWidth, copyHeight,
-                              image->width, image->height,
-                              copySx, copySy, VG_FALSE);
+                              shImageRoot(image)->width,
+                              shImageRoot(image)->height,
+                              shImageStorageX(image) + copySx,
+                              shImageStorageY(image) + copySy,
+                              VG_FALSE);
 }
 
 static VGboolean shTryDirectWritePixels(VGContext *context,
@@ -2742,19 +2851,95 @@ VG_API_CALL void vgCopyPixels(VGint dx, VGint dy,
 VG_API_CALL VGImage vgChildImage(VGImage parent,
                                  VGint x, VGint y, VGint width, VGint height)
 {
-  return VG_INVALID_HANDLE;
+  SHImage *parentImage;
+  SHImage *rootImage;
+  SHImage *child = NULL;
+  long long right;
+  long long top;
+  VG_GETCONTEXT(VG_INVALID_HANDLE);
+
+  VG_RETURN_ERR_IF(!shIsValidImage(context, parent),
+                   VG_BAD_HANDLE_ERROR, VG_INVALID_HANDLE);
+
+  parentImage = (SHImage*)parent;
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(parentImage),
+                   VG_IMAGE_IN_USE_ERROR, VG_INVALID_HANDLE);
+
+  right = (long long)x + (long long)width;
+  top = (long long)y + (long long)height;
+  VG_RETURN_ERR_IF(x < 0 || y < 0 ||
+                   width <= 0 || height <= 0 ||
+                   right > parentImage->width ||
+                   top > parentImage->height,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
+
+  rootImage = shImageRoot(parentImage);
+
+  SH_NEWOBJ(SHImage, child);
+  VG_RETURN_ERR_IF(!child, VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+
+  child->data = rootImage->data;
+  child->width = width;
+  child->height = height;
+  child->fd = parentImage->fd;
+  child->texwidth = rootImage->texwidth;
+  child->texheight = rootImage->texheight;
+  child->texwidthK = rootImage->texwidthK;
+  child->texheightK = rootImage->texheightK;
+  child->texture = rootImage->texture;
+  child->parent = parentImage;
+  child->storageX = parentImage->storageX + x;
+  child->storageY = parentImage->storageY + y;
+  child->ownsStorage = VG_FALSE;
+  shImageAddRef(parentImage);
+
+  if (!shImageArrayPushBack(&context->resources->images, child)) {
+    SH_DELETEOBJ(SHImage, child);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
+
+  VG_RETURN((VGImage)child);
 }
 
 VG_API_CALL VGImage vgGetParent(VGImage image)
 {
-  return VG_INVALID_HANDLE;
+  SHImage *i;
+  SHImage *parent;
+  VG_GETCONTEXT(VG_INVALID_HANDLE);
+
+  VG_RETURN_ERR_IF(!shIsValidImage(context, image),
+                   VG_BAD_HANDLE_ERROR, VG_INVALID_HANDLE);
+
+  i = (SHImage*)image;
+  parent = i->parent;
+  while (parent && !shIsValidImage(context, (VGHandle)parent))
+    parent = parent->parent;
+
+  VG_RETURN((VGImage)(parent ? parent : i));
 }
 
 static VGboolean shImageFilterImagesOverlap(const SHImage *dst,
                                             const SHImage *src)
 {
-  return (dst == src || (dst && src && dst->data == src->data)) ?
-    VG_TRUE : VG_FALSE;
+  const SHImage *dstRoot = shImageRootConst(dst);
+  const SHImage *srcRoot = shImageRootConst(src);
+  SHint dstX1;
+  SHint dstY1;
+  SHint srcX1;
+  SHint srcY1;
+
+  if (!dst || !src || dstRoot != srcRoot)
+    return VG_FALSE;
+
+  dstX1 = dst->storageX + dst->width;
+  dstY1 = dst->storageY + dst->height;
+  srcX1 = src->storageX + src->width;
+  srcY1 = src->storageY + src->height;
+
+  return (dst->storageX < srcX1 &&
+          src->storageX < dstX1 &&
+          dst->storageY < srcY1 &&
+          src->storageY < dstY1) ? VG_TRUE : VG_FALSE;
 }
 
 static VGboolean shImageFilterValidTilingMode(VGTilingMode tilingMode)
@@ -2832,6 +3017,12 @@ typedef struct
   SHint mode;
   SHint sourceWidth;
   SHint sourceHeight;
+  SHint sourceOriginX;
+  SHint sourceOriginY;
+  SHint targetOriginX;
+  SHint targetOriginY;
+  SHint targetRegionWidth;
+  SHint targetRegionHeight;
   SHint kernelWidth;
   SHint kernelHeight;
   SHint shiftX;
@@ -2852,6 +3043,10 @@ typedef struct
   SHint lookupSourceChannel;
   SHint blurWidth;
   SHint blurHeight;
+  SHint blurOriginX;
+  SHint blurOriginY;
+  SHint blurTextureWidth;
+  SHint blurTextureHeight;
   SHfloat parametricStrength;
   SHfloat parametricOffsetX;
   SHfloat parametricOffsetY;
@@ -3203,6 +3398,10 @@ static void shImageFilterInitPass(VGContext *context,
   memset(pass, 0, sizeof(*pass));
   pass->sourceWidth = src ? src->width : 0;
   pass->sourceHeight = src ? src->height : 0;
+  pass->sourceOriginX = src ? shImageStorageX(src) : 0;
+  pass->sourceOriginY = src ? shImageStorageY(src) : 0;
+  pass->targetOriginX = dst ? shImageStorageX(dst) : 0;
+  pass->targetOriginY = dst ? shImageStorageY(dst) : 0;
   pass->scale = 1.0f;
   pass->bias = 0.0f;
   pass->tilingMode = VG_TILE_PAD;
@@ -3217,6 +3416,14 @@ static void shImageFilterInitPass(VGContext *context,
   pass->dstStorageMode = dst ?
     shImageFilterStorageMode(dst) : SH_IMAGE_FILTER_STORE_RGBA;
   shImageFilterEdgeColor(context, pass->tileFillColor);
+}
+
+static void shImageFilterSetTargetRegion(SHImageFilterPass *pass,
+                                         SHint width,
+                                         SHint height)
+{
+  pass->targetRegionWidth = width;
+  pass->targetRegionHeight = height;
 }
 
 static VGboolean shImageFilterRunPass(VGContext *context,
@@ -3238,20 +3445,29 @@ static VGboolean shImageFilterRunPass(VGContext *context,
   SHImageFilterVertex vertices[4];
   SHImageFilterGLState glState;
   SHVertexState vertexState;
+  SHint drawWidth;
+  SHint drawHeight;
   VGboolean success = VG_FALSE;
 
   if (!context || targetTexture == 0 || sourceTexture == 0 ||
       targetWidth <= 0 || targetHeight <= 0)
     return VG_FALSE;
 
-  vertices[0].x = 0.0f;
-  vertices[0].y = 0.0f;
-  vertices[1].x = (GLfloat)targetWidth;
-  vertices[1].y = 0.0f;
-  vertices[2].x = 0.0f;
-  vertices[2].y = (GLfloat)targetHeight;
-  vertices[3].x = (GLfloat)targetWidth;
-  vertices[3].y = (GLfloat)targetHeight;
+  drawWidth = pass->targetRegionWidth > 0 ?
+    pass->targetRegionWidth : targetWidth;
+  drawHeight = pass->targetRegionHeight > 0 ?
+    pass->targetRegionHeight : targetHeight;
+  if (drawWidth <= 0 || drawHeight <= 0)
+    return VG_TRUE;
+
+  vertices[0].x = (GLfloat)pass->targetOriginX;
+  vertices[0].y = (GLfloat)pass->targetOriginY;
+  vertices[1].x = (GLfloat)(pass->targetOriginX + drawWidth);
+  vertices[1].y = (GLfloat)pass->targetOriginY;
+  vertices[2].x = (GLfloat)pass->targetOriginX;
+  vertices[2].y = (GLfloat)(pass->targetOriginY + drawHeight);
+  vertices[3].x = (GLfloat)(pass->targetOriginX + drawWidth);
+  vertices[3].y = (GLfloat)(pass->targetOriginY + drawHeight);
 
   shSaveImageFilterGLState(&glState);
 
@@ -3273,8 +3489,10 @@ static VGboolean shImageFilterRunPass(VGContext *context,
               (GLfloat)targetWidth, (GLfloat)targetHeight);
   glUniform2i(context->locationImageFilter.sourceSize,
               pass->sourceWidth, pass->sourceHeight);
-  glUniform2i(context->locationImageFilter.sourceOrigin, 0, 0);
-  glUniform2i(context->locationImageFilter.targetOrigin, 0, 0);
+  glUniform2i(context->locationImageFilter.sourceOrigin,
+              pass->sourceOriginX, pass->sourceOriginY);
+  glUniform2i(context->locationImageFilter.targetOrigin,
+              pass->targetOriginX, pass->targetOriginY);
   glUniform1i(context->locationImageFilter.sourcePremultiplied, 0);
   glUniform2i(context->locationImageFilter.kernelSize,
               pass->kernelWidth, pass->kernelHeight);
@@ -3307,6 +3525,13 @@ static VGboolean shImageFilterRunPass(VGContext *context,
               pass->lookupSourceChannel);
   glUniform2i(context->locationImageFilter.blurSize,
               pass->blurWidth, pass->blurHeight);
+  glUniform2i(context->locationImageFilter.blurOrigin,
+              pass->blurOriginX, pass->blurOriginY);
+  glUniform2i(context->locationImageFilter.blurTextureSize,
+              pass->blurTextureWidth > 0 ? pass->blurTextureWidth :
+              pass->blurWidth,
+              pass->blurTextureHeight > 0 ? pass->blurTextureHeight :
+              pass->blurHeight);
   glUniform2f(context->locationImageFilter.parametricOffset,
               pass->parametricOffsetX, pass->parametricOffsetY);
   glUniform1f(context->locationImageFilter.parametricStrength,
@@ -3364,10 +3589,13 @@ cleanup:
 
 static VGboolean shImageTransferCanUseImage(const SHImage *image)
 {
+  const SHImage *root = shImageRootConst(image);
+
   return (image &&
-          image->texture != 0 &&
-          image->texwidth == image->width &&
-          image->texheight == image->height &&
+          root &&
+          root->texture != 0 &&
+          root->texwidth == root->width &&
+          root->texheight == root->height &&
           shFormatHasDirectGLStorage(&image->fd)) ? VG_TRUE : VG_FALSE;
 }
 
@@ -3548,6 +3776,8 @@ static VGboolean shTryTransferCopyImage(VGContext *context,
   GLuint sourceTexture;
   SHint sourceWidth;
   SHint sourceHeight;
+  SHImage *srcRoot;
+  SHImage *dstRoot;
   GLuint tempTexture = 0;
   VGboolean success;
 
@@ -3562,9 +3792,15 @@ static VGboolean shTryTransferCopyImage(VGContext *context,
       !shImageTransferCanUseImage(src))
     return VG_FALSE;
 
-  sourceTexture = src->texture;
-  sourceWidth = src->width;
-  sourceHeight = src->height;
+  srcRoot = shImageRoot(src);
+  dstRoot = shImageRoot(dst);
+  sourceTexture = srcRoot->texture;
+  sourceWidth = srcRoot->width;
+  sourceHeight = srcRoot->height;
+  copySx += shImageStorageX(src);
+  copySy += shImageStorageY(src);
+  copyDx += shImageStorageX(dst);
+  copyDy += shImageStorageY(dst);
 
   if (shImageFilterImagesOverlap(dst, src)) {
     if (!shImageTransferCreateTexture(&tempTexture,
@@ -3573,7 +3809,8 @@ static VGboolean shTryTransferCopyImage(VGContext *context,
 
     if (!shImageTransferRunPass(context, NULL, tempTexture,
                                 copyWidth, copyHeight,
-                                src->texture, src->width, src->height,
+                                srcRoot->texture,
+                                srcRoot->width, srcRoot->height,
                                 0, 0, copySx, copySy,
                                 copyWidth, copyHeight,
                                 SH_IMAGE_FILTER_STORE_RGBA,
@@ -3589,8 +3826,8 @@ static VGboolean shTryTransferCopyImage(VGContext *context,
     copySy = 0;
   }
 
-  success = shImageTransferRunPass(context, dst, dst->texture,
-                                   dst->width, dst->height,
+  success = shImageTransferRunPass(context, dstRoot, dstRoot->texture,
+                                   dstRoot->width, dstRoot->height,
                                    sourceTexture,
                                    sourceWidth, sourceHeight,
                                    copyDx, copyDy, copySx, copySy,
@@ -3601,7 +3838,7 @@ static VGboolean shTryTransferCopyImage(VGContext *context,
   if (tempTexture != 0)
     glDeleteTextures(1, &tempTexture);
   if (success)
-    dst->gpuDataDirty = VG_TRUE;
+    shImageMarkGpuDataDirty(dst);
   return success;
 }
 
@@ -3620,6 +3857,7 @@ static VGboolean shTryTransferGetPixels(VGContext *context,
   SHint copySy = sy;
   SHint copyWidth = width;
   SHint copyHeight = height;
+  SHImage *root;
   GLuint tempTexture = 0;
   VGboolean success;
 
@@ -3633,6 +3871,8 @@ static VGboolean shTryTransferGetPixels(VGContext *context,
   if (!shImageTransferCanUseImage(image))
     return VG_FALSE;
 
+  root = shImageRoot(image);
+
   if (!shImageTransferCreateTexture(&tempTexture,
                                     copyWidth, copyHeight))
     return VG_FALSE;
@@ -3643,56 +3883,59 @@ static VGboolean shTryTransferGetPixels(VGContext *context,
     return VG_FALSE;
   }
 
-  success = shImageTransferRunPass(context, image, image->texture,
-                                   image->width, image->height,
+  success = shImageTransferRunPass(context, root, root->texture,
+                                   root->width, root->height,
                                    tempTexture, copyWidth, copyHeight,
-                                   copyDx, copyDy, 0, 0,
+                                   shImageStorageX(image) + copyDx,
+                                   shImageStorageY(image) + copyDy,
+                                   0, 0,
                                    copyWidth, copyHeight,
                                    shImageFilterStorageMode(image),
                                    VG_TRUE);
 
   glDeleteTextures(1, &tempTexture);
   if (success)
-    image->gpuDataDirty = VG_TRUE;
+    shImageMarkGpuDataDirty(image);
   return success;
 }
 
 VGboolean shImageNormalizeSurfaceData(VGContext *context, SHImage *image)
 {
+  SHImage *root = shImageRoot(image);
   GLuint tempTexture = 0;
   VGboolean success;
 
-  if (!image || !image->surfaceDataPremultiplied)
+  if (!root || !root->surfaceDataPremultiplied)
     return VG_TRUE;
-  if (!context || !shImageTransferCanUseImage(image))
+  if (!context || !shImageTransferCanUseImage(root))
     return VG_FALSE;
 
   if (!shImageTransferCreateTexture(&tempTexture,
-                                    image->width,
-                                    image->height))
+                                    root->width,
+                                    root->height))
     return VG_FALSE;
 
   success = shImageTransferRunPass(context, NULL, tempTexture,
-                                   image->width, image->height,
-                                   image->texture,
-                                   image->width, image->height,
+                                   root->width, root->height,
+                                   root->texture,
+                                   root->width, root->height,
                                    0, 0, 0, 0,
-                                   image->width, image->height,
+                                   root->width, root->height,
                                    SH_IMAGE_FILTER_STORE_RGBA,
                                    VG_FALSE);
   if (success)
-    success = shImageTransferRunPass(context, image, image->texture,
-                                     image->width, image->height,
+    success = shImageTransferRunPass(context, root, root->texture,
+                                     root->width, root->height,
                                      tempTexture,
-                                     image->width, image->height,
+                                     root->width, root->height,
                                      0, 0, 0, 0,
-                                     image->width, image->height,
-                                     shImageFilterStorageMode(image),
+                                     root->width, root->height,
+                                     shImageFilterStorageMode(root),
                                      VG_TRUE);
 
   glDeleteTextures(1, &tempTexture);
   if (success)
-    image->surfaceDataPremultiplied = VG_FALSE;
+    root->surfaceDataPremultiplied = VG_FALSE;
   return success;
 }
 
@@ -3744,15 +3987,19 @@ VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,
   pass.colorBias[1] = matrix[17];
   pass.colorBias[2] = matrix[18];
   pass.colorBias[3] = matrix[19];
+  shImageFilterSetTargetRegion(&pass, width, height);
 
-  VG_RETURN_ERR_IF(!shImageFilterRunPass(context, d, d->texture,
-                                         width, height,
-                                         s->texture, 0,
+  VG_RETURN_ERR_IF(!shImageFilterRunPass(context,
+                                         shImageRoot(d),
+                                         shImageTexture(d),
+                                         shImageRoot(d)->width,
+                                         shImageRoot(d)->height,
+                                         shImageTexture(s), 0,
                                          context->filterChannelMask,
                                          &pass),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
-  d->gpuDataDirty = VG_TRUE;
+  shImageMarkGpuDataDirty(d);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -3807,10 +4054,14 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
   pass.scale = scale;
   pass.bias = bias;
   pass.tilingMode = tilingMode;
+  shImageFilterSetTargetRegion(&pass, width, height);
 
-  if (!shImageFilterRunPass(context, d, d->texture,
-                            width, height,
-                            s->texture, kernelTexture,
+  if (!shImageFilterRunPass(context,
+                            shImageRoot(d),
+                            shImageTexture(d),
+                            shImageRoot(d)->width,
+                            shImageRoot(d)->height,
+                            shImageTexture(s), kernelTexture,
                             context->filterChannelMask,
                             &pass)) {
     glDeleteTextures(1, &kernelTexture);
@@ -3818,7 +4069,7 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
   }
 
   glDeleteTextures(1, &kernelTexture);
-  d->gpuDataDirty = VG_TRUE;
+  shImageMarkGpuDataDirty(d);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -3886,7 +4137,7 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
 
   if (!shImageFilterRunPass(context, NULL, context->filterScratchTexture,
                             s->width, s->height,
-                            s->texture, kernelXTexture,
+                            shImageTexture(s), kernelXTexture,
                             VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA,
                             &pass))
     goto separable_out_of_memory;
@@ -3897,6 +4148,8 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
   pass.mode = SH_IMAGE_FILTER_SEPARABLE_Y;
   pass.sourceWidth = s->width;
   pass.sourceHeight = s->height;
+  pass.sourceOriginX = 0;
+  pass.sourceOriginY = 0;
   pass.kernelWidth = 1;
   pass.kernelHeight = kernelHeight;
   pass.shiftY = shiftY;
@@ -3908,9 +4161,13 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
   pass.tileFillColor[1] *= kernelXSum;
   pass.tileFillColor[2] *= kernelXSum;
   pass.tileFillColor[3] *= kernelXSum;
+  shImageFilterSetTargetRegion(&pass, width, height);
 
-  if (!shImageFilterRunPass(context, d, d->texture,
-                            width, height,
+  if (!shImageFilterRunPass(context,
+                            shImageRoot(d),
+                            shImageTexture(d),
+                            shImageRoot(d)->width,
+                            shImageRoot(d)->height,
                             context->filterScratchTexture,
                             kernelYTexture,
                             context->filterChannelMask,
@@ -3919,7 +4176,7 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
 
   glDeleteTextures(1, &kernelYTexture);
   glDeleteTextures(1, &kernelXTexture);
-  d->gpuDataDirty = VG_TRUE;
+  shImageMarkGpuDataDirty(d);
   VG_RETURN(VG_NO_RETVAL);
 
 separable_out_of_memory:
@@ -3972,7 +4229,7 @@ static VGboolean shImageFilterRunFloatSeparable(VGContext *context,
 
   if (!shImageFilterRunPass(context, NULL, context->filterScratchTexture,
                             src->width, src->height,
-                            src->texture, kernelXTexture,
+                            shImageTexture(src), kernelXTexture,
                             VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA,
                             &pass))
     goto cleanup;
@@ -3983,14 +4240,20 @@ static VGboolean shImageFilterRunFloatSeparable(VGContext *context,
   pass.mode = SH_IMAGE_FILTER_SEPARABLE_Y;
   pass.sourceWidth = src->width;
   pass.sourceHeight = src->height;
+  pass.sourceOriginX = 0;
+  pass.sourceOriginY = 0;
   pass.kernelWidth = 1;
   pass.kernelHeight = kernelHeight;
   pass.shiftY = shiftY;
   pass.tilingMode = tilingMode;
   pass.premultiplyInput = VG_FALSE;
+  shImageFilterSetTargetRegion(&pass, width, height);
 
-  if (!shImageFilterRunPass(context, dst, dst->texture,
-                            width, height,
+  if (!shImageFilterRunPass(context,
+                            shImageRoot(dst),
+                            shImageTexture(dst),
+                            shImageRoot(dst)->width,
+                            shImageRoot(dst)->height,
                             context->filterScratchTexture,
                             kernelYTexture,
                             channelMask,
@@ -4088,7 +4351,7 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
 
   free(kernelY);
   free(kernelX);
-  d->gpuDataDirty = VG_TRUE;
+  shImageMarkGpuDataDirty(d);
   VG_RETURN(VG_NO_RETVAL);
 
 gaussian_out_of_memory:
@@ -4254,7 +4517,7 @@ VG_API_CALL void vgIterativeAverageBlurKHR(VGImage dst,
 
   free(kernelY);
   free(kernelX);
-  d->gpuDataDirty = VG_TRUE;
+  shImageMarkGpuDataDirty(d);
   VG_RETURN(VG_NO_RETVAL);
 
 average_out_of_memory:
@@ -4369,21 +4632,30 @@ VG_API_CALL void vgParametricFilterKHR(VGImage dst,
   pass.mode = SH_IMAGE_FILTER_PARAMETRIC;
   pass.blurWidth = b->width;
   pass.blurHeight = b->height;
+  pass.blurOriginX = shImageStorageX(b);
+  pass.blurOriginY = shImageStorageY(b);
+  pass.blurTextureWidth = shImageRoot(b)->width;
+  pass.blurTextureHeight = shImageRoot(b)->height;
   pass.parametricStrength = strength;
   pass.parametricOffsetX = offsetX;
   pass.parametricOffsetY = offsetY;
   pass.parametricFlags = filterFlags;
   pass.premultiplyInput = VG_TRUE;
   pass.unpremultiplyOutput = VG_TRUE;
+  shImageFilterSetTargetRegion(&pass, width, height);
 
-  VG_RETURN_ERR_IF(!shImageFilterRunPass(context, d, d->texture,
-                                         width, height,
-                                         s->texture, b->texture,
+  VG_RETURN_ERR_IF(!shImageFilterRunPass(context,
+                                         shImageRoot(d),
+                                         shImageTexture(d),
+                                         shImageRoot(d)->width,
+                                         shImageRoot(d)->height,
+                                         shImageTexture(s),
+                                         shImageTexture(b),
                                          context->filterChannelMask,
                                          &pass),
                    VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
-  d->gpuDataDirty = VG_TRUE;
+  shImageMarkGpuDataDirty(d);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -4431,10 +4703,14 @@ VG_API_CALL void vgLookup(VGImage dst, VGImage src,
   pass.mode = SH_IMAGE_FILTER_LOOKUP;
   pass.outputLinear = outputLinear ? VG_TRUE : VG_FALSE;
   pass.unpremultiplyOutput = outputPremultiplied ? VG_TRUE : VG_FALSE;
+  shImageFilterSetTargetRegion(&pass, width, height);
 
-  if (!shImageFilterRunPass(context, d, d->texture,
-                            width, height,
-                            s->texture, lookupTexture,
+  if (!shImageFilterRunPass(context,
+                            shImageRoot(d),
+                            shImageTexture(d),
+                            shImageRoot(d)->width,
+                            shImageRoot(d)->height,
+                            shImageTexture(s), lookupTexture,
                             context->filterChannelMask,
                             &pass)) {
     glDeleteTextures(1, &lookupTexture);
@@ -4442,7 +4718,7 @@ VG_API_CALL void vgLookup(VGImage dst, VGImage src,
   }
 
   glDeleteTextures(1, &lookupTexture);
-  d->gpuDataDirty = VG_TRUE;
+  shImageMarkGpuDataDirty(d);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -4509,10 +4785,14 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
     pass.lookupSourceChannel = 0;
     break;
   }
+  shImageFilterSetTargetRegion(&pass, width, height);
 
-  if (!shImageFilterRunPass(context, d, d->texture,
-                            width, height,
-                            s->texture, lookupTexture,
+  if (!shImageFilterRunPass(context,
+                            shImageRoot(d),
+                            shImageTexture(d),
+                            shImageRoot(d)->width,
+                            shImageRoot(d)->height,
+                            shImageTexture(s), lookupTexture,
                             context->filterChannelMask,
                             &pass)) {
     glDeleteTextures(1, &lookupTexture);
@@ -4520,7 +4800,7 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
   }
 
   glDeleteTextures(1, &lookupTexture);
-  d->gpuDataDirty = VG_TRUE;
+  shImageMarkGpuDataDirty(d);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -4535,7 +4815,7 @@ VG_API_CALL void vgBindImageSH(VGImage image, VGImageUnitSH unit){
   
   glActiveTexture(GL_TEXTURE0 + unit);
 
-  glBindTexture(GL_TEXTURE_2D, i->texture);
+  glBindTexture(GL_TEXTURE_2D, shImageTexture(i));
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);

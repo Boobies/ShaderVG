@@ -262,8 +262,8 @@ vgDestroyImage          | FULLY implemented
 vgClearImage            | FULLY implemented        
 vgImageSubData          | PARTIALLY implemented    
 vgGetImageSubData       | PARTIALLY implemented    
-vgChildImage            | NOT implemented          
-vgGetParent             | NOT implemented          
+vgChildImage            | FULLY implemented
+vgGetParent             | FULLY implemented
 vgCopyImage             | FULLY implemented        
 vgDrawImage             | PARTIALLY implemented    
 vgSetPixels             | FULLY implemented        

@@ -1376,11 +1376,19 @@ void shDrawImage(VGContext *context, SHImage *i)
   SHRectangle *rect;
   SHImageVertex vertices[4];
   SHVertexState vertexState;
+  SHImage *root = shImageRoot(i);
+  GLfloat u0;
+  GLfloat u1;
+  GLfloat v0;
+  GLfloat v1;
 
   if (shImageIsRenderTarget(i)) {
     shSetError(context, VG_IMAGE_IN_USE_ERROR);
     return;
   }
+
+  if (!root)
+    return;
   
   /* Check whether scissoring is enabled and scissor
      rectangle is valid */
@@ -1404,7 +1412,7 @@ void shDrawImage(VGContext *context, SHImage *i)
   
   /* Clamp to edge for proper filtering, modulate for multiply mode */
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, i->texture);
+  glBindTexture(GL_TEXTURE_2D, root->texture);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   
@@ -1417,22 +1425,27 @@ void shDrawImage(VGContext *context, SHImage *i)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   }
 
+  u0 = (GLfloat)i->storageX / (GLfloat)root->texwidth;
+  u1 = (GLfloat)(i->storageX + i->width) / (GLfloat)root->texwidth;
+  v0 = (GLfloat)i->storageY / (GLfloat)root->texheight;
+  v1 = (GLfloat)(i->storageY + i->height) / (GLfloat)root->texheight;
+
   vertices[0].x = 0.0f;
   vertices[0].y = 0.0f;
-  vertices[0].u = 0.0f;
-  vertices[0].v = 0.0f;
+  vertices[0].u = u0;
+  vertices[0].v = v0;
   vertices[1].x = i->width;
   vertices[1].y = 0.0f;
-  vertices[1].u = 1.0f;
-  vertices[1].v = 0.0f;
+  vertices[1].u = u1;
+  vertices[1].v = v0;
   vertices[2].x = 0.0f;
   vertices[2].y = i->height;
-  vertices[2].u = 0.0f;
-  vertices[2].v = 1.0f;
+  vertices[2].u = u0;
+  vertices[2].v = v1;
   vertices[3].x = i->width;
   vertices[3].y = i->height;
-  vertices[3].u = 1.0f;
-  vertices[3].v = 1.0f;
+  vertices[3].u = u1;
+  vertices[3].v = v1;
 
   shBindContextVertexState(context, &vertexState);
   glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);

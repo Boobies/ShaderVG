@@ -62,6 +62,7 @@ typedef struct
 } SHColor;
 
 typedef struct VGContext VGContext;
+typedef struct SHImage SHImage;
 
 void SHColor_ctor(SHColor *c);
 void SHColor_dtor(SHColor *c);
@@ -72,7 +73,7 @@ void SHColor_dtor(SHColor *c);
 #define _ARRAY_DECLARE
 #include "shArrayBase.h"
 
-typedef struct
+struct SHImage
 {
   SHuint8 *data;
   SHint width;
@@ -91,8 +92,12 @@ typedef struct
   SHint glyphRefs;
   VGboolean gpuDataDirty;
   VGboolean surfaceDataPremultiplied;
+  SHImage *parent;
+  SHint storageX;
+  SHint storageY;
+  VGboolean ownsStorage;
   
-} SHImage;
+};
 
 void SHImage_ctor(SHImage *i);
 void SHImage_dtor(SHImage *i);
@@ -112,6 +117,12 @@ VGboolean shImageIsRenderTargetEligible(SHImage *i);
 void shImageMarkGpuDataDirty(SHImage *i);
 void shImageMarkSurfaceDataPremultiplied(SHImage *i);
 VGboolean shImageNormalizeSurfaceData(VGContext *context, SHImage *i);
+SHImage *shImageRoot(SHImage *i);
+const SHImage *shImageRootConst(const SHImage *i);
+GLuint shImageTexture(const SHImage *i);
+SHint shImageStorageX(const SHImage *i);
+SHint shImageStorageY(const SHImage *i);
+VGboolean shImageOwnsStorage(const SHImage *i);
 int shIsValidImageFormat(VGImageFormat format);
 
 #define _ITEM_T SHImage*

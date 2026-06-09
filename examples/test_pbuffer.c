@@ -3079,6 +3079,209 @@ cleanup:
   return result;
 }
 
+static int run_child_image_test(unsigned char *pixels,
+                                EGLint width,
+                                EGLint height)
+{
+  VGImage parent = VG_INVALID_HANDLE;
+  VGImage child = VG_INVALID_HANDLE;
+  VGImage grandchild = VG_INVALID_HANDLE;
+  VGImage dest = VG_INVALID_HANDLE;
+  VGImage destChild = VG_INVALID_HANDLE;
+  VGImage chainRoot = VG_INVALID_HANDLE;
+  VGImage chainParent = VG_INVALID_HANDLE;
+  VGImage chainChild = VG_INVALID_HANDLE;
+  VGubyte parentData[8 * 6 * 4];
+  VGubyte readData[8 * 6 * 4];
+  VGubyte blueData[2 * 2 * 4];
+  VGubyte yellowPixel[4];
+  VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat green[] = {0.0f, 1.0f, 0.0f, 1.0f};
+  VGfloat chainGreen[] = {0.0f, 0.5f, 0.0f, 1.0f};
+  int i;
+  int result = 0;
+
+  for (i=0; i<8 * 6; ++i)
+    set_rgba(parentData, 8 * 4, i % 8, i / 8, 255, 0, 0, 255);
+  for (i=0; i<2 * 2; ++i)
+    set_rgba(blueData, 2 * 4, i % 2, i / 2, 0, 0, 255, 255);
+  set_rgba(yellowPixel, 4, 0, 0, 255, 255, 0, 255);
+
+  parent = vgCreateImage(VG_lABGR_8888, 8, 6, VG_IMAGE_QUALITY_BETTER);
+  dest = vgCreateImage(VG_lABGR_8888, 6, 6, VG_IMAGE_QUALITY_BETTER);
+  if (parent == VG_INVALID_HANDLE || dest == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG child image test setup failed");
+    goto cleanup;
+  }
+
+  vgChildImage(VG_INVALID_HANDLE, 0, 0, 1, 1);
+  if (expect_vg_error("OpenVG accepted an invalid child image parent",
+                      VG_BAD_HANDLE_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (vgChildImage(parent, -1, 0, 1, 1) != VG_INVALID_HANDLE ||
+      expect_vg_error("OpenVG accepted a negative child image origin",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (vgChildImage(parent, 7, 0, 2, 1) != VG_INVALID_HANDLE ||
+      expect_vg_error("OpenVG accepted an out-of-bounds child image",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgImageSubData(parent, parentData, 8 * 4, VG_lABGR_8888, 0, 0, 8, 6);
+  child = vgChildImage(parent, 2, 1, 3, 3);
+  grandchild = vgChildImage(child, 1, 1, 2, 2);
+  destChild = vgChildImage(dest, 1, 1, 3, 3);
+  if (child == VG_INVALID_HANDLE ||
+      grandchild == VG_INVALID_HANDLE ||
+      destChild == VG_INVALID_HANDLE ||
+      expect_no_vg_error("OpenVG child image creation failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (vgGetParent(parent) != parent ||
+      vgGetParent(child) != parent ||
+      vgGetParent(grandchild) != child ||
+      expect_no_vg_error("OpenVG child image parent query failed")) {
+    fprintf(stderr, "OpenVG child image parent chain was incorrect\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, green);
+  vgClearImage(child, 0, 0, 3, 3);
+  vgImageSubData(grandchild, blueData, 2 * 4, VG_lABGR_8888, 0, 0, 2, 2);
+  vgGetImageSubData(parent, readData, 8 * 4, VG_lABGR_8888, 0, 0, 8, 6);
+  if (expect_no_vg_error("OpenVG child image shared storage update failed") ||
+      expect_rgba_at(readData, 8 * 4, 2, 1, 0, 255, 0, 255,
+                     "OpenVG child clear did not update parent storage") ||
+      expect_rgba_at(readData, 8 * 4, 3, 2, 0, 0, 255, 255,
+                     "OpenVG grandchild upload did not update parent storage") ||
+      expect_rgba_at(readData, 8 * 4, 1, 1, 255, 0, 0, 255,
+                     "OpenVG child update wrote outside its storage view")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  memset(readData, 0, sizeof(readData));
+  vgGetImageSubData(child, readData, 3 * 4, VG_lABGR_8888, 0, 0, 3, 3);
+  if (expect_no_vg_error("OpenVG child image readback failed") ||
+      expect_rgba_at(readData, 3 * 4, 1, 1, 0, 0, 255, 255,
+                     "OpenVG child readback sampled the wrong storage offset")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClearImage(dest, 0, 0, 6, 6);
+  vgCopyImage(destChild, 0, 0, child, 0, 0, 3, 3, VG_FALSE);
+  vgGetImageSubData(dest, readData, 6 * 4, VG_lABGR_8888, 0, 0, 6, 6);
+  if (expect_no_vg_error("OpenVG child image copy failed") ||
+      expect_rgba_at(readData, 6 * 4, 1, 1, 0, 255, 0, 255,
+                     "OpenVG child copy used the wrong destination offset") ||
+      expect_rgba_at(readData, 6 * 4, 2, 2, 0, 0, 255, 255,
+                     "OpenVG child copy used the wrong source offset")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC);
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSetPixels(10, 10, child, 0, 0, 3, 3);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_IMAGE_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgTranslate(20.0f, 10.0f);
+  vgDrawImage(child);
+  vgWritePixels(yellowPixel, 4, VG_lABGR_8888, 30, 10, 1, 1);
+  vgGetPixels(grandchild, 0, 0, 30, 10, 1, 1);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  vgGetImageSubData(parent, readData, 8 * 4, VG_lABGR_8888, 0, 0, 8, 6);
+  if (expect_no_vg_error("OpenVG child image surface transfer failed") ||
+      expect_rgba_at(pixels, width * 4, 10, 10, 0, 255, 0, 255,
+                     "OpenVG vgSetPixels did not sample child storage") ||
+      expect_rgba_at(pixels, width * 4, 21, 11, 0, 0, 255, 255,
+                     "OpenVG vgDrawImage did not crop to the child image") ||
+      expect_rgba_at(readData, 8 * 4, 3, 2, 255, 255, 0, 255,
+                     "OpenVG vgGetPixels did not write through grandchild storage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  chainRoot = vgCreateImage(VG_lABGR_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
+  chainParent = vgChildImage(chainRoot, 0, 0, 3, 3);
+  chainChild = vgChildImage(chainParent, 1, 1, 2, 2);
+  if (chainRoot == VG_INVALID_HANDLE ||
+      chainParent == VG_INVALID_HANDLE ||
+      chainChild == VG_INVALID_HANDLE ||
+      expect_no_vg_error("OpenVG child lifetime chain setup failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (vgGetParent(chainChild) != chainParent) {
+    fprintf(stderr, "OpenVG child lifetime parent query returned the wrong live parent\n");
+    result = 1;
+    goto cleanup;
+  }
+  vgDestroyImage(chainParent);
+  chainParent = VG_INVALID_HANDLE;
+  if (vgGetParent(chainChild) != chainRoot ||
+      expect_no_vg_error("OpenVG child lifetime skipped wrong destroyed parent")) {
+    fprintf(stderr, "OpenVG child lifetime did not skip destroyed intermediate parent\n");
+    result = 1;
+    goto cleanup;
+  }
+  vgDestroyImage(chainRoot);
+  chainRoot = VG_INVALID_HANDLE;
+  if (vgGetParent(chainChild) != chainChild ||
+      expect_no_vg_error("OpenVG child lifetime final parent query failed")) {
+    fprintf(stderr, "OpenVG child lifetime did not fall back to the live child\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_CLEAR_COLOR, 4, chainGreen);
+  vgClearImage(chainChild, 0, 0, 2, 2);
+  vgGetImageSubData(chainChild, readData, 2 * 4, VG_lABGR_8888, 0, 0, 2, 2);
+  if (expect_no_vg_error("OpenVG child storage was not retained after parent destruction") ||
+      expect_rgba_at(readData, 2 * 4, 0, 0, 0, 128, 0, 255,
+                     "OpenVG child storage changed after parent handles were destroyed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  if (chainChild != VG_INVALID_HANDLE)
+    vgDestroyImage(chainChild);
+  if (chainParent != VG_INVALID_HANDLE)
+    vgDestroyImage(chainParent);
+  if (chainRoot != VG_INVALID_HANDLE)
+    vgDestroyImage(chainRoot);
+  if (destChild != VG_INVALID_HANDLE)
+    vgDestroyImage(destChild);
+  if (grandchild != VG_INVALID_HANDLE)
+    vgDestroyImage(grandchild);
+  if (child != VG_INVALID_HANDLE)
+    vgDestroyImage(child);
+  if (dest != VG_INVALID_HANDLE)
+    vgDestroyImage(dest);
+  if (parent != VG_INVALID_HANDLE)
+    vgDestroyImage(parent);
+  return result;
+}
+
 static int run_shared_context_test(EGLDisplay display,
                                    EGLConfig config,
                                    EGLSurface surface,
@@ -4742,6 +4945,8 @@ int main(void)
                                                 context, pixels, width, height);
       if (result == 0)
         result = run_pixel_transfer_test(pixels, width, height);
+      if (result == 0)
+        result = run_child_image_test(pixels, width, height);
       if (result == 0)
         result = run_image_filter_test();
       if (result == 0)

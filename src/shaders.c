@@ -661,6 +661,8 @@ static const char* vgShaderFragmentImageFilterA =
 "uniform int dstStorageMode;\n"
 "uniform int lookupSourceChannel;\n"
 "uniform ivec2 blurSize;\n"
+"uniform ivec2 blurOrigin;\n"
+"uniform ivec2 blurTextureSize;\n"
 "uniform vec2 parametricOffset;\n"
 "uniform float parametricStrength;\n"
 "uniform int parametricFlags;\n"
@@ -744,7 +746,7 @@ static const char* vgShaderFragmentImageFilterA =
 "\n"
 "vec4 loadSource(ivec2 coord)\n"
 "{\n"
-"    vec4 color = texelFetch(sourceSampler, coord, 0);\n"
+"    vec4 color = texelFetch(sourceSampler, sourceOrigin + coord, 0);\n"
 "    color.rgb = convertColorSpace(color.rgb, sourceLinear, filterLinear);\n"
 "    if (premultiplyInput != 0)\n"
 "        color.rgb *= color.a;\n"
@@ -871,7 +873,9 @@ static const char* vgShaderFragmentImageFilterD =
 "        coord.x > float(blurSize.x - 1) ||\n"
 "        coord.y > float(blurSize.y - 1))\n"
 "        return 0.0;\n"
-"    return texture(auxSampler, (coord + vec2(0.5)) / vec2(blurSize)).a;\n"
+"    return texture(auxSampler,\n"
+"                   (coord + vec2(blurOrigin) + vec2(0.5)) /\n"
+"                   vec2(blurTextureSize)).a;\n"
 "}\n"
 "\n"
 "vec4 paintForAmount(int paintMode, vec4 paintColor,\n"
@@ -968,13 +972,13 @@ static const char* vgShaderFragmentImageFilterC =
 "\n"
 "void main()\n"
 "{\n"
-"    ivec2 pixel = ivec2(gl_FragCoord.xy);\n"
+"    ivec2 pixel = ivec2(gl_FragCoord.xy) - targetOrigin;\n"
 "    vec4 source;\n"
 "    vec4 result;\n"
 "\n"
 "    if (mode == FILTER_TRANSFER) {\n"
 "        result = unpremultiplySource(texelFetch(sourceSampler,\n"
-"                                                sourceOrigin + pixel - targetOrigin,\n"
+"                                                sourceOrigin + pixel,\n"
 "                                                0));\n"
 "    } else if (mode == FILTER_COLOR_MATRIX) {\n"
 "        source = loadSource(pixel);\n"
@@ -1283,6 +1287,10 @@ void shInitImageFilterShaders(void) {
     glGetUniformLocation(context->progImageFilter, "lookupSourceChannel");
   context->locationImageFilter.blurSize =
     glGetUniformLocation(context->progImageFilter, "blurSize");
+  context->locationImageFilter.blurOrigin =
+    glGetUniformLocation(context->progImageFilter, "blurOrigin");
+  context->locationImageFilter.blurTextureSize =
+    glGetUniformLocation(context->progImageFilter, "blurTextureSize");
   context->locationImageFilter.parametricOffset =
     glGetUniformLocation(context->progImageFilter, "parametricOffset");
   context->locationImageFilter.parametricStrength =

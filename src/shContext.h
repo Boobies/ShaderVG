@@ -249,6 +249,8 @@ typedef struct VGContext
       GLint dstStorageMode;
       GLint lookupSourceChannel;
       GLint blurSize;
+      GLint blurOrigin;
+      GLint blurTextureSize;
       GLint parametricOffset;
       GLint parametricStrength;
       GLint parametricFlags;

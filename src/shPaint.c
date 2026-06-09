@@ -589,7 +589,7 @@ void shSetGradientTexGLState(SHPaint *p)
 
 void shSetPatternTexGLState(SHPaint *p, VGContext *c)
 {
-  glBindTexture(GL_TEXTURE_2D, ((SHImage*)p->pattern)->texture);
+  glBindTexture(GL_TEXTURE_2D, shImageTexture((SHImage*)p->pattern));
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   

@@ -1155,6 +1155,8 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
   VGint sourceMode = SH_MASK_SOURCE_CONSTANT;
   SHint sourceWidth = 0;
   SHint sourceHeight = 0;
+  SHint sourceTextureWidth = 0;
+  SHint sourceTextureHeight = 0;
   long long rectX0, rectY0, rectX1, rectY1;
   long long surfX0, surfY0, surfX1, surfY1;
   long long sourceX0 = 0, sourceY0 = 0;
@@ -1186,12 +1188,16 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
                        VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
       sourceWidth = image->width;
       sourceHeight = image->height;
-      sourceTexture = image->texture;
+      sourceTextureWidth = shImageRoot(image)->width;
+      sourceTextureHeight = shImageRoot(image)->height;
+      sourceTexture = shImageTexture(image);
       sourceMode = shMaskSourceModeForImage(image);
     } else {
       layer = (SHMaskLayer*)mask;
       sourceWidth = layer->width;
       sourceHeight = layer->height;
+      sourceTextureWidth = layer->width;
+      sourceTextureHeight = layer->height;
       sourceTexture = layer->texture;
       sourceMode = SH_MASK_SOURCE_RED;
     }
@@ -1234,10 +1240,14 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
   if (image || layer) {
     sourceX0 = surfX0 - x;
     sourceY0 = surfY0 - y;
-    s0 = (VGfloat)sourceX0 / (VGfloat)sourceWidth;
-    t0 = (VGfloat)sourceY0 / (VGfloat)sourceHeight;
-    s1 = (VGfloat)(sourceX0 + drawWidth) / (VGfloat)sourceWidth;
-    t1 = (VGfloat)(sourceY0 + drawHeight) / (VGfloat)sourceHeight;
+    if (image) {
+      sourceX0 += shImageStorageX(image);
+      sourceY0 += shImageStorageY(image);
+    }
+    s0 = (VGfloat)sourceX0 / (VGfloat)sourceTextureWidth;
+    t0 = (VGfloat)sourceY0 / (VGfloat)sourceTextureHeight;
+    s1 = (VGfloat)(sourceX0 + drawWidth) / (VGfloat)sourceTextureWidth;
+    t1 = (VGfloat)(sourceY0 + drawHeight) / (VGfloat)sourceTextureHeight;
   }
 
   shSaveMaskGLState(&state);
