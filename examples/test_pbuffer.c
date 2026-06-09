@@ -4007,6 +4007,179 @@ cleanup:
   return result;
 }
 
+static VGPath create_small_fill_rule_path(VGboolean innerSameDirection)
+{
+  VGubyte segments[] = {
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_CLOSE_PATH,
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_CLOSE_PATH
+  };
+  VGfloat sameDirectionCoords[] = {
+    0.0f, 0.0f,
+    12.0f, 0.0f,
+    12.0f, 12.0f,
+    0.0f, 12.0f,
+    4.0f, 4.0f,
+    8.0f, 4.0f,
+    8.0f, 8.0f,
+    4.0f, 8.0f
+  };
+  VGfloat oppositeDirectionCoords[] = {
+    0.0f, 0.0f,
+    12.0f, 0.0f,
+    12.0f, 12.0f,
+    0.0f, 12.0f,
+    4.0f, 4.0f,
+    4.0f, 8.0f,
+    8.0f, 8.0f,
+    8.0f, 4.0f
+  };
+
+  return create_test_path(segments, 10,
+                          innerSameDirection ? sameDirectionCoords :
+                                               oppositeDirectionCoords);
+}
+
+static int run_glyph_path_batch_test(unsigned char *pixels,
+                                     EGLint width,
+                                     EGLint height)
+{
+  VGFont font = VG_INVALID_HANDLE;
+  VGPath square = VG_INVALID_HANDLE;
+  VGPath sameDirection = VG_INVALID_HANDLE;
+  VGPath oppositeDirection = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGfloat glyphOrigin[] = {0.0f, 0.0f};
+  VGfloat squareEscapement[] = {10.0f, 0.0f};
+  VGfloat compoundEscapement[] = {16.0f, 0.0f};
+  VGfloat origin[] = {4.0f, 8.0f};
+  VGfloat ruleOrigin[] = {4.0f, 28.0f};
+  VGfloat overlapOrigin[] = {8.0f, 48.0f};
+  VGfloat green[] = {0.0f, 1.0f, 0.0f, 1.0f};
+  VGfloat redHalf[] = {1.0f, 0.0f, 0.0f, 0.5f};
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat transparent[] = {0.0f, 0.0f, 0.0f, 0.0f};
+  VGuint disjointRun[] = {1u, 1u, 1u};
+  VGfloat disjointAdjustX[] = {2.0f, 3.0f, 0.0f};
+  VGfloat disjointAdjustY[] = {0.0f, 1.0f, 0.0f};
+  VGuint ruleRun[] = {2u, 3u};
+  VGuint overlapRun[] = {1u, 1u};
+  VGfloat overlapAdjustX[] = {-6.0f, 0.0f};
+  VGfloat finalOrigin[2];
+  int result = 0;
+
+  font = vgCreateFont(3);
+  square = create_rect_path(6.0f, 6.0f);
+  sameDirection = create_small_fill_rule_path(VG_TRUE);
+  oppositeDirection = create_small_fill_rule_path(VG_FALSE);
+  paint = vgCreatePaint();
+  if (font == VG_INVALID_HANDLE ||
+      square == VG_INVALID_HANDLE ||
+      sameDirection == VG_INVALID_HANDLE ||
+      oppositeDirection == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG glyph path batch setup failed");
+    goto cleanup;
+  }
+
+  vgSetGlyphToPath(font, 1, square, VG_FALSE,
+                   glyphOrigin, squareEscapement);
+  vgSetGlyphToPath(font, 2, sameDirection, VG_FALSE,
+                   glyphOrigin, compoundEscapement);
+  vgSetGlyphToPath(font, 3, oppositeDirection, VG_FALSE,
+                   glyphOrigin, compoundEscapement);
+  if (expect_no_vg_error("OpenVG glyph path batch resource setup failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC);
+  vgSeti(VG_FILL_RULE, VG_EVEN_ODD);
+  vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_NONANTIALIASED);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_GLYPH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, green);
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgSetfv(VG_GLYPH_ORIGIN, 2, origin);
+  vgDrawGlyphs(font, 3, disjointRun, disjointAdjustX, disjointAdjustY,
+               VG_FILL_PATH, VG_FALSE);
+  vgGetfv(VG_GLYPH_ORIGIN, 2, finalOrigin);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG batched path glyph draw failed") ||
+      expect_rgba_at(pixels, width * 4, 6, 10, 0, 255, 0, 255,
+                     "OpenVG batched path glyph draw lost the first glyph") ||
+      expect_rgba_at(pixels, width * 4, 18, 10, 0, 255, 0, 255,
+                     "OpenVG batched path glyph draw lost the second glyph") ||
+      expect_rgba_at(pixels, width * 4, 31, 11, 0, 255, 0, 255,
+                     "OpenVG batched path glyph draw ignored adjustments") ||
+      expect_float_close("OpenVG batched path glyph draw advanced x origin",
+                         finalOrigin[0], 39.0f) ||
+      expect_float_close("OpenVG batched path glyph draw advanced y origin",
+                         finalOrigin[1], 9.0f)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_FILL_RULE, VG_NON_ZERO);
+  vgClear(0, 0, width, height);
+  vgSetfv(VG_GLYPH_ORIGIN, 2, ruleOrigin);
+  vgDrawGlyphs(font, 2, ruleRun, NULL, NULL, VG_FILL_PATH, VG_FALSE);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG batched path glyph fill-rule draw failed") ||
+      expect_rgba_at(pixels, width * 4, 10, 34, 0, 255, 0, 255,
+                     "OpenVG batched path glyph nonzero fill lost same winding") ||
+      expect_rgba_at(pixels, width * 4, 26, 34, 0, 0, 0, 255,
+                     "OpenVG batched path glyph nonzero fill ignored opposite winding") ||
+      expect_rgba_at(pixels, width * 4, 22, 30, 0, 255, 0, 255,
+                     "OpenVG batched path glyph nonzero fill lost outer coverage")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC_OVER);
+  vgSeti(VG_FILL_RULE, VG_EVEN_ODD);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, redHalf);
+  vgSetfv(VG_CLEAR_COLOR, 4, transparent);
+  vgClear(0, 0, width, height);
+  vgSetfv(VG_GLYPH_ORIGIN, 2, overlapOrigin);
+  vgDrawGlyphs(font, 2, overlapRun, overlapAdjustX, NULL,
+               VG_FILL_PATH, VG_FALSE);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG overlapping path glyph fallback failed") ||
+      expect_rgba_at(pixels, width * 4, 13, 52, 255, 0, 0, 192,
+                     "OpenVG overlapping path glyph fallback changed alpha")) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (oppositeDirection != VG_INVALID_HANDLE)
+    vgDestroyPath(oppositeDirection);
+  if (sameDirection != VG_INVALID_HANDLE)
+    vgDestroyPath(sameDirection);
+  if (square != VG_INVALID_HANDLE)
+    vgDestroyPath(square);
+  if (font != VG_INVALID_HANDLE)
+    vgDestroyFont(font);
+  return result;
+}
+
 static int run_shared_context_test(EGLDisplay display,
                                    EGLConfig config,
                                    EGLSurface surface,
@@ -5676,6 +5849,8 @@ int main(void)
         result = run_child_image_test(pixels, width, height);
       if (result == 0)
         result = run_glyph_image_batch_test(pixels, width, height);
+      if (result == 0)
+        result = run_glyph_path_batch_test(pixels, width, height);
       if (result == 0)
         result = run_image_filter_test();
       if (result == 0)

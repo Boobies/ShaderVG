@@ -384,6 +384,82 @@ static void shFlushImageGlyphBatch(VGContext *context,
   *batchCount = 0;
 }
 
+static VGboolean shCanBuildPathGlyphBatch(SHFont *font,
+                                          const VGuint *glyphIndices,
+                                          VGint glyphCount)
+{
+  SHGlyph *glyph;
+  VGboolean hasPathGlyph = VG_FALSE;
+  VGint i;
+
+  for (i=0; i<glyphCount; ++i) {
+    glyph = shFontFindGlyph(font, glyphIndices[i]);
+    if (glyph->type == SH_GLYPH_PATH) {
+      hasPathGlyph = VG_TRUE;
+    } else if (glyph->type != SH_GLYPH_EMPTY) {
+      return VG_FALSE;
+    }
+  }
+
+  return hasPathGlyph;
+}
+
+static SHPathGlyphBatchResult shTryDrawPathGlyphBatch(
+    VGContext *context,
+    SHFont *font,
+    VGint glyphCount,
+    const VGuint *glyphIndices,
+    const VGfloat *adjustments_x,
+    const VGfloat *adjustments_y)
+{
+  SHGlyph *glyph;
+  SHPathGlyph *batchGlyphs = NULL;
+  SHVector2 origin;
+  SHint batchCount = 0;
+  SHPathGlyphBatchResult result;
+  VGint i;
+
+  if ((size_t)glyphCount > ((size_t)-1) / sizeof(SHPathGlyph)) {
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    return SH_PATH_GLYPH_BATCH_ERROR;
+  }
+
+  batchGlyphs = (SHPathGlyph*)malloc((size_t)glyphCount *
+                                     sizeof(SHPathGlyph));
+  if (!batchGlyphs) {
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    return SH_PATH_GLYPH_BATCH_ERROR;
+  }
+
+  SET2V(origin, context->glyphOrigin);
+  for (i=0; i<glyphCount; ++i) {
+    glyph = shFontFindGlyph(font, glyphIndices[i]);
+    if (glyph->type == SH_GLYPH_PATH) {
+      batchGlyphs[batchCount].path = glyph->path;
+      SETMATMAT(batchGlyphs[batchCount].transform,
+                context->glyphTransform);
+      TRANSLATEMATR(batchGlyphs[batchCount].transform,
+                    origin.x - glyph->origin.x,
+                    origin.y - glyph->origin.y);
+      ++batchCount;
+    }
+
+    origin.x += glyph->escapement.x;
+    origin.y += glyph->escapement.y;
+    if (adjustments_x)
+      origin.x += adjustments_x[i];
+    if (adjustments_y)
+      origin.y += adjustments_y[i];
+  }
+
+  result = shDrawPathGlyphBatch(context, batchGlyphs, batchCount);
+  if (result == SH_PATH_GLYPH_BATCH_DRAWN)
+    SET2V(context->glyphOrigin, origin);
+
+  free(batchGlyphs);
+  return result;
+}
+
 static void shAdvanceGlyphOrigin(VGContext *context,
                                  SHGlyph *glyph,
                                  const VGfloat *adjustments_x,
@@ -469,6 +545,19 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
                            adjustments_x, adjustments_y, i);
     }
     VG_RETURN(VG_NO_RETVAL);
+  }
+
+  if (paintModes == VG_FILL_PATH &&
+      shCanBuildPathGlyphBatch(f, glyphIndices, glyphCount)) {
+    SHPathGlyphBatchResult pathBatchResult;
+    pathBatchResult = shTryDrawPathGlyphBatch(context, f, glyphCount,
+                                              glyphIndices,
+                                              adjustments_x,
+                                              adjustments_y);
+    if (pathBatchResult == SH_PATH_GLYPH_BATCH_DRAWN)
+      VG_RETURN(VG_NO_RETVAL);
+    if (pathBatchResult == SH_PATH_GLYPH_BATCH_ERROR)
+      VG_RETURN(VG_NO_RETVAL);
   }
 
   canBatchImages = shCanBatchImageGlyphs(context);

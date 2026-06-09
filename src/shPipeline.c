@@ -281,7 +281,9 @@ static void shDrawStroke(SHPath *p)
  * (this could be VG_TRIANGLE_FAN or VG_LINE_STRIP).
  *-----------------------------------------------------------*/
 
-static void shDrawVertices(SHPath *p, GLenum mode)
+static void shDrawVertexData(const SHVertex *vertices,
+                             SHint vertexCount,
+                             GLenum mode)
 {
   int start = 0;
   int size = 0;
@@ -291,17 +293,22 @@ static void shDrawVertices(SHPath *p, GLenum mode)
   VG_GETCONTEXT(VG_NO_RETVAL);
   SHVertexState vertexState;
 
+  if (!vertices || vertexCount <= 0)
+    return;
+
   shBindContextVertexState(context, &vertexState);
   glBufferData(GL_ARRAY_BUFFER,
-               sizeof(SHVertex) * p->vertices.size,
-               p->vertices.items,
+               sizeof(SHVertex) * vertexCount,
+               vertices,
                GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(context->locationDraw.pos);
   glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE,
                         sizeof(SHVertex), (const GLvoid*)0);
   
-  while (start < p->vertices.size) {
-    size = p->vertices.items[start].flags;
+  while (start < vertexCount) {
+    size = vertices[start].flags;
+    if (size <= 0 || start + size > vertexCount)
+      size = vertexCount - start;
     glDrawArrays(mode, start, size);
     start += size;
   }
@@ -309,6 +316,11 @@ static void shDrawVertices(SHPath *p, GLenum mode)
   glDisableVertexAttribArray(context->locationDraw.pos);
   shRestoreVertexState(&vertexState);
   GL_CHECK_ERROR;
+}
+
+static void shDrawVertices(SHPath *p, GLenum mode)
+{
+  shDrawVertexData(p->vertices.items, p->vertices.size, mode);
 }
 
 /*--------------------------------------------------------------
@@ -824,10 +836,15 @@ static void shEnsurePathGeometry(VGContext *context, SHPath *p)
   }
 }
 
-static void shDrawFillStencil(VGContext *context, SHPath *p)
+static void shDrawFillStencilVertices(VGContext *context,
+                                      const SHVertex *vertices,
+                                      SHint vertexCount)
 {
   GLboolean cullEnabled;
   GLint frontFace;
+
+  if (!vertices || vertexCount <= 0)
+    return;
 
   glEnable(GL_STENCIL_TEST);
   glStencilMask(0xff);
@@ -841,7 +858,7 @@ static void shDrawFillStencil(VGContext *context, SHPath *p)
     glFrontFace(GL_CCW);
     glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_KEEP, GL_INCR_WRAP);
     glStencilOpSeparate(GL_BACK, GL_KEEP, GL_KEEP, GL_DECR_WRAP);
-    shDrawVertices(p, GL_TRIANGLE_FAN);
+    shDrawVertexData(vertices, vertexCount, GL_TRIANGLE_FAN);
     glFrontFace((GLenum)frontFace);
     if (cullEnabled == GL_TRUE)
       glEnable(GL_CULL_FACE);
@@ -849,8 +866,13 @@ static void shDrawFillStencil(VGContext *context, SHPath *p)
       glDisable(GL_CULL_FACE);
   } else {
     glStencilOp(GL_INVERT, GL_INVERT, GL_INVERT);
-    shDrawVertices(p, GL_TRIANGLE_FAN);
+    shDrawVertexData(vertices, vertexCount, GL_TRIANGLE_FAN);
   }
+}
+
+static void shDrawFillStencil(VGContext *context, SHPath *p)
+{
+  shDrawFillStencilVertices(context, p->vertices.items, p->vertices.size);
 }
 
 static void shSetFillStencilPaintTest(VGContext *context)
@@ -1104,6 +1126,244 @@ VGboolean shIsStrokeCacheValid (VGContext *c, SHPath *p)
   }
 
   return valid;
+}
+
+static void shTransformPathBounds(SHPath *p,
+                                  const SHMatrix3x3 *transform,
+                                  SHRectangle *bounds)
+{
+  SHVector2 corners[4];
+  SHVector2 min;
+  SHVector2 max;
+  int i;
+
+  SET2(corners[0], p->min.x, p->min.y);
+  SET2(corners[1], p->max.x, p->min.y);
+  SET2(corners[2], p->min.x, p->max.y);
+  SET2(corners[3], p->max.x, p->max.y);
+
+  TRANSFORM2(corners[0], (*transform));
+  SET2V(min, corners[0]);
+  SET2V(max, corners[0]);
+
+  for (i=1; i<4; ++i) {
+    TRANSFORM2(corners[i], (*transform));
+    if (corners[i].x < min.x) min.x = corners[i].x;
+    if (corners[i].y < min.y) min.y = corners[i].y;
+    if (corners[i].x > max.x) max.x = corners[i].x;
+    if (corners[i].y > max.y) max.y = corners[i].y;
+  }
+
+  shRectangleSet(bounds, min.x, min.y, max.x - min.x, max.y - min.y);
+}
+
+static VGboolean shBoundsOverlap(const SHRectangle *a, const SHRectangle *b)
+{
+  const SHfloat margin = 0.001f;
+
+  if (a->x + a->w + margin < b->x ||
+      b->x + b->w + margin < a->x ||
+      a->y + a->h + margin < b->y ||
+      b->y + b->h + margin < a->y)
+    return VG_FALSE;
+
+  return VG_TRUE;
+}
+
+static void shUpdateBatchBounds(SHVector2 *min,
+                                SHVector2 *max,
+                                SHVector2 point,
+                                VGboolean *initialized)
+{
+  if (*initialized == VG_FALSE) {
+    SET2V((*min), point);
+    SET2V((*max), point);
+    *initialized = VG_TRUE;
+    return;
+  }
+
+  if (point.x < min->x) min->x = point.x;
+  if (point.y < min->y) min->y = point.y;
+  if (point.x > max->x) max->x = point.x;
+  if (point.y > max->y) max->y = point.y;
+}
+
+SHPathGlyphBatchResult shDrawPathGlyphBatch(VGContext *context,
+                                            const SHPathGlyph *glyphs,
+                                            SHint glyphCount)
+{
+  static const GLfloat identity4[16] = {
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f
+  };
+
+  SHPaint *fill;
+  SHMatrix3x3 savedTransform;
+  SHRectangle *bounds = NULL;
+  SHVertex *vertices = NULL;
+  SHRectangle *candidateBounds;
+  SHVector2 min;
+  SHVector2 max;
+  SHVector2 point;
+  SHPath *path;
+  SHRectangle *rect;
+  size_t totalVertices = 0;
+  size_t copiedVertices = 0;
+  SHint boundsCount = 0;
+  VGboolean boundsInitialized = VG_FALSE;
+  SHint i;
+  SHint j;
+  SHint v;
+
+  if (!context || !glyphs || glyphCount <= 0)
+    return SH_PATH_GLYPH_BATCH_UNSUPPORTED;
+  if (context->surfaceWidth <= 0 || context->surfaceHeight <= 0)
+    return SH_PATH_GLYPH_BATCH_DRAWN;
+
+  fill = (context->fillPaint ? context->fillPaint : &context->defaultPaint);
+  if (fill->type != VG_PAINT_TYPE_COLOR ||
+      shRequestedCoverageScale(context) > 1)
+    return SH_PATH_GLYPH_BATCH_UNSUPPORTED;
+
+  if (context->scissoring == VG_TRUE) {
+    if (context->scissor.size == 0)
+      return SH_PATH_GLYPH_BATCH_DRAWN;
+    rect = &context->scissor.items[0];
+    if (rect->w <= 0.0f || rect->h <= 0.0f)
+      return SH_PATH_GLYPH_BATCH_DRAWN;
+  }
+
+  if ((size_t)glyphCount > ((size_t)-1) / sizeof(SHRectangle)) {
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    return SH_PATH_GLYPH_BATCH_ERROR;
+  }
+
+  bounds = (SHRectangle*)malloc((size_t)glyphCount * sizeof(SHRectangle));
+  if (!bounds) {
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    return SH_PATH_GLYPH_BATCH_ERROR;
+  }
+
+  SETMATMAT(savedTransform, context->pathTransform);
+
+  for (i=0; i<glyphCount; ++i) {
+    path = glyphs[i].path;
+    if (!path)
+      continue;
+
+    SETMATMAT(context->pathTransform, glyphs[i].transform);
+    shEnsurePathGeometry(context, path);
+    if (path->vertices.outofmemory) {
+      SETMATMAT(context->pathTransform, savedTransform);
+      free(bounds);
+      shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+      return SH_PATH_GLYPH_BATCH_ERROR;
+    }
+
+    if (path->vertices.size <= 0)
+      continue;
+
+    if ((size_t)path->vertices.size >
+        (size_t)SH_MAX_INT - totalVertices ||
+        (size_t)path->vertices.size >
+        ((size_t)-1) / sizeof(SHVertex) - totalVertices) {
+      SETMATMAT(context->pathTransform, savedTransform);
+      free(bounds);
+      shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+      return SH_PATH_GLYPH_BATCH_ERROR;
+    }
+
+    candidateBounds = &bounds[boundsCount];
+    shTransformPathBounds(path, &glyphs[i].transform, candidateBounds);
+    for (j=0; j<boundsCount; ++j) {
+      if (shBoundsOverlap(candidateBounds, &bounds[j]) == VG_TRUE) {
+        SETMATMAT(context->pathTransform, savedTransform);
+        free(bounds);
+        return SH_PATH_GLYPH_BATCH_UNSUPPORTED;
+      }
+    }
+
+    ++boundsCount;
+    totalVertices += (size_t)path->vertices.size;
+  }
+
+  SETMATMAT(context->pathTransform, savedTransform);
+
+  if (totalVertices == 0) {
+    free(bounds);
+    return SH_PATH_GLYPH_BATCH_DRAWN;
+  }
+
+  vertices = (SHVertex*)malloc(totalVertices * sizeof(SHVertex));
+  if (!vertices) {
+    free(bounds);
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    return SH_PATH_GLYPH_BATCH_ERROR;
+  }
+
+  for (i=0; i<glyphCount; ++i) {
+    path = glyphs[i].path;
+    if (!path || path->vertices.size <= 0)
+      continue;
+
+    for (v=0; v<path->vertices.size; ++v) {
+      vertices[copiedVertices] = path->vertices.items[v];
+      TRANSFORM2(vertices[copiedVertices].point, glyphs[i].transform);
+      SET2V(point, vertices[copiedVertices].point);
+      shUpdateBatchBounds(&min, &max, point, &boundsInitialized);
+      ++copiedVertices;
+    }
+  }
+
+  free(bounds);
+
+  if (copiedVertices == 0) {
+    free(vertices);
+    return SH_PATH_GLYPH_BATCH_DRAWN;
+  }
+
+  if (context->scissoring == VG_TRUE) {
+    rect = &context->scissor.items[0];
+    glScissor((GLint)rect->x, (GLint)rect->y,
+              (GLint)rect->w, (GLint)rect->h);
+    glEnable(GL_SCISSOR_TEST);
+  }
+
+  glUseProgram(context->progDraw);
+  shApplyColorTransform(context);
+  glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, identity4);
+  glUniform1i(context->locationDraw.drawMode, 0);
+  glUniform1i(context->locationDraw.coveragePass, 0);
+  GL_CHECK_ERROR;
+
+  shDrawFillStencilVertices(context, vertices, (SHint)copiedVertices);
+
+  if (!updateBlendingStateGL(context, fill->color.a == 1.0f, 0)) {
+    free(vertices);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    if (context->scissoring == VG_TRUE)
+      glDisable(GL_SCISSOR_TEST);
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    return SH_PATH_GLYPH_BATCH_ERROR;
+  }
+
+  shSetFillStencilPaintTest(context);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  shDrawPaintMesh(context, &min, &max, VG_FILL_PATH, GL_TEXTURE0, VG_FALSE);
+
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glDisable(GL_STENCIL_TEST);
+  glDisable(GL_BLEND);
+  if (context->scissoring == VG_TRUE)
+    glDisable(GL_SCISSOR_TEST);
+
+  free(vertices);
+  shMarkRenderTargetDirty(context);
+  return SH_PATH_GLYPH_BATCH_DRAWN;
 }
 
 /*-----------------------------------------------------------

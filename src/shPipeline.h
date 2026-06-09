@@ -36,11 +36,27 @@ typedef struct
   SHImageQuadVertex vertices[6];
 } SHImageQuad;
 
+typedef struct
+{
+  SHPath *path;
+  SHMatrix3x3 transform;
+} SHPathGlyph;
+
+typedef enum
+{
+  SH_PATH_GLYPH_BATCH_UNSUPPORTED = 0,
+  SH_PATH_GLYPH_BATCH_DRAWN,
+  SH_PATH_GLYPH_BATCH_ERROR
+} SHPathGlyphBatchResult;
+
 void shDrawPath(VGContext *context, SHPath *path, VGbitfield paintModes);
 void shDrawImage(VGContext *context, SHImage *image);
 void shDrawImageQuadBatch(VGContext *context,
                           GLuint texture,
                           const SHImageQuad *quads,
                           SHint quadCount);
+SHPathGlyphBatchResult shDrawPathGlyphBatch(VGContext *context,
+                                            const SHPathGlyph *glyphs,
+                                            SHint glyphCount);
 
 #endif /* __SHPIPELINE_H */
