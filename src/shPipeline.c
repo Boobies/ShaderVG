@@ -824,21 +824,53 @@ static void shEnsurePathGeometry(VGContext *context, SHPath *p)
   }
 }
 
+static void shDrawFillStencil(VGContext *context, SHPath *p)
+{
+  GLboolean cullEnabled;
+  GLint frontFace;
+
+  glEnable(GL_STENCIL_TEST);
+  glStencilMask(0xff);
+  glStencilFunc(GL_ALWAYS, 0, 0);
+  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+  if (context->fillRule == VG_NON_ZERO) {
+    cullEnabled = glIsEnabled(GL_CULL_FACE);
+    glGetIntegerv(GL_FRONT_FACE, &frontFace);
+    glDisable(GL_CULL_FACE);
+    glFrontFace(GL_CCW);
+    glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_KEEP, GL_INCR_WRAP);
+    glStencilOpSeparate(GL_BACK, GL_KEEP, GL_KEEP, GL_DECR_WRAP);
+    shDrawVertices(p, GL_TRIANGLE_FAN);
+    glFrontFace((GLenum)frontFace);
+    if (cullEnabled == GL_TRUE)
+      glEnable(GL_CULL_FACE);
+    else
+      glDisable(GL_CULL_FACE);
+  } else {
+    glStencilOp(GL_INVERT, GL_INVERT, GL_INVERT);
+    shDrawVertices(p, GL_TRIANGLE_FAN);
+  }
+}
+
+static void shSetFillStencilPaintTest(VGContext *context)
+{
+  if (context->fillRule == VG_NON_ZERO)
+    glStencilFunc(GL_NOTEQUAL, 0, 0xff);
+  else
+    glStencilFunc(GL_EQUAL, 1, 1);
+  glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+}
+
 static void shRenderFillToMaskTarget(VGContext *context, SHPath *p)
 {
   if (p->vertices.size <= 0)
     return;
 
-  glEnable(GL_STENCIL_TEST);
-  glStencilMask(0xff);
-  glStencilFunc(GL_ALWAYS, 0, 0);
-  glStencilOp(GL_INVERT, GL_INVERT, GL_INVERT);
-  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-  shDrawVertices(p, GL_TRIANGLE_FAN);
+  shDrawFillStencil(context, p);
 
   glDisable(GL_BLEND);
-  glStencilFunc(GL_EQUAL, 1, 1);
-  glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+  shSetFillStencilPaintTest(context);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   shDrawCoverageMesh(context, &p->min, &p->max, VG_FILL_PATH);
 
@@ -1158,11 +1190,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
     } else {
 
       /* Tesselate into stencil */
-      glEnable(GL_STENCIL_TEST);
-      glStencilFunc(GL_ALWAYS, 0, 0);
-      glStencilOp(GL_INVERT, GL_INVERT, GL_INVERT);
-      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-      shDrawVertices(p, GL_TRIANGLE_FAN);
+      shDrawFillStencil(context, p);
 
       /* Setup blending */
       if (!updateBlendingStateGL(context,
@@ -1178,9 +1206,8 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
         VG_RETURN(VG_NO_RETVAL);
       }
 
-      /* Draw paint where stencil odd */
-      glStencilFunc(GL_EQUAL, 1, 1);
-      glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+      /* Draw paint where the selected fill rule left stencil coverage. */
+      shSetFillStencilPaintTest(context);
       glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
       shDrawPaintMesh(context, &p->min, &p->max, VG_FILL_PATH, GL_TEXTURE0,
                       VG_FALSE);

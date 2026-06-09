@@ -1169,6 +1169,214 @@ cleanup:
   return result;
 }
 
+static VGPath create_fill_rule_test_path(VGboolean innerSameDirection)
+{
+  VGubyte segments[] = {
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_CLOSE_PATH,
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_CLOSE_PATH
+  };
+  VGfloat sameDirectionCoords[] = {
+    4.0f, 4.0f,
+    36.0f, 4.0f,
+    36.0f, 36.0f,
+    4.0f, 36.0f,
+    14.0f, 14.0f,
+    26.0f, 14.0f,
+    26.0f, 26.0f,
+    14.0f, 26.0f
+  };
+  VGfloat oppositeDirectionCoords[] = {
+    4.0f, 4.0f,
+    36.0f, 4.0f,
+    36.0f, 36.0f,
+    4.0f, 36.0f,
+    14.0f, 14.0f,
+    14.0f, 26.0f,
+    26.0f, 26.0f,
+    26.0f, 14.0f
+  };
+
+  return create_test_path(segments, 10,
+                          innerSameDirection ? sameDirectionCoords :
+                                               oppositeDirectionCoords);
+}
+
+static int expect_fill_rule_result(const unsigned char *pixels,
+                                   EGLint width,
+                                   VGboolean centerFilled,
+                                   const char *outerMessage,
+                                   const char *centerMessage)
+{
+  if (expect_rgba_at(pixels, width * 4, 8, 8, 0, 255, 0, 255,
+                     outerMessage))
+    return 1;
+
+  if (centerFilled == VG_TRUE)
+    return expect_rgba_at(pixels, width * 4, 20, 20, 0, 255, 0, 255,
+                          centerMessage);
+
+  return expect_rgba_at(pixels, width * 4, 20, 20, 0, 0, 0, 255,
+                        centerMessage);
+}
+
+static int draw_fill_rule_path(VGPath path,
+                               VGPaint paint,
+                               VGFillRule fillRule,
+                               VGboolean antialias,
+                               unsigned char *pixels,
+                               EGLint width,
+                               EGLint height)
+{
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_FILL_RULE, fillRule);
+  vgSeti(VG_RENDERING_QUALITY,
+         antialias ? VG_RENDERING_QUALITY_BETTER :
+                     VG_RENDERING_QUALITY_NONANTIALIASED);
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgDrawPath(path, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+
+  return expect_no_vg_error("OpenVG fill-rule path draw failed");
+}
+
+static int draw_fill_rule_mask(VGPath path,
+                               VGPath fullRect,
+                               VGPaint paint,
+                               VGFillRule fillRule,
+                               unsigned char *pixels,
+                               EGLint width,
+                               EGLint height)
+{
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_MASKING, VG_TRUE);
+  vgSeti(VG_FILL_RULE, fillRule);
+  vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_BETTER);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgMask(VG_INVALID_HANDLE, VG_CLEAR_MASK, 0, 0, width, height);
+  vgRenderToMask(path, VG_FILL_PATH, VG_SET_MASK);
+  draw_masked_rect(fullRect, paint, clearColor, pixels, width, height);
+
+  return expect_no_vg_error("OpenVG fill-rule render-to-mask draw failed");
+}
+
+static int run_fill_rule_test(unsigned char *pixels,
+                              EGLint width,
+                              EGLint height)
+{
+  VGPath sameDirection = VG_INVALID_HANDLE;
+  VGPath oppositeDirection = VG_INVALID_HANDLE;
+  VGPath fullRect = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGfloat green[] = {0.0f, 1.0f, 0.0f, 1.0f};
+  VGint oldFillRule = vgGeti(VG_FILL_RULE);
+  VGint oldRenderingQuality = vgGeti(VG_RENDERING_QUALITY);
+  VGint oldMasking = vgGeti(VG_MASKING);
+  VGint oldScissoring = vgGeti(VG_SCISSORING);
+  int result = 0;
+
+  sameDirection = create_fill_rule_test_path(VG_TRUE);
+  oppositeDirection = create_fill_rule_test_path(VG_FALSE);
+  fullRect = create_rect_path((VGfloat)width, (VGfloat)height);
+  paint = vgCreatePaint();
+  if (sameDirection == VG_INVALID_HANDLE ||
+      oppositeDirection == VG_INVALID_HANDLE ||
+      fullRect == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG fill-rule test setup failed");
+    goto cleanup;
+  }
+
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, green);
+
+  if (draw_fill_rule_path(sameDirection, paint, VG_EVEN_ODD,
+                          VG_FALSE, pixels, width, height) ||
+      expect_fill_rule_result(pixels, width, VG_FALSE,
+                              "OpenVG even-odd fill missed outer coverage",
+                              "OpenVG even-odd fill did not cancel the hole")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (draw_fill_rule_path(sameDirection, paint, VG_NON_ZERO,
+                          VG_FALSE, pixels, width, height) ||
+      expect_fill_rule_result(pixels, width, VG_TRUE,
+                              "OpenVG nonzero fill missed outer coverage",
+                              "OpenVG nonzero fill ignored same-direction winding")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (draw_fill_rule_path(oppositeDirection, paint, VG_NON_ZERO,
+                          VG_FALSE, pixels, width, height) ||
+      expect_fill_rule_result(pixels, width, VG_FALSE,
+                              "OpenVG nonzero opposite fill missed outer coverage",
+                              "OpenVG nonzero fill ignored opposite winding")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (draw_fill_rule_path(sameDirection, paint, VG_NON_ZERO,
+                          VG_TRUE, pixels, width, height) ||
+      expect_fill_rule_result(pixels, width, VG_TRUE,
+                              "OpenVG AA nonzero fill missed outer coverage",
+                              "OpenVG AA nonzero fill ignored same winding")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (draw_fill_rule_mask(sameDirection, fullRect, paint, VG_NON_ZERO,
+                          pixels, width, height) ||
+      expect_fill_rule_result(pixels, width, VG_TRUE,
+                              "OpenVG nonzero mask missed outer coverage",
+                              "OpenVG nonzero mask ignored same winding")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  if (draw_fill_rule_mask(oppositeDirection, fullRect, paint, VG_NON_ZERO,
+                          pixels, width, height) ||
+      expect_fill_rule_result(pixels, width, VG_FALSE,
+                              "OpenVG opposite nonzero mask missed outer coverage",
+                              "OpenVG nonzero mask ignored opposite winding")) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  vgSeti(VG_MASKING, oldMasking);
+  vgSeti(VG_SCISSORING, oldScissoring);
+  vgSeti(VG_RENDERING_QUALITY, oldRenderingQuality);
+  vgSeti(VG_FILL_RULE, oldFillRule);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (fullRect != VG_INVALID_HANDLE)
+    vgDestroyPath(fullRect);
+  if (oppositeDirection != VG_INVALID_HANDLE)
+    vgDestroyPath(oppositeDirection);
+  if (sameDirection != VG_INVALID_HANDLE)
+    vgDestroyPath(sameDirection);
+  return result;
+}
+
 static int run_review_regression_test(void)
 {
   VGPaint paint = VG_INVALID_HANDLE;
@@ -5439,6 +5647,8 @@ int main(void)
         result = run_gradient_ramp_test(pixels, width, height);
       if (result == 0)
         result = run_path_measurement_test();
+      if (result == 0)
+        result = run_fill_rule_test(pixels, width, height);
       if (result == 0)
         result = run_review_regression_test();
       if (result == 0)

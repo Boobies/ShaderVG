@@ -62,6 +62,7 @@ PFNGLISVERTEXARRAYPROC              glIsVertexArray;
 PFNGLLINKPROGRAMPROC                glLinkProgram;
 PFNGLRENDERBUFFERSTORAGEPROC        glRenderbufferStorage;
 PFNGLSHADERSOURCEPROC               glShaderSource;
+PFNGLSTENCILOPSEPARATEPROC          glStencilOpSeparate;
 PFNGLUNIFORM1FPROC                  glUniform1f;
 PFNGLUNIFORM1FVPROC                 glUniform1fv;
 PFNGLUNIFORM1IPROC                  glUniform1i;
@@ -147,6 +148,7 @@ void shLoadExtensions(void *c)
   SH_LOAD_GL(PFNGLLINKPROGRAMPROC, glLinkProgram);
   SH_LOAD_GL(PFNGLRENDERBUFFERSTORAGEPROC, glRenderbufferStorage);
   SH_LOAD_GL(PFNGLSHADERSOURCEPROC, glShaderSource);
+  SH_LOAD_GL(PFNGLSTENCILOPSEPARATEPROC, glStencilOpSeparate);
   SH_LOAD_GL(PFNGLUNIFORM1FPROC, glUniform1f);
   SH_LOAD_GL(PFNGLUNIFORM1FVPROC, glUniform1fv);
   SH_LOAD_GL(PFNGLUNIFORM1IPROC, glUniform1i);

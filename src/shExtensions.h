@@ -59,6 +59,7 @@ extern PFNGLISVERTEXARRAYPROC              glIsVertexArray;
 extern PFNGLLINKPROGRAMPROC                glLinkProgram;
 extern PFNGLRENDERBUFFERSTORAGEPROC        glRenderbufferStorage;
 extern PFNGLSHADERSOURCEPROC               glShaderSource;
+extern PFNGLSTENCILOPSEPARATEPROC          glStencilOpSeparate;
 extern PFNGLUNIFORM1FPROC                  glUniform1f;
 extern PFNGLUNIFORM1FVPROC                 glUniform1fv;
 extern PFNGLUNIFORM1IPROC                  glUniform1i;
