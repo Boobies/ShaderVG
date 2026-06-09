@@ -104,6 +104,11 @@ static const char* vgShaderFragmentPipelineA =
 "#define BLEND_DST_ATOP_KHR         0x2025\n"
 "#define BLEND_XOR                  0x2026\n"
 "\n"
+"#define TILE_FILL                  0x1D00\n"
+"#define TILE_PAD                   0x1D01\n"
+"#define TILE_REPEAT                0x1D02\n"
+"#define TILE_REFLECT               0x1D03\n"
+"\n"
 "in vec2 texImageCoord;\n"
 "in vec2 paintCoord;\n"
 "\n"
@@ -116,6 +121,7 @@ static const char* vgShaderFragmentPipelineA =
 "uniform vec2 paintParams[3];\n"
 "uniform sampler2D rampSampler;\n"
 "uniform sampler2D patternSampler;\n"
+"uniform int patternTilingMode;\n"
 "uniform vec4 scaleFactorBias[2];\n"
 "uniform int maskEnabled;\n"
 "uniform sampler2D maskSampler;\n"
@@ -208,9 +214,28 @@ static const char* vgShaderFragmentPipelineB =
 "        break;\n"
 "    case PAINT_TYPE_PATTERN:\n"
 "        {\n"
-"            float width = paintParams[0].x;\n"
-"            float height = paintParams[0].y;\n"
-"            vec2 texCoord = vec2(paintCoord.x / width, paintCoord.y / height);\n"
+"            vec2 patternSize = max(paintParams[0], vec2(1.0));\n"
+"            vec2 patternOrigin = paintParams[1];\n"
+"            vec2 patternExtent = paintParams[2];\n"
+"            vec2 local = paintCoord / patternSize;\n"
+"            vec2 inset = 0.5 / patternSize;\n"
+"            if (patternTilingMode == TILE_FILL &&\n"
+"                (local.x < 0.0 || local.y < 0.0 ||\n"
+"                 local.x >= 1.0 || local.y >= 1.0)) {\n"
+"                col = paintColor;\n"
+"                break;\n"
+"            }\n"
+"            if (patternTilingMode == TILE_PAD) {\n"
+"                local = clamp(local, vec2(0.0), vec2(1.0));\n"
+"            } else if (patternTilingMode == TILE_REPEAT) {\n"
+"                local = fract(local);\n"
+"            } else if (patternTilingMode == TILE_REFLECT) {\n"
+"                local = mod(local, vec2(2.0));\n"
+"                local = mix(local, vec2(2.0) - local,\n"
+"                            step(vec2(1.0), local));\n"
+"            }\n"
+"            local = clamp(local, inset, vec2(1.0) - inset);\n"
+"            vec2 texCoord = patternOrigin + local * patternExtent;\n"
 "            col = texture(patternSampler, texCoord);\n"
 "        }\n"
 "        break;\n"
@@ -1072,6 +1097,8 @@ void shInitPiplelineShaders(void) {
   context->locationDraw.paintType      = glGetUniformLocation(context->progDraw, "paintType");
   context->locationDraw.rampSampler    = glGetUniformLocation(context->progDraw, "rampSampler");
   context->locationDraw.patternSampler = glGetUniformLocation(context->progDraw, "patternSampler");
+  context->locationDraw.patternTilingMode =
+    glGetUniformLocation(context->progDraw, "patternTilingMode");
   context->locationDraw.paintParams    = glGetUniformLocation(context->progDraw, "paintParams");
   context->locationDraw.paintColor     = glGetUniformLocation(context->progDraw, "paintColor");
   context->locationDraw.scaleFactorBias= glGetUniformLocation(context->progDraw, "scaleFactorBias");

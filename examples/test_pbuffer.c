@@ -3088,15 +3088,21 @@ static int run_child_image_test(unsigned char *pixels,
   VGImage grandchild = VG_INVALID_HANDLE;
   VGImage dest = VG_INVALID_HANDLE;
   VGImage destChild = VG_INVALID_HANDLE;
+  VGImage patternParent = VG_INVALID_HANDLE;
+  VGImage patternChild = VG_INVALID_HANDLE;
   VGImage chainRoot = VG_INVALID_HANDLE;
   VGImage chainParent = VG_INVALID_HANDLE;
   VGImage chainChild = VG_INVALID_HANDLE;
+  VGPaint patternPaint = VG_INVALID_HANDLE;
+  VGPath patternPath = VG_INVALID_HANDLE;
   VGubyte parentData[8 * 6 * 4];
   VGubyte readData[8 * 6 * 4];
   VGubyte blueData[2 * 2 * 4];
+  VGubyte patternData[4 * 2 * 4];
   VGubyte yellowPixel[4];
   VGfloat black[] = {0.0f, 0.0f, 0.0f, 1.0f};
   VGfloat green[] = {0.0f, 1.0f, 0.0f, 1.0f};
+  VGfloat tileFill[] = {0.0f, 1.0f, 0.0f, 1.0f};
   VGfloat chainGreen[] = {0.0f, 0.5f, 0.0f, 1.0f};
   int i;
   int result = 0;
@@ -3105,6 +3111,11 @@ static int run_child_image_test(unsigned char *pixels,
     set_rgba(parentData, 8 * 4, i % 8, i / 8, 255, 0, 0, 255);
   for (i=0; i<2 * 2; ++i)
     set_rgba(blueData, 2 * 4, i % 2, i / 2, 0, 0, 255, 255);
+  for (i=0; i<4 * 2; ++i) {
+    VGint x = i % 4;
+    set_rgba(patternData, 4 * 4, x, i / 4,
+             x < 2 ? 255 : 0, 0, x < 2 ? 0 : 255, 255);
+  }
   set_rgba(yellowPixel, 4, 0, 0, 255, 255, 0, 255);
 
   parent = vgCreateImage(VG_lABGR_8888, 8, 6, VG_IMAGE_QUALITY_BETTER);
@@ -3219,6 +3230,87 @@ static int run_child_image_test(unsigned char *pixels,
     goto cleanup;
   }
 
+  patternParent = vgCreateImage(VG_lABGR_8888, 4, 2,
+                                VG_IMAGE_QUALITY_BETTER);
+  patternChild = vgChildImage(patternParent, 2, 0, 2, 2);
+  patternPaint = vgCreatePaint();
+  patternPath = create_rect_path(6.0f, 4.0f);
+  if (patternParent == VG_INVALID_HANDLE ||
+      patternChild == VG_INVALID_HANDLE ||
+      patternPaint == VG_INVALID_HANDLE ||
+      patternPath == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG child pattern test setup failed");
+    goto cleanup;
+  }
+
+  vgImageSubData(patternParent, patternData, 4 * 4,
+                 VG_lABGR_8888, 0, 0, 4, 2);
+  vgSetParameteri(patternPaint, VG_PAINT_TYPE, VG_PAINT_TYPE_PATTERN);
+  vgSetfv(VG_TILE_FILL_COLOR, 4, tileFill);
+  vgSetPaint(patternPaint, VG_FILL_PATH);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_FILL_PAINT_TO_USER);
+  vgLoadIdentity();
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC);
+
+  vgSetParameteri(patternPaint, VG_PAINT_PATTERN_TILING_MODE, VG_TILE_REPEAT);
+  vgPaintPattern(patternPaint, patternChild);
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgTranslate(40.0f, 20.0f);
+  vgDrawPath(patternPath, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG child repeat pattern paint failed") ||
+      expect_rgba_at(pixels, width * 4, 41, 21, 0, 0, 255, 255,
+                     "OpenVG child repeat pattern sampled outside the child image") ||
+      expect_rgba_at(pixels, width * 4, 44, 21, 0, 0, 255, 255,
+                     "OpenVG child repeat pattern did not repeat the child image")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetParameteri(patternPaint, VG_PAINT_PATTERN_TILING_MODE, VG_TILE_PAD);
+  vgPaintPattern(patternPaint, patternChild);
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgTranslate(40.0f, 20.0f);
+  vgDrawPath(patternPath, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG child pad pattern paint failed") ||
+      expect_rgba_at(pixels, width * 4, 41, 21, 0, 0, 255, 255,
+                     "OpenVG child pad pattern sampled outside the child image") ||
+      expect_rgba_at(pixels, width * 4, 44, 21, 0, 0, 255, 255,
+                     "OpenVG child pad pattern did not clamp to the child image")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetParameteri(patternPaint, VG_PAINT_PATTERN_TILING_MODE, VG_TILE_FILL);
+  vgPaintPattern(patternPaint, patternChild);
+  vgSetfv(VG_CLEAR_COLOR, 4, black);
+  vgClear(0, 0, width, height);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgTranslate(40.0f, 20.0f);
+  vgDrawPath(patternPath, VG_FILL_PATH);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG child fill pattern paint failed") ||
+      expect_rgba_at(pixels, width * 4, 41, 21, 0, 0, 255, 255,
+                     "OpenVG child fill pattern sampled outside the child image") ||
+      expect_rgba_at(pixels, width * 4, 44, 21, 0, 255, 0, 255,
+                     "OpenVG child fill pattern did not use the tile fill color")) {
+    result = 1;
+    goto cleanup;
+  }
+
   chainRoot = vgCreateImage(VG_lABGR_8888, 4, 4, VG_IMAGE_QUALITY_BETTER);
   chainParent = vgChildImage(chainRoot, 0, 0, 3, 3);
   chainChild = vgChildImage(chainParent, 1, 1, 2, 2);
@@ -3269,6 +3361,14 @@ cleanup:
     vgDestroyImage(chainParent);
   if (chainRoot != VG_INVALID_HANDLE)
     vgDestroyImage(chainRoot);
+  if (patternPath != VG_INVALID_HANDLE)
+    vgDestroyPath(patternPath);
+  if (patternPaint != VG_INVALID_HANDLE)
+    vgDestroyPaint(patternPaint);
+  if (patternChild != VG_INVALID_HANDLE)
+    vgDestroyImage(patternChild);
+  if (patternParent != VG_INVALID_HANDLE)
+    vgDestroyImage(patternParent);
   if (destChild != VG_INVALID_HANDLE)
     vgDestroyImage(destChild);
   if (grandchild != VG_INVALID_HANDLE)

@@ -589,30 +589,13 @@ void shSetGradientTexGLState(SHPaint *p)
 
 void shSetPatternTexGLState(SHPaint *p, VGContext *c)
 {
+  (void)c;
+
   glBindTexture(GL_TEXTURE_2D, shImageTexture((SHImage*)p->pattern));
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  
-  switch(p->tilingMode) {
-  case VG_TILE_FILL:
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR,
-                     (GLfloat*)&c->tileFillColor);
-    break;
-  case VG_TILE_PAD:
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    break;
-  case VG_TILE_REPEAT:
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    break;
-  case VG_TILE_REFLECT:
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
-    break;
-  }
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
 int shLoadLinearGradientMesh(SHPaint *p, VGPaintMode mode, VGMatrixMode matrixMode)
@@ -682,9 +665,11 @@ int shLoadRadialGradientMesh(SHPaint *p, VGPaintMode mode, VGMatrixMode matrixMo
 int shLoadPatternMesh(SHPaint *p, VGPaintMode mode, VGMatrixMode matrixMode)
 {
   SHImage *i = (SHImage*)p->pattern;
+  SHImage *root = shImageRoot(i);
   SHMatrix3x3 *m;
   SHMatrix3x3 mu2p;
   GLfloat u2p[9];
+  GLfloat params[6];
 
   /* Pick paint transform matrix */
   SH_GETCONTEXT(0);
@@ -700,8 +685,18 @@ int shLoadPatternMesh(SHPaint *p, VGPaintMode mode, VGMatrixMode matrixMode)
   shMatrixToVG(&mu2p, (SHfloat*)u2p);
 
   /* Setup shader */
+  params[0] = (GLfloat)i->width;
+  params[1] = (GLfloat)i->height;
+  params[2] = (GLfloat)i->storageX / (GLfloat)root->texwidth;
+  params[3] = (GLfloat)i->storageY / (GLfloat)root->texheight;
+  params[4] = (GLfloat)i->width / (GLfloat)root->texwidth;
+  params[5] = (GLfloat)i->height / (GLfloat)root->texheight;
+
   glUniform1i(context->locationDraw.paintType, VG_PAINT_TYPE_PATTERN);
-  glUniform2f(context->locationDraw.paintParams, (GLfloat)i->width, (GLfloat)i->height);
+  glUniform2fv(context->locationDraw.paintParams, 3, params);
+  glUniform1i(context->locationDraw.patternTilingMode, p->tilingMode);
+  glUniform4fv(context->locationDraw.paintColor, 1,
+               (GLfloat*)&context->tileFillColor);
   glUniformMatrix3fv(context->locationDraw.paintInverted, 1, GL_FALSE, u2p);
   glActiveTexture(GL_TEXTURE1);
   shSetPatternTexGLState(p, context);

@@ -182,6 +182,7 @@ typedef struct VGContext
       GLint paintType      ;
       GLint rampSampler    ;
       GLint patternSampler ;
+      GLint patternTilingMode;
       GLint userSampler    ;
       GLint paintParams    ;
       GLint paintColor     ;
