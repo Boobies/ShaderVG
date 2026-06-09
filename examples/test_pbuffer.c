@@ -3652,6 +3652,153 @@ cleanup:
   return result;
 }
 
+static int run_glyph_image_batch_test(unsigned char *pixels,
+                                      EGLint width,
+                                      EGLint height)
+{
+  VGImage atlas = VG_INVALID_HANDLE;
+  VGImage redChild = VG_INVALID_HANDLE;
+  VGImage greenChild = VG_INVALID_HANDLE;
+  VGImage blueChild = VG_INVALID_HANDLE;
+  VGImage otherImage = VG_INVALID_HANDLE;
+  VGFont font = VG_INVALID_HANDLE;
+  VGPath path = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGubyte atlasData[24 * 8 * 4];
+  VGubyte otherData[8 * 8 * 4];
+  VGfloat glyphOrigin[] = {0.0f, 0.0f};
+  VGfloat escapement[] = {9.0f, 0.0f};
+  VGfloat firstOrigin[] = {10.0f, 10.0f};
+  VGfloat secondOrigin[] = {10.0f, 30.0f};
+  VGfloat yellow[] = {1.0f, 1.0f, 0.0f, 1.0f};
+  VGfloat clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGuint imageRun[] = {1u, 2u, 3u};
+  VGfloat imageAdjustX[] = {1.0f, 2.0f, 0.0f};
+  VGfloat imageAdjustY[] = {0.0f, 1.0f, 0.0f};
+  VGuint mixedRun[] = {1u, 4u, 5u, 2u};
+  int x, y;
+  int result = 0;
+
+  memset(atlasData, 0, sizeof(atlasData));
+  memset(otherData, 0, sizeof(otherData));
+
+  for (y=0; y<8; ++y) {
+    for (x=0; x<24; ++x) {
+      if (x < 8)
+        set_rgba(atlasData, 24 * 4, x, y, 255, 0, 0, 255);
+      else if (x < 16)
+        set_rgba(atlasData, 24 * 4, x, y, 0, 255, 0, 255);
+      else
+        set_rgba(atlasData, 24 * 4, x, y, 0, 0, 255, 255);
+    }
+  }
+  for (y=0; y<8; ++y)
+    for (x=0; x<8; ++x)
+      set_rgba(otherData, 8 * 4, x, y, 0, 255, 255, 255);
+
+  atlas = vgCreateImage(VG_lABGR_8888, 24, 8, VG_IMAGE_QUALITY_BETTER);
+  otherImage = vgCreateImage(VG_lABGR_8888, 8, 8,
+                             VG_IMAGE_QUALITY_BETTER);
+  font = vgCreateFont(5);
+  path = create_rect_path(8.0f, 8.0f);
+  paint = vgCreatePaint();
+  if (atlas == VG_INVALID_HANDLE ||
+      otherImage == VG_INVALID_HANDLE ||
+      font == VG_INVALID_HANDLE ||
+      path == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG glyph image batch setup failed");
+    goto cleanup;
+  }
+
+  redChild = vgChildImage(atlas, 0, 0, 8, 8);
+  greenChild = vgChildImage(atlas, 8, 0, 8, 8);
+  blueChild = vgChildImage(atlas, 16, 0, 8, 8);
+  if (redChild == VG_INVALID_HANDLE ||
+      greenChild == VG_INVALID_HANDLE ||
+      blueChild == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG glyph image batch child setup failed");
+    goto cleanup;
+  }
+
+  vgImageSubData(atlas, atlasData, 24 * 4, VG_lABGR_8888,
+                 0, 0, 24, 8);
+  vgImageSubData(otherImage, otherData, 8 * 4, VG_lABGR_8888,
+                 0, 0, 8, 8);
+  vgSetGlyphToImage(font, 1, redChild, glyphOrigin, escapement);
+  vgSetGlyphToImage(font, 2, greenChild, glyphOrigin, escapement);
+  vgSetGlyphToImage(font, 3, blueChild, glyphOrigin, escapement);
+  vgSetGlyphToPath(font, 4, path, VG_FALSE, glyphOrigin, escapement);
+  vgSetGlyphToImage(font, 5, otherImage, glyphOrigin, escapement);
+  vgSetParameterfv(paint, VG_PAINT_COLOR, 4, yellow);
+  vgSetPaint(paint, VG_FILL_PATH);
+  if (expect_no_vg_error("OpenVG glyph image batch resource setup failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSeti(VG_BLEND_MODE, VG_BLEND_SRC);
+  vgSeti(VG_IMAGE_MODE, VG_DRAW_IMAGE_NORMAL);
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_GLYPH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSetfv(VG_CLEAR_COLOR, 4, clearColor);
+  vgClear(0, 0, width, height);
+  vgSetfv(VG_GLYPH_ORIGIN, 2, firstOrigin);
+  vgDrawGlyphs(font, 3, imageRun, imageAdjustX, imageAdjustY,
+               VG_FILL_PATH, VG_FALSE);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG batched image glyph draw failed") ||
+      expect_rgba_at(pixels, width * 4, 12, 12, 255, 0, 0, 255,
+                     "OpenVG batched image glyph draw lost the red glyph") ||
+      expect_rgba_at(pixels, width * 4, 22, 12, 0, 255, 0, 255,
+                     "OpenVG batched image glyph draw lost the green glyph") ||
+      expect_rgba_at(pixels, width * 4, 33, 13, 0, 0, 255, 255,
+                     "OpenVG batched image glyph draw ignored glyph adjustments")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgClear(0, 0, width, height);
+  vgSetfv(VG_GLYPH_ORIGIN, 2, secondOrigin);
+  vgDrawGlyphs(font, 4, mixedRun, NULL, NULL, VG_FILL_PATH, VG_FALSE);
+  vgFinish();
+  vgReadPixels(pixels, width * 4, VG_sRGBA_8888, 0, 0, width, height);
+  if (expect_no_vg_error("OpenVG mixed glyph batch draw failed") ||
+      expect_rgba_at(pixels, width * 4, 12, 32, 255, 0, 0, 255,
+                     "OpenVG mixed glyph batch lost the leading image glyph") ||
+      expect_rgba_at(pixels, width * 4, 21, 32, 255, 255, 0, 255,
+                     "OpenVG mixed glyph batch did not flush before a path glyph") ||
+      expect_rgba_at(pixels, width * 4, 30, 32, 0, 255, 255, 255,
+                     "OpenVG mixed glyph batch did not flush for a new root texture") ||
+      expect_rgba_at(pixels, width * 4, 39, 32, 0, 255, 0, 255,
+                     "OpenVG mixed glyph batch did not resume the original atlas")) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (path != VG_INVALID_HANDLE)
+    vgDestroyPath(path);
+  if (font != VG_INVALID_HANDLE)
+    vgDestroyFont(font);
+  if (blueChild != VG_INVALID_HANDLE)
+    vgDestroyImage(blueChild);
+  if (greenChild != VG_INVALID_HANDLE)
+    vgDestroyImage(greenChild);
+  if (redChild != VG_INVALID_HANDLE)
+    vgDestroyImage(redChild);
+  if (otherImage != VG_INVALID_HANDLE)
+    vgDestroyImage(otherImage);
+  if (atlas != VG_INVALID_HANDLE)
+    vgDestroyImage(atlas);
+  return result;
+}
+
 static int run_shared_context_test(EGLDisplay display,
                                    EGLConfig config,
                                    EGLSurface surface,
@@ -5317,6 +5464,8 @@ int main(void)
         result = run_pixel_transfer_test(pixels, width, height);
       if (result == 0)
         result = run_child_image_test(pixels, width, height);
+      if (result == 0)
+        result = run_glyph_image_batch_test(pixels, width, height);
       if (result == 0)
         result = run_image_filter_test();
       if (result == 0)

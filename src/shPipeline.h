@@ -23,7 +23,24 @@
 
 #include "shContext.h"
 
+typedef struct
+{
+  GLfloat x;
+  GLfloat y;
+  GLfloat u;
+  GLfloat v;
+} SHImageQuadVertex;
+
+typedef struct
+{
+  SHImageQuadVertex vertices[6];
+} SHImageQuad;
+
 void shDrawPath(VGContext *context, SHPath *path, VGbitfield paintModes);
 void shDrawImage(VGContext *context, SHImage *image);
+void shDrawImageQuadBatch(VGContext *context,
+                          GLuint texture,
+                          const SHImageQuad *quads,
+                          SHint quadCount);
 
 #endif /* __SHPIPELINE_H */

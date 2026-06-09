@@ -283,6 +283,121 @@ static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
   }
 }
 
+static VGboolean shCanBatchImageGlyphs(VGContext *context)
+{
+  SHPaint *fill = (context->fillPaint ?
+                   context->fillPaint : &context->defaultPaint);
+
+  /* Gradient and pattern image-multiply use image-local paint coordinates. */
+  return (context->imageMode != VG_DRAW_IMAGE_MULTIPLY ||
+          fill->type == VG_PAINT_TYPE_COLOR) ? VG_TRUE : VG_FALSE;
+}
+
+static SHImage* shImageGlyphBatchRoot(SHGlyph *glyph)
+{
+  SHImage *root;
+
+  if (!glyph ||
+      glyph->type != SH_GLYPH_IMAGE ||
+      !glyph->image ||
+      shImageIsRenderTarget(glyph->image))
+    return NULL;
+
+  root = shImageRoot(glyph->image);
+  if (!root ||
+      root->texture == 0 ||
+      root->texwidth <= 0 ||
+      root->texheight <= 0 ||
+      glyph->image->width <= 0 ||
+      glyph->image->height <= 0)
+    return NULL;
+
+  return root;
+}
+
+static void shSetImageQuadVertex(SHImageQuadVertex *vertex,
+                                 SHVector2 position,
+                                 GLfloat u,
+                                 GLfloat v)
+{
+  vertex->x = position.x;
+  vertex->y = position.y;
+  vertex->u = u;
+  vertex->v = v;
+}
+
+static void shBuildImageGlyphQuad(VGContext *context,
+                                  SHGlyph *glyph,
+                                  SHImage *root,
+                                  SHImageQuad *quad)
+{
+  SHImage *image = glyph->image;
+  SHMatrix3x3 transform;
+  SHVector2 p0;
+  SHVector2 p1;
+  SHVector2 p2;
+  SHVector2 p3;
+  GLfloat u0;
+  GLfloat u1;
+  GLfloat v0;
+  GLfloat v1;
+
+  SETMATMAT(transform, context->glyphTransform);
+  TRANSLATEMATR(transform,
+                context->glyphOrigin.x - glyph->origin.x,
+                context->glyphOrigin.y - glyph->origin.y);
+
+  SET2(p0, 0.0f, 0.0f);
+  SET2(p1, (SHfloat)image->width, 0.0f);
+  SET2(p2, 0.0f, (SHfloat)image->height);
+  SET2(p3, (SHfloat)image->width, (SHfloat)image->height);
+  TRANSFORM2(p0, transform);
+  TRANSFORM2(p1, transform);
+  TRANSFORM2(p2, transform);
+  TRANSFORM2(p3, transform);
+
+  u0 = (GLfloat)image->storageX / (GLfloat)root->texwidth;
+  u1 = (GLfloat)(image->storageX + image->width) /
+       (GLfloat)root->texwidth;
+  v0 = (GLfloat)image->storageY / (GLfloat)root->texheight;
+  v1 = (GLfloat)(image->storageY + image->height) /
+       (GLfloat)root->texheight;
+
+  shSetImageQuadVertex(&quad->vertices[0], p0, u0, v0);
+  shSetImageQuadVertex(&quad->vertices[1], p1, u1, v0);
+  shSetImageQuadVertex(&quad->vertices[2], p2, u0, v1);
+  shSetImageQuadVertex(&quad->vertices[3], p2, u0, v1);
+  shSetImageQuadVertex(&quad->vertices[4], p1, u1, v0);
+  shSetImageQuadVertex(&quad->vertices[5], p3, u1, v1);
+}
+
+static void shFlushImageGlyphBatch(VGContext *context,
+                                   SHImage **batchRoot,
+                                   SHImageQuad *batchQuads,
+                                   SHint *batchCount)
+{
+  if (*batchCount > 0 && *batchRoot)
+    shDrawImageQuadBatch(context, (*batchRoot)->texture,
+                         batchQuads, *batchCount);
+
+  *batchRoot = NULL;
+  *batchCount = 0;
+}
+
+static void shAdvanceGlyphOrigin(VGContext *context,
+                                 SHGlyph *glyph,
+                                 const VGfloat *adjustments_x,
+                                 const VGfloat *adjustments_y,
+                                 VGint index)
+{
+  context->glyphOrigin.x += glyph->escapement.x;
+  context->glyphOrigin.y += glyph->escapement.y;
+  if (adjustments_x)
+    context->glyphOrigin.x += adjustments_x[index];
+  if (adjustments_y)
+    context->glyphOrigin.y += adjustments_y[index];
+}
+
 VG_API_CALL void vgDrawGlyph(VGFont font,
                              VGuint glyphIndex,
                              VGbitfield paintModes,
@@ -317,6 +432,12 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
 {
   SHFont *f;
   SHGlyph *glyph;
+  SHImage *root;
+  SHImage *batchRoot = NULL;
+  SHImageQuad *batchQuads = NULL;
+  SHint batchCount = 0;
+  VGboolean canBatchImages;
+  VGboolean hasBatchCandidate = VG_FALSE;
   VGint i;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
@@ -341,16 +462,58 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
                      VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   }
 
+  if (paintModes == 0) {
+    for (i=0; i<glyphCount; ++i) {
+      glyph = shFontFindGlyph(f, glyphIndices[i]);
+      shAdvanceGlyphOrigin(context, glyph,
+                           adjustments_x, adjustments_y, i);
+    }
+    VG_RETURN(VG_NO_RETVAL);
+  }
+
+  canBatchImages = shCanBatchImageGlyphs(context);
+  if (canBatchImages) {
+    for (i=0; i<glyphCount; ++i) {
+      glyph = shFontFindGlyph(f, glyphIndices[i]);
+      if (shImageGlyphBatchRoot(glyph)) {
+        hasBatchCandidate = VG_TRUE;
+        break;
+      }
+    }
+  }
+
+  if (hasBatchCandidate) {
+    VG_RETURN_ERR_IF((size_t)glyphCount >
+                     ((size_t)-1) / sizeof(SHImageQuad),
+                     VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+    batchQuads = (SHImageQuad*)malloc((size_t)glyphCount *
+                                      sizeof(SHImageQuad));
+    VG_RETURN_ERR_IF(!batchQuads,
+                     VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+
   for (i=0; i<glyphCount; ++i) {
     glyph = shFontFindGlyph(f, glyphIndices[i]);
-    shDrawGlyphObject(context, glyph, paintModes);
-    context->glyphOrigin.x += glyph->escapement.x;
-    context->glyphOrigin.y += glyph->escapement.y;
-    if (adjustments_x)
-      context->glyphOrigin.x += adjustments_x[i];
-    if (adjustments_y)
-      context->glyphOrigin.y += adjustments_y[i];
+    root = batchQuads ? shImageGlyphBatchRoot(glyph) : NULL;
+    if (root) {
+      if (batchRoot && batchRoot != root)
+        shFlushImageGlyphBatch(context, &batchRoot,
+                               batchQuads, &batchCount);
+      batchRoot = root;
+      shBuildImageGlyphQuad(context, glyph, root,
+                            &batchQuads[batchCount]);
+      ++batchCount;
+    } else {
+      shFlushImageGlyphBatch(context, &batchRoot,
+                             batchQuads, &batchCount);
+      shDrawGlyphObject(context, glyph, paintModes);
+    }
+    shAdvanceGlyphOrigin(context, glyph,
+                         adjustments_x, adjustments_y, i);
   }
+
+  shFlushImageGlyphBatch(context, &batchRoot, batchQuads, &batchCount);
+  free(batchQuads);
 
   VG_RETURN(VG_NO_RETVAL);
 }

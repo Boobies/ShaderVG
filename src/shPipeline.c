@@ -1362,6 +1362,130 @@ VG_API_CALL void vgRenderToMask(VGPath path,
   VG_RETURN(VG_NO_RETVAL);
 }
 
+void shDrawImageQuadBatch(VGContext *context,
+                          GLuint texture,
+                          const SHImageQuad *quads,
+                          SHint quadCount)
+{
+  static const GLfloat identity4[16] = {
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f
+  };
+
+  SHPaint *fill;
+  SHRectangle *rect;
+  SHVertexState vertexState;
+  GLsizei vertexCount;
+
+  if (!context || texture == 0 || !quads || quadCount <= 0)
+    return;
+  if (quadCount > SH_MAX_INT / 6) {
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    return;
+  }
+
+  if (context->scissoring == VG_TRUE) {
+    rect = &context->scissor.items[0];
+    if (context->scissor.size == 0) VG_RETURN( VG_NO_RETVAL );
+    if (rect->w <= 0.0f || rect->h <= 0.0f) VG_RETURN( VG_NO_RETVAL );
+    glScissor( (GLint)rect->x, (GLint)rect->y, (GLint)rect->w, (GLint)rect->h );
+    glEnable( GL_SCISSOR_TEST );
+  }
+
+  glUseProgram(context->progDraw);
+  shApplyColorTransform(context);
+  glUniformMatrix4fv(context->locationDraw.model, 1, GL_FALSE, identity4);
+  glUniform1i(context->locationDraw.drawMode, 1);
+  glUniform1i(context->locationDraw.imagePremultiplied, 0);
+  glUniform1i(context->locationDraw.coveragePass, 0);
+  GL_CHECK_ERROR;
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+  if (context->imageQuality == VG_IMAGE_QUALITY_NONANTIALIASED) {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  } else {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  }
+
+  shBindContextVertexState(context, &vertexState);
+  glBufferData(GL_ARRAY_BUFFER,
+               (GLsizeiptr)((size_t)quadCount * sizeof(SHImageQuad)),
+               quads,
+               GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(context->locationDraw.textureUV);
+  glVertexAttribPointer(context->locationDraw.textureUV, 2, GL_FLOAT,
+                        GL_FALSE, sizeof(SHImageQuadVertex),
+                        (const GLvoid*)(2 * sizeof(GLfloat)));
+  glUniform1i(context->locationDraw.imageSampler, 0);
+  GL_CHECK_ERROR;
+
+  fill = (context->fillPaint ? context->fillPaint : &context->defaultPaint);
+
+  if (!updateBlendingStateGL(context, 0, 0)) {
+    glDisableVertexAttribArray(context->locationDraw.textureUV);
+    glDisable(GL_BLEND);
+    if (context->scissoring == VG_TRUE)
+      glDisable(GL_SCISSOR_TEST);
+    shRestoreVertexState(&vertexState);
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    VG_RETURN(VG_NO_RETVAL);
+  }
+
+  glEnable(GL_TEXTURE_2D);
+
+  if (context->imageMode == VG_DRAW_IMAGE_MULTIPLY) {
+    glUniform1i(context->locationDraw.imageMode, VG_DRAW_IMAGE_MULTIPLY);
+    switch (fill->type) {
+    case VG_PAINT_TYPE_RADIAL_GRADIENT:
+      shLoadRadialGradientMesh(fill, VG_FILL_PATH,
+                               VG_MATRIX_IMAGE_USER_TO_SURFACE);
+      break;
+    case VG_PAINT_TYPE_LINEAR_GRADIENT:
+      shLoadLinearGradientMesh(fill, VG_FILL_PATH,
+                               VG_MATRIX_IMAGE_USER_TO_SURFACE);
+      break;
+    case VG_PAINT_TYPE_PATTERN:
+      shLoadPatternMesh(fill, VG_FILL_PATH,
+                        VG_MATRIX_IMAGE_USER_TO_SURFACE);
+      break;
+    default:
+    case VG_PAINT_TYPE_COLOR:
+      shLoadOneColorMesh(fill);
+      break;
+    }
+  } else {
+    glUniform1i(context->locationDraw.imageMode, VG_DRAW_IMAGE_NORMAL);
+  }
+
+  glVertexAttribPointer(context->locationDraw.pos, 2, GL_FLOAT, GL_FALSE,
+                        sizeof(SHImageQuadVertex), (const GLvoid*)0);
+  glEnableVertexAttribArray(context->locationDraw.pos);
+  shApplyMaskState(context);
+  shApplyCoverageState(context, VG_FALSE);
+  vertexCount = (GLsizei)(quadCount * 6);
+  glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+  glDisableVertexAttribArray(context->locationDraw.pos);
+  glDisableVertexAttribArray(context->locationDraw.textureUV);
+  shRestoreVertexState(&vertexState);
+
+  glDisable(GL_TEXTURE_2D);
+  GL_CHECK_ERROR;
+
+  if (context->scissoring == VG_TRUE)
+    glDisable( GL_SCISSOR_TEST );
+
+  shMarkRenderTargetDirty(context);
+  VG_RETURN(VG_NO_RETVAL);
+}
+
 void shDrawImage(VGContext *context, SHImage *i)
 {
   typedef struct
