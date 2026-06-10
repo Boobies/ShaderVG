@@ -1,5 +1,5 @@
-lib_LTLIBRARIES = libOpenVG.la libShaderVGEGL.la
-libOpenVG_la_CFLAGS = -pedantic -I$(top_builddir)/include
+lib_LTLIBRARIES = libOpenVG.la
+libOpenVG_la_CFLAGS = -pedantic -I$(top_builddir)/include @EGL_CFLAGS@
 libOpenVG_la_SOURCES =\
 	shDefs.h\
 	shExtensions.h\
@@ -27,13 +27,10 @@ libOpenVG_la_SOURCES =\
 	shPipeline.c\
 	shParams.c\
 	shContext.c\
+	shEGL.c\
 	shaders.c\
 	shVgu.c
-libOpenVG_la_LIBADD = @OPENGL_LIBS@ @MATH_LIBS@
-
-libShaderVGEGL_la_CFLAGS = -pedantic -I$(top_builddir)/include @EGL_CFLAGS@
-libShaderVGEGL_la_SOURCES = shEGL.c
-libShaderVGEGL_la_LIBADD = libOpenVG.la @DLOPEN_LIBS@
+libOpenVG_la_LIBADD = @OPENGL_LIBS@ @MATH_LIBS@ @DLOPEN_LIBS@
 
 VG_includedir = $(includedir)/VG
 VG_include_HEADERS =\

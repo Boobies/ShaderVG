@@ -2,14 +2,13 @@
 INCLUDE_VG_DIR = $(top_builddir)/include
 LIB_VG_DIR = $(top_builddir)/src
 LIB_VG = ${LIB_VG_DIR}/libOpenVG.la
-LIB_EGL = ${LIB_VG_DIR}/libShaderVGEGL.la
 
 # Variables which are common to all example programs
 # (Combine variables passed from configure script with
 # the local path to uninstalled library)
 EXAMPLE_SRCS = test.h test.c
 EXAMPLE_CF = @CONFIG_CFLAGS@ @EGL_CFLAGS@ @NATIVE_WINDOW_CFLAGS@ -I${INCLUDE_VG_DIR} -I${prefix}/include
-EXAMPLE_LA = @CONFIG_LDADD@ @NATIVE_WINDOW_LIBS@ ${LIB_EGL} ${LIB_VG}
+EXAMPLE_LA = ${LIB_VG} @CONFIG_LDADD@ @NATIVE_WINDOW_LIBS@
 EXAMPLE_LF = @CONFIG_LDFLAGS@ -L${prefix}/lib
 
 EXTRA_DIST = *.jpg *.png

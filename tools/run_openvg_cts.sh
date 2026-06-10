@@ -201,7 +201,6 @@ fi
 
 lib_dir=$repo_root/src/.libs
 [ -f "$lib_dir/libOpenVG.so" ] || die "missing $lib_dir/libOpenVG.so; build ShaderVG first"
-[ -f "$lib_dir/libShaderVGEGL.so" ] || die "missing $lib_dir/libShaderVGEGL.so; build ShaderVG first"
 
 answer_dir=$results_dir/answer
 info_dir=$results_dir/info
@@ -220,7 +219,7 @@ if [ -n "${CTS_LDFLAGS_EXTRA:-}" ]; then
     cts_ldflags="$cts_ldflags $CTS_LDFLAGS_EXTRA"
 fi
 
-cts_libs="-lShaderVGEGL -lOpenVG -lEGL -lX11 -lGL -ldl -lm"
+cts_libs="-lOpenVG -lEGL -lX11 -lGL -ldl -lm"
 if [ -n "${CTS_LIBS_EXTRA:-}" ]; then
     cts_libs="$cts_libs $CTS_LIBS_EXTRA"
 fi

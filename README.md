@@ -33,11 +33,10 @@ $ ./configure
 $ make
 ```
 
-ShaderVG installs two libraries: `libOpenVG` contains the OpenVG implementation,
-and `libShaderVGEGL` exposes the EGL entry points that bind OpenVG contexts to
-real platform EGL displays and surfaces. Client applications should link
-`libShaderVGEGL` before the platform EGL library so ShaderVG's OpenVG-aware EGL
-entry points are used first.
+ShaderVG installs `libOpenVG`, which contains the OpenVG implementation and the
+EGL entry points needed to bind OpenVG contexts to real platform EGL displays
+and surfaces. Client applications should link `libOpenVG` before the platform
+EGL library so ShaderVG's OpenVG-aware EGL entry points are used first.
 
 ### Testing
 
@@ -151,8 +150,8 @@ $ tools/run_openvg_cts.sh --cts-dir /tmp/OpenVG-CTS \
 
 The script stores generated answers, config info, and logs under
 `cts-results/`, which is ignored by Git. It links the CTS generator against the
-uninstalled `src/.libs/libShaderVGEGL.so` and `src/.libs/libOpenVG.so`, with
-ShaderVG's EGL entry points ordered before the platform EGL library.
+uninstalled `src/.libs/libOpenVG.so`, with ShaderVG's EGL entry points ordered
+before the platform EGL library.
 
 `tools/openvg_cts_smoke.txt` tracks the CTS groups expected to pass today.
 `tools/openvg_cts_msaa.txt` tracks CTS groups that require an EGL config with
@@ -384,10 +383,11 @@ vgClear(0, 0, width, height);
 eglSwapBuffers(dpy, surface);
 ```
 
-`libShaderVGEGL` delegates native display, surface, and backing OpenGL context
-creation to the platform EGL implementation. ShaderVG only supplies the OpenVG
-implementation and the glue needed for `EGL_OPENVG_API` / `EGL_OPENVG_BIT` to
-select a ShaderVG OpenVG context. OpenVG-capable configs expose
+The EGL entry points exported by `libOpenVG` delegate native display, surface,
+and backing OpenGL context creation to the platform EGL implementation.
+ShaderVG supplies the OpenVG implementation and the glue needed for
+`EGL_OPENVG_API` / `EGL_OPENVG_BIT` to select a ShaderVG OpenVG context.
+OpenVG-capable configs expose
 `EGL_OPENVG_BIT` through `EGL_RENDERABLE_TYPE` and `EGL_CONFORMANT`, and
 advertise `EGL_ALPHA_MASK_SIZE == 8`, matching ShaderVG's 8-bit GPU mask
 surface.
