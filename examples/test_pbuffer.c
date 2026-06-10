@@ -1387,6 +1387,7 @@ static int run_review_regression_test(void)
   VGPath start = VG_INVALID_HANDLE;
   VGPath end = VG_INVALID_HANDLE;
   VGPath badEnd = VG_INVALID_HANDLE;
+  VGPath badCountEnd = VG_INVALID_HANDLE;
   VGubyte dstSegments[] = {VG_MOVE_TO_ABS, VG_LINE_TO_ABS};
   VGfloat dstCoords[] = {100.0f, 100.0f, 120.0f, 100.0f};
   VGubyte startSegments[] = {VG_MOVE_TO_ABS, VG_LINE_TO_ABS};
@@ -1394,6 +1395,11 @@ static int run_review_regression_test(void)
   VGfloat endCoords[] = {0.0f, 0.0f, 20.0f, 0.0f};
   VGubyte badEndSegments[] = {VG_MOVE_TO_ABS, VG_MOVE_TO_ABS};
   VGfloat badEndCoords[] = {0.0f, 0.0f, 20.0f, 0.0f};
+  VGubyte badCountEndSegments[] = {VG_MOVE_TO_ABS, VG_CUBIC_TO_ABS};
+  VGfloat badCountEndCoords[] = {
+    0.0f, 0.0f,
+    5.0f, 0.0f, 15.0f, 0.0f, 20.0f, 0.0f
+  };
   VGfloat dashPattern[] = {3.0f, 1.0f, 2.0f, 1.0f};
   VGfloat dashRead[4];
   VGfloat *oversizedDashPattern = NULL;
@@ -1541,10 +1547,12 @@ static int run_review_regression_test(void)
   start = create_test_path(startSegments, 2, startCoords);
   end = create_test_path(startSegments, 2, endCoords);
   badEnd = create_test_path(badEndSegments, 2, badEndCoords);
+  badCountEnd = create_test_path(badCountEndSegments, 2, badCountEndCoords);
   if (dst == VG_INVALID_HANDLE ||
       start == VG_INVALID_HANDLE ||
       end == VG_INVALID_HANDLE ||
-      badEnd == VG_INVALID_HANDLE) {
+      badEnd == VG_INVALID_HANDLE ||
+      badCountEnd == VG_INVALID_HANDLE) {
     result = fail_vg("OpenVG review regression path setup failed");
     goto cleanup;
   }
@@ -1575,10 +1583,22 @@ static int run_review_regression_test(void)
     goto cleanup;
   }
 
+  interpolated = vgInterpolatePath(dst, start, badCountEnd, 0.5f);
+  if (expect_no_vg_error("OpenVG count-mismatched path interpolation raised an error") ||
+      interpolated ||
+      vgGetParameteri(dst, VG_PATH_NUM_SEGMENTS) != segmentCount) {
+    fprintf(stderr,
+            "OpenVG vgInterpolatePath changed the destination on count-mismatched input\n");
+    result = 1;
+    goto cleanup;
+  }
+
 cleanup:
   vgSetfv(VG_STROKE_DASH_PATTERN, 0, NULL);
   vgGetError();
   free(oversizedDashPattern);
+  if (badCountEnd != VG_INVALID_HANDLE)
+    vgDestroyPath(badCountEnd);
   if (badEnd != VG_INVALID_HANDLE)
     vgDestroyPath(badEnd);
   if (end != VG_INVALID_HANDLE)

@@ -20,10 +20,6 @@ F10203
 F10204
 F20103
 #
-# Path interpolation mismatch validation currently aborts instead of reporting a spec error.
-G20602
-G20604
-#
 # These path rendering CTS groups make the generator grow without bound in this
 # environment. Keep them isolated until the resource issue is understood.
 G70108

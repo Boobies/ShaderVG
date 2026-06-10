@@ -1328,9 +1328,12 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
   VG_RETURN_ERR_IF(start->segCount != end->segCount,
                    VG_NO_ERROR, VG_FALSE);
   
-  /* Allocate storage for processed path data */
+  /* Count and allocate storage for processed path data */
   shProcessedDataCount(start, processFlags, &procSegCount1, &procDataCount1);
   shProcessedDataCount(end, processFlags, &procSegCount2, &procDataCount2);
+  VG_RETURN_ERR_IF(procSegCount1 != procSegCount2 ||
+                   procDataCount1 != procDataCount2,
+                   VG_NO_ERROR, VG_FALSE);
   procSegs1 = (SHuint8*)malloc(procSegCount1 * sizeof(SHuint8));
   procSegs2 = (SHuint8*)malloc(procSegCount2 * sizeof(SHuint8));
   procData1 = (SHfloat*)malloc(procDataCount1 * sizeof(SHfloat));
@@ -1351,8 +1354,9 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
   userData[0] = procSegs2; userData[1] = &procSegCount2;
   userData[2] = procData2; userData[3] = &procDataCount2;
   shProcessPathData(end, processFlags, shInterpolateSegment, userData);
-  SH_ASSERT(procSegCount1 == procSegCount2 &&
-            procDataCount1 == procDataCount2);
+  if (procSegCount1 != procSegCount2 ||
+      procDataCount1 != procDataCount2)
+    goto cleanup;
   
   /* Resize dst path storage to include interpolated data */
   oldSegCount = dst->segCount;
