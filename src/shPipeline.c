@@ -1209,9 +1209,9 @@ SHPathGlyphBatchResult shDrawPathGlyphBatch(VGContext *context,
   SHVector2 point;
   SHPath *path;
   SHRectangle *rect;
-  size_t totalVertices = 0;
-  size_t copiedVertices = 0;
+  size_t maxVertices = 0;
   SHint boundsCount = 0;
+  SHint vertexCount;
   VGboolean boundsInitialized = VG_FALSE;
   SHint i;
   SHint j;
@@ -1266,9 +1266,7 @@ SHPathGlyphBatchResult shDrawPathGlyphBatch(VGContext *context,
       continue;
 
     if ((size_t)path->vertices.size >
-        (size_t)SH_MAX_INT - totalVertices ||
-        (size_t)path->vertices.size >
-        ((size_t)-1) / sizeof(SHVertex) - totalVertices) {
+        ((size_t)-1) / sizeof(SHVertex)) {
       SETMATMAT(context->pathTransform, savedTransform);
       free(bounds);
       shSetError(context, VG_OUT_OF_MEMORY_ERROR);
@@ -1286,43 +1284,25 @@ SHPathGlyphBatchResult shDrawPathGlyphBatch(VGContext *context,
     }
 
     ++boundsCount;
-    totalVertices += (size_t)path->vertices.size;
+    if ((size_t)path->vertices.size > maxVertices)
+      maxVertices = (size_t)path->vertices.size;
   }
 
   SETMATMAT(context->pathTransform, savedTransform);
 
-  if (totalVertices == 0) {
+  if (maxVertices == 0) {
     free(bounds);
     return SH_PATH_GLYPH_BATCH_DRAWN;
   }
 
-  vertices = (SHVertex*)malloc(totalVertices * sizeof(SHVertex));
+  vertices = (SHVertex*)malloc(maxVertices * sizeof(SHVertex));
   if (!vertices) {
     free(bounds);
     shSetError(context, VG_OUT_OF_MEMORY_ERROR);
     return SH_PATH_GLYPH_BATCH_ERROR;
   }
 
-  for (i=0; i<glyphCount; ++i) {
-    path = glyphs[i].path;
-    if (!path || path->vertices.size <= 0)
-      continue;
-
-    for (v=0; v<path->vertices.size; ++v) {
-      vertices[copiedVertices] = path->vertices.items[v];
-      TRANSFORM2(vertices[copiedVertices].point, glyphs[i].transform);
-      SET2V(point, vertices[copiedVertices].point);
-      shUpdateBatchBounds(&min, &max, point, &boundsInitialized);
-      ++copiedVertices;
-    }
-  }
-
   free(bounds);
-
-  if (copiedVertices == 0) {
-    free(vertices);
-    return SH_PATH_GLYPH_BATCH_DRAWN;
-  }
 
   if (context->scissoring == VG_TRUE) {
     rect = &context->scissor.items[0];
@@ -1338,7 +1318,21 @@ SHPathGlyphBatchResult shDrawPathGlyphBatch(VGContext *context,
   glUniform1i(context->locationDraw.coveragePass, 0);
   GL_CHECK_ERROR;
 
-  shDrawFillStencilVertices(context, vertices, (SHint)copiedVertices);
+  for (i=0; i<glyphCount; ++i) {
+    path = glyphs[i].path;
+    if (!path || path->vertices.size <= 0)
+      continue;
+
+    vertexCount = path->vertices.size;
+    for (v=0; v<vertexCount; ++v) {
+      vertices[v] = path->vertices.items[v];
+      TRANSFORM2(vertices[v].point, glyphs[i].transform);
+      SET2V(point, vertices[v].point);
+      shUpdateBatchBounds(&min, &max, point, &boundsInitialized);
+    }
+
+    shDrawFillStencilVertices(context, vertices, vertexCount);
+  }
 
   if (!updateBlendingStateGL(context, fill->color.a == 1.0f, 0)) {
     free(vertices);
