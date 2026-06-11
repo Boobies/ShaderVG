@@ -29,6 +29,11 @@
 #include "shImage.h"
 #include "shFont.h"
 #include "shGLState.h"
+#include "shThread.h"
+
+#if !SH_HAS_CLEANUP
+#  error "ShaderVG scoped locks require compiler cleanup attribute support"
+#endif
 
 typedef struct
 {
@@ -64,6 +69,7 @@ typedef enum
 
 typedef struct
 {
+  SHRecursiveMutex mutex;
   SHint refCount;
   SHPathArray paths;
   SHPaintArray paints;
@@ -74,6 +80,8 @@ typedef struct
 
 typedef struct VGContext
 {
+  SHRecursiveMutex mutex;
+
   /* Surface info supplied by the EGL frontend */
   SHint surfaceWidth;
   SHint surfaceHeight;
@@ -290,9 +298,23 @@ typedef struct VGContext
 
 typedef SHGLVertexBindingState SHVertexState;
 
+typedef struct
+{
+  VGContext *context;
+  SHResourceGroup *resources;
+  VGboolean contextLocked;
+  VGboolean resourcesLocked;
+} SHContextLock;
+
 void VGContext_ctor(VGContext *c);
 void VGContext_dtor(VGContext *c);
 void shSetError(VGContext *c, VGErrorCode e);
+VGContext* shAcquireCurrentContext(SHContextLock *lock);
+void shContextLockCleanup(SHContextLock *lock);
+void shLockContext(VGContext *c);
+void shUnlockContext(VGContext *c);
+void shLockResourceGroup(SHResourceGroup *resources);
+void shUnlockResourceGroup(SHResourceGroup *resources);
 SHint shIsValidPath(VGContext *c, VGHandle h);
 SHint shIsValidPaint(VGContext *c, VGHandle h);
 SHint shIsValidImage(VGContext *c, VGHandle h);
@@ -333,15 +355,11 @@ VGboolean shApplyMaskValueToSurface(VGContext *c,
                                     VGfloat value,
                                     VGMaskOperation operation);
 
-/*----------------------------------------------------
- * TODO: Add mutex locking/unlocking to these macros
- * to assure sequentiallity in multithreading.
- *----------------------------------------------------*/
-
 #define VG_NO_RETVAL
 
 #define VG_GETCONTEXT(RETVAL) \
-  VGContext *context = shGetContext(); \
+  SHContextLock shContextLock SH_CLEANUP(shContextLockCleanup); \
+  VGContext *context = shAcquireCurrentContext(&shContextLock); \
   if (!context) return RETVAL;
   
 #define VG_RETURN(RETVAL) \

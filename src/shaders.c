@@ -1374,117 +1374,159 @@ VG_API_CALL void vgShaderSourceSH(VGuint shadertype, const VGbyte* string){
 		default:
 			break;
     }
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgCompileShaderSH(void){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     shDeinitPiplelineShaders();
     shInitPiplelineShaders();
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform1fSH(VGint location, VGfloat v0){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform1f(location, v0);                                                     
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform2fSH(VGint location, VGfloat v0, VGfloat v1){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform2f(location, v0, v1);                                         
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform3fSH(VGint location, VGfloat v0, VGfloat v1, VGfloat v2){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform3f(location, v0, v1, v2);                             
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform4fSH(VGint location, VGfloat v0, VGfloat v1, VGfloat v2, VGfloat v3){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform4f(location, v0, v1, v2, v3);                 
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform1fvSH(VGint location, VGint count, const VGfloat *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform1fv(location, count, value);                           
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform2fvSH(VGint location, VGint count, const VGfloat *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform2fv(location, count, value);                           
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform3fvSH(VGint location, VGint count, const VGfloat *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform3fv(location, count, value);                           
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform4fvSH(VGint location, VGint count, const VGfloat *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform4fv(location, count, value);                           
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniformMatrix2fvSH(VGint location, VGint count, VGboolean transpose, const VGfloat *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniformMatrix2fv(location, count, transpose, value);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniformMatrix3fvSH(VGint location, VGint count, VGboolean transpose, const VGfloat *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniformMatrix3fv(location, count, transpose, value);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniformMatrix4fvSH(VGint location, VGint count, VGboolean transpose, const VGfloat *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniformMatrix4fv(location, count, transpose, value);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL VGint vgGetUniformLocationSH(const VGbyte *name){
     VG_GETCONTEXT(-1);
     VGint retval = glGetUniformLocation(context->progDraw, name);
     GL_CHECK_ERROR;
-    return retval;
+    VG_RETURN(retval);
 }
 
 VG_API_CALL void vgGetUniformfvSH(VGint location, VGfloat *params){
     VG_GETCONTEXT(VG_NO_RETVAL);
     glGetUniformfv(context->progDraw, location, params);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform1iSH (VGint location, VGint v0){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform1i (location, v0);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform2iSH (VGint location, VGint v0, VGint v1){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform2i (location, v0, v1);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform3iSH (VGint location, VGint v0, VGint v1, VGint v2){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform3i (location,  v0,  v1, v2);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform4iSH (VGint location, VGint v0, VGint v1, VGint v2, VGint v3){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform4i (location, v0, v1, v2, v3);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform1ivSH (VGint location, VGint count, const VGint *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform1iv (location, count, value);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform2ivSH (VGint location, VGint count, const VGint *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform2iv (location, count, value);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform3ivSH (VGint location, VGint count, const VGint *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform3iv (location, count, value);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgUniform4ivSH (VGint location, VGint count, const VGint *value){
+    VG_GETCONTEXT(VG_NO_RETVAL);
     glUniform4iv (location, count, value);
     GL_CHECK_ERROR;
+    VG_RETURN(VG_NO_RETVAL);
 }

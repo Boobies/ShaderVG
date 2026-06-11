@@ -7,13 +7,13 @@ LIB_VG = ${LIB_VG_DIR}/libOpenVG.la
 # (Combine variables passed from configure script with
 # the local path to uninstalled library)
 EXAMPLE_SRCS = test.h test.c
-EXAMPLE_CF = @CONFIG_CFLAGS@ @EGL_CFLAGS@ @NATIVE_WINDOW_CFLAGS@ -I${INCLUDE_VG_DIR} -I${prefix}/include
-EXAMPLE_LA = ${LIB_VG} @CONFIG_LDADD@ @NATIVE_WINDOW_LIBS@
+EXAMPLE_CF = @CONFIG_CFLAGS@ @EGL_CFLAGS@ @THREAD_CFLAGS@ @NATIVE_WINDOW_CFLAGS@ -I${INCLUDE_VG_DIR} -I${prefix}/include
+EXAMPLE_LA = ${LIB_VG} @CONFIG_LDADD@ @NATIVE_WINDOW_LIBS@ @THREAD_LIBS@
 EXAMPLE_LF = @CONFIG_LDFLAGS@ -L${prefix}/lib
 
 EXTRA_DIST = *.jpg *.png
 
-noinst_PROGRAMS = test_pbuffer test_egl_gl_vg test_egl_features test_masking test_pixels test_filters test_parametric_filter
+noinst_PROGRAMS = test_pbuffer test_egl_gl_vg test_egl_features test_masking test_pixels test_filters test_parametric_filter test_thread_safety
 
 if BUILD_VGU
 noinst_PROGRAMS += test_vgu
@@ -123,6 +123,9 @@ test_tiger_shader_SOURCES =\
 test_pbuffer_SOURCES =\
 	test_pbuffer.c
 
+test_thread_safety_SOURCES =\
+	test_thread_safety.c
+
 test_egl_gl_vg_SOURCES =\
 	${EXAMPLE_SRCS} test_egl_gl_vg.c
 
@@ -207,6 +210,10 @@ test_tiger_shader_LDFLAGS = ${EXAMPLE_LF}
 test_pbuffer_CFLAGS = ${EXAMPLE_CF}
 test_pbuffer_LDADD = ${EXAMPLE_LA}
 test_pbuffer_LDFLAGS = ${EXAMPLE_LF}
+
+test_thread_safety_CFLAGS = ${EXAMPLE_CF}
+test_thread_safety_LDADD = ${EXAMPLE_LA}
+test_thread_safety_LDFLAGS = ${EXAMPLE_LF}
 
 test_egl_gl_vg_CFLAGS = ${EXAMPLE_CF}
 test_egl_gl_vg_LDADD = ${EXAMPLE_LA}

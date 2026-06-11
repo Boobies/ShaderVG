@@ -56,6 +56,8 @@ typedef struct {
   unsigned int magic;
   EGLNativeDisplayType nativeDisplay;
   EGLDisplay realDisplay;
+  EGLBoolean destroyRequested;
+  SHint currentCount;
 } SHEGLDisplay;
 
 typedef struct {
@@ -75,6 +77,10 @@ typedef struct {
   EGLint mipmapTexture;
   EGLint vgColorspace;
   EGLint vgAlphaFormat;
+  EGLBoolean destroyRequested;
+  EGLBoolean realDestroyed;
+  SHint currentCount;
+  SHThreadId currentThread;
 } SHEGLSurface;
 
 typedef struct {
@@ -83,6 +89,10 @@ typedef struct {
   EGLContext realContext;
   VGContext *vgContext;
   EGLenum api;
+  EGLBoolean destroyRequested;
+  EGLBoolean realDestroyed;
+  SHint currentCount;
+  SHThreadId currentThread;
 } SHEGLContext;
 
 typedef struct {
@@ -113,7 +123,11 @@ typedef struct {
 } SHEGLDispatch;
 
 static SHEGLDispatch g_egl;
-static int g_eglLoaded = 0;
+static SHOnce g_eglLoadOnce = SH_ONCE_INIT;
+static int g_eglLoadSuccess = 0;
+static EGLint g_eglLoadError = EGL_SUCCESS;
+static SHOnce g_eglMutexOnce = SH_ONCE_INIT;
+static SHRecursiveMutex g_eglMutex;
 
 #if defined(_WIN32)
 static HMODULE g_eglLibrary = NULL;
@@ -129,6 +143,45 @@ static SH_TLS SHEGLSurface *t_currentRead = NULL;
 static SH_TLS SHEGLContext *t_currentContext = NULL;
 static SH_TLS char t_clientApis[256];
 
+typedef struct {
+  EGLBoolean locked;
+} SHEGLLockGuard;
+
+static void shInitEGLMutex(void)
+{
+  shRecursiveMutexInit(&g_eglMutex);
+}
+
+static void shLockEGL(void)
+{
+  shOnce(&g_eglMutexOnce, shInitEGLMutex);
+  shRecursiveMutexLock(&g_eglMutex);
+}
+
+static void shUnlockEGL(void)
+{
+  shRecursiveMutexUnlock(&g_eglMutex);
+}
+
+static void shEGLCallLock(SHEGLLockGuard *guard)
+{
+  guard->locked = EGL_FALSE;
+  shLockEGL();
+  guard->locked = EGL_TRUE;
+}
+
+static void shEGLCallCleanup(SHEGLLockGuard *guard)
+{
+  if (guard && guard->locked) {
+    guard->locked = EGL_FALSE;
+    shUnlockEGL();
+  }
+}
+
+#define SH_EGL_LOCK_GUARD() \
+  SHEGLLockGuard shEGLCallGuard SH_CLEANUP(shEGLCallCleanup); \
+  shEGLCallLock(&shEGLCallGuard)
+
 static void shSetEGLError(EGLint error)
 {
   t_error = error;
@@ -143,11 +196,8 @@ static void *shLoadSymbol(const char *name)
 #endif
 }
 
-static int shLoadRealEGL(void)
+static void shLoadRealEGLOnce(void)
 {
-  if (g_eglLoaded)
-    return 1;
-
 #if defined(_WIN32)
   g_eglLibrary = LoadLibraryA("libEGL.dll");
   if (!g_eglLibrary)
@@ -159,8 +209,8 @@ static int shLoadRealEGL(void)
 #endif
 
   if (!g_eglLibrary) {
-    shSetEGLError(EGL_NOT_INITIALIZED);
-    return 0;
+    g_eglLoadError = EGL_NOT_INITIALIZED;
+    return;
   }
 
 #define LOAD_EGL(field, type, symbol) \
@@ -168,8 +218,8 @@ static int shLoadRealEGL(void)
     union { void *object; type function; } proc; \
     proc.object = shLoadSymbol(symbol); \
     if (!proc.object) { \
-      shSetEGLError(EGL_NOT_INITIALIZED); \
-      return 0; \
+      g_eglLoadError = EGL_NOT_INITIALIZED; \
+      return; \
     } \
     g_egl.field = proc.function; \
   } while (0)
@@ -206,7 +256,18 @@ static int shLoadRealEGL(void)
 
 #undef LOAD_EGL
 
-  g_eglLoaded = 1;
+  g_eglLoadSuccess = 1;
+  g_eglLoadError = EGL_SUCCESS;
+}
+
+static int shLoadRealEGL(void)
+{
+  shOnce(&g_eglLoadOnce, shLoadRealEGLOnce);
+  if (!g_eglLoadSuccess) {
+    shSetEGLError(g_eglLoadError != EGL_SUCCESS ?
+                  g_eglLoadError : EGL_NOT_INITIALIZED);
+    return 0;
+  }
   return 1;
 }
 
@@ -238,6 +299,138 @@ static SHEGLContext *shContext(EGLContext context)
     return NULL;
   }
   return c;
+}
+
+static void shDestroyImageSurfaceResources(SHEGLSurface *surface);
+
+static EGLBoolean shThreadOwnsCurrent(SHint currentCount,
+                                      SHThreadId currentThread)
+{
+  return currentCount > 0 &&
+         shThreadIdEqual(currentThread, shThreadCurrentId());
+}
+
+static EGLBoolean shCurrentInOtherThread(SHint currentCount,
+                                         SHThreadId currentThread)
+{
+  return currentCount > 0 &&
+         !shThreadIdEqual(currentThread, shThreadCurrentId());
+}
+
+static EGLBoolean shContextCanBeMadeCurrent(SHEGLContext *context)
+{
+  if (!context)
+    return EGL_TRUE;
+
+  if (context->destroyRequested) {
+    shSetEGLError(EGL_BAD_CONTEXT);
+    return EGL_FALSE;
+  }
+
+  if (shCurrentInOtherThread(context->currentCount,
+                             context->currentThread)) {
+    shSetEGLError(EGL_BAD_ACCESS);
+    return EGL_FALSE;
+  }
+
+  return EGL_TRUE;
+}
+
+static EGLBoolean shSurfaceCanBeMadeCurrent(SHEGLSurface *surface)
+{
+  if (!surface)
+    return EGL_TRUE;
+
+  if (surface->destroyRequested) {
+    shSetEGLError(EGL_BAD_SURFACE);
+    return EGL_FALSE;
+  }
+
+  if (shCurrentInOtherThread(surface->currentCount,
+                             surface->currentThread)) {
+    shSetEGLError(EGL_BAD_ACCESS);
+    return EGL_FALSE;
+  }
+
+  return EGL_TRUE;
+}
+
+static void shMarkContextCurrent(SHEGLContext *context)
+{
+  if (!context)
+    return;
+
+  context->currentCount = 1;
+  context->currentThread = shThreadCurrentId();
+}
+
+static void shUnmarkContextCurrent(SHEGLContext *context)
+{
+  if (!context)
+    return;
+
+  context->currentCount = 0;
+  context->currentThread = shThreadInvalidId();
+}
+
+static void shMarkSurfaceCurrent(SHEGLSurface *surface)
+{
+  if (!surface)
+    return;
+
+  surface->currentCount = 1;
+  surface->currentThread = shThreadCurrentId();
+}
+
+static void shMarkDisplayCurrent(SHEGLDisplay *display)
+{
+  if (display)
+    ++display->currentCount;
+}
+
+static void shUnmarkDisplayCurrent(SHEGLDisplay *display)
+{
+  if (display && display->currentCount > 0)
+    --display->currentCount;
+}
+
+static void shUnmarkSurfaceCurrent(SHEGLSurface *surface)
+{
+  if (!surface)
+    return;
+
+  surface->currentCount = 0;
+  surface->currentThread = shThreadInvalidId();
+}
+
+static void shFinalizeDestroyedContext(SHEGLContext *context)
+{
+  if (!context ||
+      !context->destroyRequested ||
+      context->currentCount > 0)
+    return;
+
+  if (context->vgContext) {
+    shDestroyContext(context->vgContext);
+    context->vgContext = NULL;
+  }
+
+  context->magic = 0;
+  free(context);
+}
+
+static void shFinalizeDestroyedSurface(SHEGLSurface *surface)
+{
+  if (!surface ||
+      !surface->destroyRequested ||
+      surface->currentCount > 0)
+    return;
+
+  if (surface->type == SH_EGL_SURFACE_OPENVG_IMAGE)
+    shDestroyImageSurfaceResources(surface);
+
+  surface->magic = 0;
+  free(surface);
 }
 
 static EGLint shChannelBits(SHuint32 mask, SHuint8 max)
@@ -584,6 +777,7 @@ EGLAPI EGLDisplay EGLAPIENTRY eglGetDisplay(EGLNativeDisplayType display_id)
 
   if (!shLoadRealEGL())
     return EGL_NO_DISPLAY;
+  SH_EGL_LOCK_GUARD();
 
   realDisplay = g_egl.GetDisplay(display_id);
   if (realDisplay == EGL_NO_DISPLAY)
@@ -606,6 +800,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglInitialize(EGLDisplay dpy, EGLint *major, EGLin
   SHEGLDisplay *display;
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   return display ? g_egl.Initialize(display->realDisplay, major, minor) : EGL_FALSE;
 }
@@ -616,11 +811,21 @@ EGLAPI EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy)
   EGLBoolean result;
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
     return EGL_FALSE;
+  if (display->destroyRequested) {
+    shSetEGLError(EGL_BAD_DISPLAY);
+    return EGL_FALSE;
+  }
+  if (display->currentCount > 0) {
+    shSetEGLError(EGL_BAD_ACCESS);
+    return EGL_FALSE;
+  }
   result = g_egl.Terminate(display->realDisplay);
   if (result) {
+    display->destroyRequested = EGL_TRUE;
     display->magic = 0;
     free(display);
   }
@@ -633,6 +838,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigs(EGLDisplay dpy, EGLConfig *configs,
   SHEGLDisplay *display;
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   return display ? g_egl.GetConfigs(display->realDisplay, configs, config_size, num_config) : EGL_FALSE;
 }
@@ -649,6 +855,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *attr
 
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
     return EGL_FALSE;
@@ -691,6 +898,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy, EGLConfig confi
   EGLint renderable;
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
     return EGL_FALSE;
@@ -728,6 +936,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglBindAPI(EGLenum api)
 
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
 
   if (api == EGL_OPENVG_API)
     realApi = EGL_OPENGL_API;
@@ -746,6 +955,7 @@ EGLAPI EGLenum EGLAPIENTRY eglQueryAPI(void)
 
   if (!shLoadRealEGL())
     return EGL_NONE;
+  SH_EGL_LOCK_GUARD();
 
   return g_egl.QueryAPI();
 }
@@ -760,6 +970,7 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreateWindowSurface(EGLDisplay dpy, EGLConfig c
 
   if (!shLoadRealEGL())
     return EGL_NO_SURFACE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
     return EGL_NO_SURFACE;
@@ -792,6 +1003,7 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig 
 
   if (!shLoadRealEGL())
     return EGL_NO_SURFACE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
     return EGL_NO_SURFACE;
@@ -836,6 +1048,7 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
 
   if (!shLoadRealEGL())
     return EGL_NO_SURFACE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
     return EGL_NO_SURFACE;
@@ -857,80 +1070,90 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
     return EGL_NO_SURFACE;
   }
 
-  imageHandle = (VGHandle)(uintptr_t)buffer;
-  image = shGetImage(t_currentContext->vgContext, (VGImage)imageHandle);
-  if (!image) {
-    shSetEGLError(EGL_BAD_PARAMETER);
-    return EGL_NO_SURFACE;
+  {
+    SHContextLock vgLock SH_CLEANUP(shContextLockCleanup);
+    VGContext *vgContext = shAcquireCurrentContext(&vgLock);
+
+    if (!vgContext || vgContext != t_currentContext->vgContext) {
+      shSetEGLError(EGL_BAD_ACCESS);
+      return EGL_NO_SURFACE;
+    }
+
+    imageHandle = (VGHandle)(uintptr_t)buffer;
+    image = shGetImage(vgContext, (VGImage)imageHandle);
+    if (!image) {
+      shSetEGLError(EGL_BAD_PARAMETER);
+      return EGL_NO_SURFACE;
+    }
+
+    if (shImageIsEGLPbufferBound(image) ||
+        shImageIsRenderTarget(image)) {
+      shSetEGLError(EGL_BAD_ACCESS);
+      return EGL_NO_SURFACE;
+    }
+
+    if (!shImageIsRenderTargetEligible(image)) {
+      shSetEGLError(EGL_BAD_MATCH);
+      return EGL_NO_SURFACE;
+    }
+
+    if (!shParseClientPbufferAttribs(attrib_list,
+                                     &textureFormat,
+                                     &textureTarget,
+                                     &mipmapTexture))
+      return EGL_NO_SURFACE;
+
+    if (!shConfigMatchesImage(display, config, image))
+      return EGL_NO_SURFACE;
+
+    hiddenAttribs[0] = EGL_WIDTH;
+    hiddenAttribs[1] = image->width;
+    hiddenAttribs[2] = EGL_HEIGHT;
+    hiddenAttribs[3] = image->height;
+    hiddenAttribs[4] = EGL_NONE;
+
+    realSurface = g_egl.CreatePbufferSurface(display->realDisplay,
+                                             config,
+                                             hiddenAttribs);
+    if (realSurface == EGL_NO_SURFACE)
+      return EGL_NO_SURFACE;
+
+    if (!shCreateImageFramebuffer(image, &framebuffer, &stencil)) {
+      g_egl.DestroySurface(display->realDisplay, realSurface);
+      shSetEGLError(EGL_BAD_ALLOC);
+      return EGL_NO_SURFACE;
+    }
+
+    surface = (SHEGLSurface*)calloc(1, sizeof(SHEGLSurface));
+    if (!surface) {
+      if (framebuffer != 0)
+        glDeleteFramebuffers(1, &framebuffer);
+      if (stencil != 0)
+        glDeleteRenderbuffers(1, &stencil);
+      g_egl.DestroySurface(display->realDisplay, realSurface);
+      shSetEGLError(EGL_BAD_ALLOC);
+      return EGL_NO_SURFACE;
+    }
+
+    shImageAddEGLPbufferRef(image);
+
+    surface->magic = SH_EGL_SURFACE_MAGIC;
+    surface->display = display;
+    surface->realSurface = realSurface;
+    surface->type = SH_EGL_SURFACE_OPENVG_IMAGE;
+    surface->config = config;
+    surface->vgImage = image;
+    surface->vgContext = t_currentContext->vgContext;
+    surface->framebuffer = framebuffer;
+    surface->stencil = stencil;
+    surface->width = image->width;
+    surface->height = image->height;
+    surface->textureFormat = textureFormat;
+    surface->textureTarget = textureTarget;
+    surface->mipmapTexture = mipmapTexture;
+    surface->vgColorspace = shImageVGColorspace(image);
+    surface->vgAlphaFormat = shImageVGAlphaFormat(image);
   }
-
-  if (shImageIsEGLPbufferBound(image) ||
-      shImageIsRenderTarget(image)) {
-    shSetEGLError(EGL_BAD_ACCESS);
-    return EGL_NO_SURFACE;
-  }
-
-  if (!shImageIsRenderTargetEligible(image)) {
-    shSetEGLError(EGL_BAD_MATCH);
-    return EGL_NO_SURFACE;
-  }
-
-  if (!shParseClientPbufferAttribs(attrib_list,
-                                   &textureFormat,
-                                   &textureTarget,
-                                   &mipmapTexture))
-    return EGL_NO_SURFACE;
-
-  if (!shConfigMatchesImage(display, config, image))
-    return EGL_NO_SURFACE;
-
-  hiddenAttribs[0] = EGL_WIDTH;
-  hiddenAttribs[1] = image->width;
-  hiddenAttribs[2] = EGL_HEIGHT;
-  hiddenAttribs[3] = image->height;
-  hiddenAttribs[4] = EGL_NONE;
-
-  realSurface = g_egl.CreatePbufferSurface(display->realDisplay,
-                                           config,
-                                           hiddenAttribs);
-  if (realSurface == EGL_NO_SURFACE)
-    return EGL_NO_SURFACE;
-
-  if (!shCreateImageFramebuffer(image, &framebuffer, &stencil)) {
-    g_egl.DestroySurface(display->realDisplay, realSurface);
-    shSetEGLError(EGL_BAD_ALLOC);
-    return EGL_NO_SURFACE;
-  }
-
-  surface = (SHEGLSurface*)calloc(1, sizeof(SHEGLSurface));
-  if (!surface) {
-    if (framebuffer != 0)
-      glDeleteFramebuffers(1, &framebuffer);
-    if (stencil != 0)
-      glDeleteRenderbuffers(1, &stencil);
-    g_egl.DestroySurface(display->realDisplay, realSurface);
-    shSetEGLError(EGL_BAD_ALLOC);
-    return EGL_NO_SURFACE;
-  }
-
-  shImageAddEGLPbufferRef(image);
-
-  surface->magic = SH_EGL_SURFACE_MAGIC;
-  surface->display = display;
-  surface->realSurface = realSurface;
-  surface->type = SH_EGL_SURFACE_OPENVG_IMAGE;
-  surface->config = config;
-  surface->vgImage = image;
-  surface->vgContext = t_currentContext->vgContext;
-  surface->framebuffer = framebuffer;
-  surface->stencil = stencil;
-  surface->width = image->width;
-  surface->height = image->height;
-  surface->textureFormat = textureFormat;
-  surface->textureTarget = textureTarget;
-  surface->mipmapTexture = mipmapTexture;
-  surface->vgColorspace = shImageVGColorspace(image);
-  surface->vgAlphaFormat = shImageVGAlphaFormat(image);
 
   return (EGLSurface)surface;
 }
@@ -943,25 +1166,40 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
 
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   s = shSurface(surface);
   if (!display || !s)
     return EGL_FALSE;
 
-  if (t_currentDraw == s && !shNormalizeImageSurface(s))
+  if (s->display != display) {
+    shSetEGLError(EGL_BAD_MATCH);
     return EGL_FALSE;
+  }
+
+  if (s->destroyRequested) {
+    shSetEGLError(EGL_BAD_SURFACE);
+    return EGL_FALSE;
+  }
+
+  if (s->currentCount > 0) {
+    if (!shThreadOwnsCurrent(s->currentCount,
+                             s->currentThread)) {
+      shSetEGLError(EGL_BAD_ACCESS);
+      return EGL_FALSE;
+    }
+
+    result = g_egl.DestroySurface(display->realDisplay,
+                                  s->realSurface);
+    if (result) {
+      s->destroyRequested = EGL_TRUE;
+      s->realDestroyed = EGL_TRUE;
+    }
+    return result;
+  }
 
   result = g_egl.DestroySurface(display->realDisplay, s->realSurface);
   if (result) {
-    if (t_currentDraw == s) {
-      if (s->type == SH_EGL_SURFACE_OPENVG_IMAGE)
-        shImageEndRenderTarget(s->vgImage);
-      t_currentDraw = NULL;
-      if (t_currentContext && t_currentContext->vgContext)
-        t_currentContext->vgContext->renderTargetImage = NULL;
-    }
-    if (t_currentRead == s)
-      t_currentRead = NULL;
     if (s->type == SH_EGL_SURFACE_OPENVG_IMAGE)
       shDestroyImageSurfaceResources(s);
     s->magic = 0;
@@ -978,6 +1216,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglQuerySurface(EGLDisplay dpy, EGLSurface surface
   SHEGLSurface *s;
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   s = shSurface(surface);
   if (!display || !s)
@@ -1032,6 +1271,7 @@ EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
 
   if (!shLoadRealEGL())
     return EGL_NO_CONTEXT;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
     return EGL_NO_CONTEXT;
@@ -1040,6 +1280,14 @@ EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
     share = shContext(share_context);
     if (!share)
       return EGL_NO_CONTEXT;
+    if (share->destroyRequested) {
+      shSetEGLError(EGL_BAD_CONTEXT);
+      return EGL_NO_CONTEXT;
+    }
+    if (share->display != display) {
+      shSetEGLError(EGL_BAD_MATCH);
+      return EGL_NO_CONTEXT;
+    }
     if (share->api != api) {
       shSetEGLError(EGL_BAD_MATCH);
       return EGL_NO_CONTEXT;
@@ -1088,33 +1336,44 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
 
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   context = shContext(ctx);
   if (!display || !context)
     return EGL_FALSE;
 
-  if (t_currentContext == context &&
-      t_currentDraw &&
-      t_currentDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE) {
-    if (!shNormalizeImageSurface(t_currentDraw))
+  if (context->display != display) {
+    shSetEGLError(EGL_BAD_MATCH);
+    return EGL_FALSE;
+  }
+
+  if (context->destroyRequested) {
+    shSetEGLError(EGL_BAD_CONTEXT);
+    return EGL_FALSE;
+  }
+
+  if (context->currentCount > 0) {
+    if (!shThreadOwnsCurrent(context->currentCount,
+                             context->currentThread)) {
+      shSetEGLError(EGL_BAD_ACCESS);
       return EGL_FALSE;
-    shImageEndRenderTarget(t_currentDraw->vgImage);
-  }
+    }
 
-  if (context->vgContext) {
-    shDestroyContext(context->vgContext);
-    context->vgContext = NULL;
-  }
-
-  if (t_currentContext == context) {
-    shClearCurrentContext();
-    t_currentDraw = NULL;
-    t_currentRead = NULL;
-    t_currentContext = NULL;
+    result = g_egl.DestroyContext(display->realDisplay,
+                                  context->realContext);
+    if (result) {
+      context->destroyRequested = EGL_TRUE;
+      context->realDestroyed = EGL_TRUE;
+    }
+    return result;
   }
 
   result = g_egl.DestroyContext(display->realDisplay, context->realContext);
   if (result) {
+    if (context->vgContext) {
+      shDestroyContext(context->vgContext);
+      context->vgContext = NULL;
+    }
     context->magic = 0;
     free(context);
   }
@@ -1130,6 +1389,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
   SHEGLSurface *readSurface = NULL;
   SHEGLContext *context = NULL;
   SHEGLDisplay *oldDisplay = t_currentDisplay;
+  SHEGLDisplay *newDisplay = NULL;
   SHEGLSurface *oldDraw = t_currentDraw;
   SHEGLSurface *oldRead = t_currentRead;
   SHEGLContext *oldContext = t_currentContext;
@@ -1147,6 +1407,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
 
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
 
   display = shDisplay(dpy);
   if (!display)
@@ -1173,6 +1434,11 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
     realContext = context->realContext;
   }
 
+  if (!shContextCanBeMadeCurrent(context) ||
+      !shSurfaceCanBeMadeCurrent(drawSurface) ||
+      !shSurfaceCanBeMadeCurrent(readSurface))
+    return EGL_FALSE;
+
   if (oldContext &&
       oldContext->api == EGL_OPENVG_API &&
       oldContext->vgContext) {
@@ -1183,6 +1449,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
 
   usesOpenVGContext = (context && context->api == EGL_OPENVG_API) ?
     EGL_TRUE : EGL_FALSE;
+  newDisplay = context ? display : NULL;
 
   usesImageSurface =
     (drawSurface && drawSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE) ||
@@ -1284,10 +1551,43 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
       drawSurface->type == SH_EGL_SURFACE_OPENVG_IMAGE)
     shImageBeginRenderTarget(drawSurface->vgImage);
 
-  t_currentDisplay = display;
+  if (oldContext != context)
+    shUnmarkContextCurrent(oldContext);
+  if (oldDisplay != newDisplay)
+    shUnmarkDisplayCurrent(oldDisplay);
+  if (oldDraw &&
+      oldDraw != drawSurface &&
+      oldDraw != readSurface)
+    shUnmarkSurfaceCurrent(oldDraw);
+  if (oldRead &&
+      oldRead != oldDraw &&
+      oldRead != drawSurface &&
+      oldRead != readSurface)
+    shUnmarkSurfaceCurrent(oldRead);
+
+  shMarkContextCurrent(context);
+  if (newDisplay && oldDisplay != newDisplay)
+    shMarkDisplayCurrent(newDisplay);
+  shMarkSurfaceCurrent(drawSurface);
+  if (readSurface != drawSurface)
+    shMarkSurfaceCurrent(readSurface);
+
+  t_currentDisplay = newDisplay;
   t_currentDraw = drawSurface;
   t_currentRead = readSurface;
   t_currentContext = context;
+
+  if (oldContext != context)
+    shFinalizeDestroyedContext(oldContext);
+  if (oldDraw &&
+      oldDraw != drawSurface &&
+      oldDraw != readSurface)
+    shFinalizeDestroyedSurface(oldDraw);
+  if (oldRead &&
+      oldRead != oldDraw &&
+      oldRead != drawSurface &&
+      oldRead != readSurface)
+    shFinalizeDestroyedSurface(oldRead);
 
   return EGL_TRUE;
 }
@@ -1318,6 +1618,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
   SHEGLSurface *s;
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   s = shSurface(surface);
   return (display && s) ? g_egl.SwapBuffers(display->realDisplay, s->realSurface) : EGL_FALSE;
@@ -1328,6 +1629,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
   SHEGLDisplay *display;
   if (!shLoadRealEGL())
     return EGL_FALSE;
+  SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display || !g_egl.SwapInterval)
     return EGL_FALSE;
@@ -1345,6 +1647,7 @@ EGLAPI EGLint EGLAPIENTRY eglGetError(void)
   if (!shLoadRealEGL())
     return t_error;
 
+  SH_EGL_LOCK_GUARD();
   return g_egl.GetError();
 }
 
@@ -1355,6 +1658,7 @@ EGLAPI const char *EGLAPIENTRY eglQueryString(EGLDisplay dpy, EGLint name)
 
   if (!shLoadRealEGL())
     return NULL;
+  SH_EGL_LOCK_GUARD();
 
   if (dpy != EGL_NO_DISPLAY) {
     display = shDisplay(dpy);
@@ -1377,6 +1681,21 @@ EGLAPI const char *EGLAPIENTRY eglQueryString(EGLDisplay dpy, EGLint name)
 
 EGLAPI EGLBoolean EGLAPIENTRY eglReleaseThread(void)
 {
+  SHEGLSurface *oldDraw;
+  SHEGLSurface *oldRead;
+  SHEGLContext *oldContext;
+  SHEGLDisplay *oldDisplay;
+
+  if (!shLoadRealEGL())
+    return EGL_FALSE;
+
+  SH_EGL_LOCK_GUARD();
+
+  oldDraw = t_currentDraw;
+  oldRead = t_currentRead;
+  oldContext = t_currentContext;
+  oldDisplay = t_currentDisplay;
+
   if (t_currentDraw &&
       t_currentDraw->type == SH_EGL_SURFACE_OPENVG_IMAGE)
     shImageEndRenderTarget(t_currentDraw->vgImage);
@@ -1386,8 +1705,16 @@ EGLAPI EGLBoolean EGLAPIENTRY eglReleaseThread(void)
   t_currentRead = NULL;
   t_currentContext = NULL;
 
-  if (!shLoadRealEGL())
-    return EGL_FALSE;
+  shUnmarkContextCurrent(oldContext);
+  shUnmarkDisplayCurrent(oldDisplay);
+  shUnmarkSurfaceCurrent(oldDraw);
+  if (oldRead != oldDraw)
+    shUnmarkSurfaceCurrent(oldRead);
+
+  shFinalizeDestroyedContext(oldContext);
+  shFinalizeDestroyedSurface(oldDraw);
+  if (oldRead != oldDraw)
+    shFinalizeDestroyedSurface(oldRead);
 
   return g_egl.ReleaseThread();
 }
@@ -1433,5 +1760,6 @@ eglGetProcAddress(const char *procname)
   if (!shLoadRealEGL())
     return NULL;
 
+  SH_EGL_LOCK_GUARD();
   return g_egl.GetProcAddress(procname);
 }

@@ -137,6 +137,8 @@ esac
 OPENGL_LIBS="$GL_LIB"
 EGL_CFLAGS=""
 DLOPEN_LIBS=""
+THREAD_CFLAGS=""
+THREAD_LIBS=""
 NATIVE_WINDOW_CFLAGS=""
 NATIVE_WINDOW_LIBS=""
 PNG_LIBS=""
@@ -147,6 +149,8 @@ AC_SUBST([CONFIG_LDADD])
 AC_SUBST([OPENGL_LIBS])
 AC_SUBST([EGL_CFLAGS])
 AC_SUBST([DLOPEN_LIBS])
+AC_SUBST([THREAD_CFLAGS])
+AC_SUBST([THREAD_LIBS])
 AC_SUBST([NATIVE_WINDOW_CFLAGS])
 AC_SUBST([NATIVE_WINDOW_LIBS])
 AC_SUBST([PNG_LIBS])
@@ -199,6 +203,21 @@ AC_CHECK_LIB(
 	[dl], dlopen,
 	[DLOPEN_LIBS="-ldl"],
 	[DLOPEN_LIBS=""])
+
+case "${host}" in
+*mingw* | *cygwin*)
+	;;
+*)
+	AC_CHECK_HEADERS(
+		[pthread.h],
+		[has_pthread_h="yes"], [has_pthread_h="no"])
+	if test "x$has_pthread_h" = "xno"; then
+		AC_MSG_FAILURE([pthread.h header missing! ShaderVG thread safety requires pthreads on this platform.])
+	fi
+	THREAD_CFLAGS="-pthread"
+	THREAD_LIBS="-pthread"
+	;;
+esac
 
 LDFLAGS=""
 

@@ -49,6 +49,24 @@ static SHHandleEntry *g_handleEntries = NULL;
 static VGuint g_handleCapacity = 0;
 static VGuint g_handleSlotCount = 1;
 static VGuint g_freeHandleSlot = 0;
+static SHOnce g_handleMutexOnce = SH_ONCE_INIT;
+static SHMutex g_handleMutex;
+
+static void shInitHandleMutex(void)
+{
+  shMutexInit(&g_handleMutex);
+}
+
+static void shLockHandleRegistry(void)
+{
+  shOnce(&g_handleMutexOnce, shInitHandleMutex);
+  shMutexLock(&g_handleMutex);
+}
+
+static void shUnlockHandleRegistry(void)
+{
+  shMutexUnlock(&g_handleMutex);
+}
 
 static VGHandle *shResourceHandleField(SHResourceType type, void *object)
 {
@@ -150,19 +168,25 @@ static void shReleaseHandle(SHResourceGroup *resources,
   SHHandleEntry *entry;
   VGHandle *objectHandle;
 
+  shLockHandleRegistry();
+
   if (handle == VG_INVALID_HANDLE ||
       slot == 0 ||
       slot >= g_handleSlotCount ||
-      slot >= g_handleCapacity)
+      slot >= g_handleCapacity) {
+    shUnlockHandleRegistry();
     return;
+  }
 
   entry = &g_handleEntries[slot];
   if (!entry->object ||
       entry->resources != resources ||
       entry->type != type ||
       entry->object != object ||
-      entry->generation != shHandleGeneration(handle))
+      entry->generation != shHandleGeneration(handle)) {
+    shUnlockHandleRegistry();
     return;
+  }
 
   objectHandle = shResourceHandleField(type, object);
   if (objectHandle && *objectHandle == handle)
@@ -176,10 +200,13 @@ static void shReleaseHandle(SHResourceGroup *resources,
     entry->generation = 1;
   entry->nextFree = g_freeHandleSlot;
   g_freeHandleSlot = slot;
+
+  shUnlockHandleRegistry();
 }
 
 static void SHResourceGroup_ctor(SHResourceGroup *resources)
 {
+  shRecursiveMutexInit(&resources->mutex);
   resources->refCount = 1;
   SH_INITOBJ(SHPathArray, resources->paths);
   SH_INITOBJ(SHPaintArray, resources->paints);
@@ -227,21 +254,32 @@ static void SHResourceGroup_dtor(SHResourceGroup *resources)
   SH_DEINITOBJ(SHPathArray, resources->paths);
   SH_DEINITOBJ(SHPaintArray, resources->paints);
   SH_DEINITOBJ(SHImageArray, resources->images);
+  shRecursiveMutexDestroy(&resources->mutex);
 }
 
 static void shResourceGroupAddRef(SHResourceGroup *resources)
 {
-  if (resources)
-    ++resources->refCount;
+  if (!resources)
+    return;
+
+  shLockResourceGroup(resources);
+  ++resources->refCount;
+  shUnlockResourceGroup(resources);
 }
 
 static void shResourceGroupRelease(SHResourceGroup *resources)
 {
+  VGboolean destroy;
+
   if (!resources)
     return;
 
+  shLockResourceGroup(resources);
   --resources->refCount;
-  if (resources->refCount <= 0)
+  destroy = (resources->refCount <= 0) ? VG_TRUE : VG_FALSE;
+  shUnlockResourceGroup(resources);
+
+  if (destroy)
     SH_DELETEOBJ(SHResourceGroup, resources);
 }
 
@@ -258,6 +296,74 @@ static void shResourceGroupRelease(SHResourceGroup *resources)
 
 static SH_TLS VGContext *g_current_context = NULL;
 static SH_TLS VGboolean g_can_delete_resource_gl = VG_TRUE;
+
+void shLockContext(VGContext *context)
+{
+  if (context)
+    shRecursiveMutexLock(&context->mutex);
+}
+
+void shUnlockContext(VGContext *context)
+{
+  if (context)
+    shRecursiveMutexUnlock(&context->mutex);
+}
+
+void shLockResourceGroup(SHResourceGroup *resources)
+{
+  if (resources)
+    shRecursiveMutexLock(&resources->mutex);
+}
+
+void shUnlockResourceGroup(SHResourceGroup *resources)
+{
+  if (resources)
+    shRecursiveMutexUnlock(&resources->mutex);
+}
+
+VGContext* shAcquireCurrentContext(SHContextLock *lock)
+{
+  VGContext *context;
+
+  lock->context = NULL;
+  lock->resources = NULL;
+  lock->contextLocked = VG_FALSE;
+  lock->resourcesLocked = VG_FALSE;
+
+  context = shGetContext();
+  if (!context)
+    return NULL;
+
+  shLockContext(context);
+  lock->context = context;
+  lock->contextLocked = VG_TRUE;
+
+  if (context->resources) {
+    shLockResourceGroup(context->resources);
+    lock->resources = context->resources;
+    lock->resourcesLocked = VG_TRUE;
+  }
+
+  return context;
+}
+
+void shContextLockCleanup(SHContextLock *lock)
+{
+  if (!lock)
+    return;
+
+  if (lock->resourcesLocked) {
+    shUnlockResourceGroup(lock->resources);
+    lock->resourcesLocked = VG_FALSE;
+    lock->resources = NULL;
+  }
+
+  if (lock->contextLocked) {
+    shUnlockContext(lock->context);
+    lock->contextLocked = VG_FALSE;
+    lock->context = NULL;
+  }
+}
 
 VGboolean shCanDeleteResourceGL(void)
 {
@@ -760,6 +866,7 @@ VGContext* shCreateContext(void)
 VGContext* shCreateContextShared(VGContext *shareContext)
 {
   VGContext *context = shCreateContext();
+  SHResourceGroup *sharedResources;
 
   if (!context)
     return NULL;
@@ -767,14 +874,18 @@ VGContext* shCreateContextShared(VGContext *shareContext)
   if (!shareContext)
     return context;
 
-  if (!shareContext->resources) {
+  shLockContext(shareContext);
+  sharedResources = shareContext->resources;
+  if (!sharedResources) {
+    shUnlockContext(shareContext);
     SH_DELETEOBJ(VGContext, context);
     return NULL;
   }
+  shResourceGroupAddRef(sharedResources);
+  shUnlockContext(shareContext);
 
   shResourceGroupRelease(context->resources);
-  context->resources = shareContext->resources;
-  shResourceGroupAddRef(context->resources);
+  context->resources = sharedResources;
 
   return context;
 }
@@ -847,6 +958,8 @@ void shMarkRenderTargetDirty(VGContext *context)
 
 void VGContext_ctor(VGContext *c)
 {
+  shRecursiveMutexInit(&c->mutex);
+
   /* Surface info */
   c->surfaceWidth = 0;
   c->surfaceHeight = 0;
@@ -985,6 +1098,7 @@ void VGContext_dtor(VGContext *c)
   shResourceGroupRelease(c->resources);
   c->resources = NULL;
   SH_DEINITOBJ(SHPaint, c->defaultPaint);
+  shRecursiveMutexDestroy(&c->mutex);
 }
 
 /*--------------------------------------------------
@@ -1023,11 +1137,18 @@ SHint shIsValidMaskLayer(VGContext *c, VGHandle h)
 
 SHResourceType shGetResourceType(VGContext *c, VGHandle h)
 {
-  SHHandleEntry *entry = c && c->resources ?
-    shLookupHandleEntry(c->resources, h, SH_RESOURCE_INVALID) :
-    NULL;
+  SHResourceType type;
+  SHHandleEntry *entry;
 
-  return entry ? entry->type : SH_RESOURCE_INVALID;
+  if (!c || !c->resources)
+    return SH_RESOURCE_INVALID;
+
+  shLockHandleRegistry();
+  entry = shLookupHandleEntry(c->resources, h, SH_RESOURCE_INVALID);
+  type = entry ? entry->type : SH_RESOURCE_INVALID;
+  shUnlockHandleRegistry();
+
+  return type;
 }
 
 VGHandle shRegisterResource(VGContext *c, SHResourceType type, void *object)
@@ -1040,15 +1161,21 @@ VGHandle shRegisterResource(VGContext *c, SHResourceType type, void *object)
   if (!c || !c->resources || !object)
     return VG_INVALID_HANDLE;
 
+  shLockHandleRegistry();
+
   if (g_freeHandleSlot != 0) {
     slot = g_freeHandleSlot;
     g_freeHandleSlot = g_handleEntries[slot].nextFree;
   } else {
     slot = g_handleSlotCount;
-    if (slot == 0 || slot > SH_HANDLE_SLOT_MASK)
+    if (slot == 0 || slot > SH_HANDLE_SLOT_MASK) {
+      shUnlockHandleRegistry();
       return VG_INVALID_HANDLE;
-    if (!shEnsureHandleCapacity(slot))
+    }
+    if (!shEnsureHandleCapacity(slot)) {
+      shUnlockHandleRegistry();
       return VG_INVALID_HANDLE;
+    }
     g_handleSlotCount = slot + 1;
   }
 
@@ -1066,6 +1193,8 @@ VGHandle shRegisterResource(VGContext *c, SHResourceType type, void *object)
   if (objectHandle)
     *objectHandle = handle;
 
+  shUnlockHandleRegistry();
+
   return handle;
 }
 
@@ -1080,11 +1209,18 @@ void shUnregisterResource(VGContext *c, VGHandle h,
 
 void* shGetResource(VGContext *c, VGHandle h, SHResourceType type)
 {
-  SHHandleEntry *entry = c && c->resources ?
-    shLookupHandleEntry(c->resources, h, type) :
-    NULL;
+  void *object;
+  SHHandleEntry *entry;
 
-  return entry ? entry->object : NULL;
+  if (!c || !c->resources)
+    return NULL;
+
+  shLockHandleRegistry();
+  entry = shLookupHandleEntry(c->resources, h, type);
+  object = entry ? entry->object : NULL;
+  shUnlockHandleRegistry();
+
+  return object;
 }
 
 SHPath* shGetPath(VGContext *c, VGPath path)

@@ -45,6 +45,7 @@ examples/test_warp
 examples/test_pixels
 examples/test_filters
 examples/test_parametric_filter
+examples/test_thread_safety
 *.libs
 *.la
 *.lo
