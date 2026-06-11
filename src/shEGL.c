@@ -14,6 +14,7 @@
 #include "shContext.h"
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -824,6 +825,7 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
   SHEGLDisplay *display;
   SHEGLSurface *surface = NULL;
   SHImage *image;
+  VGHandle imageHandle;
   EGLSurface realSurface;
   EGLint textureFormat;
   EGLint textureTarget;
@@ -855,12 +857,13 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
     return EGL_NO_SURFACE;
   }
 
-  if (!shIsValidImage(t_currentContext->vgContext, (VGHandle)buffer)) {
+  imageHandle = (VGHandle)(uintptr_t)buffer;
+  image = shGetImage(t_currentContext->vgContext, (VGImage)imageHandle);
+  if (!image) {
     shSetEGLError(EGL_BAD_PARAMETER);
     return EGL_NO_SURFACE;
   }
 
-  image = (SHImage*)buffer;
   if (shImageIsEGLPbufferBound(image) ||
       shImageIsRenderTarget(image)) {
     shSetEGLError(EGL_BAD_ACCESS);

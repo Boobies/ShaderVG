@@ -32,6 +32,7 @@
 
 typedef struct
 {
+  VGHandle handle;
   GLuint texture;
   GLuint framebuffer;
   SHint width;
@@ -298,6 +299,16 @@ SHint shIsValidImage(VGContext *c, VGHandle h);
 SHint shIsValidFont(VGContext *c, VGHandle h);
 SHint shIsValidMaskLayer(VGContext *c, VGHandle h);
 SHResourceType shGetResourceType(VGContext *c, VGHandle h);
+VGHandle shRegisterResource(VGContext *c, SHResourceType type, void *object);
+void shUnregisterResource(VGContext *c, VGHandle h,
+                          SHResourceType type, void *object);
+void* shGetResource(VGContext *c, VGHandle h, SHResourceType type);
+SHPath* shGetPath(VGContext *c, VGPath path);
+SHPaint* shGetPaint(VGContext *c, VGPaint paint);
+SHImage* shGetImage(VGContext *c, VGImage image);
+SHFont* shGetFont(VGContext *c, VGFont font);
+SHMaskLayer* shGetMaskLayer(VGContext *c, VGMaskLayer maskLayer);
+VGboolean shIsLiveImage(VGContext *c, const SHImage *image);
 VGContext* shGetContext();
 VGContext* shCreateContext(void);
 VGContext* shCreateContextShared(VGContext *shareContext);

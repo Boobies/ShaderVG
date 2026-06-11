@@ -50,6 +50,7 @@ typedef struct
 
 typedef struct
 {
+  VGHandle handle;
   SHint glyphCapacityHint;
   SHGlyphArray glyphs;
 } SHFont;

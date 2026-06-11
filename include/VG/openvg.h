@@ -46,10 +46,8 @@ typedef enum {
 #define VG_MAXSHORT ((VGshort)((~((unsigned)0)) >> 1))
 #define VG_MAXINT ((VGint)((~((unsigned)0)) >> 1))
 
-/* Define handle to be of same length as any pointer */
-
-typedef void * VGHandle;
-#define VG_INVALID_HANDLE ((VGHandle)NULL)
+typedef VGuint VGHandle;
+#define VG_INVALID_HANDLE ((VGHandle)0)
 
 /* Enumerations */
 

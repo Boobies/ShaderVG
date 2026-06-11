@@ -37,8 +37,9 @@
 #  include <malloc.h>
 #endif
 
-/* Disable VGHandle-pointer conversion warnings since we
-   do deal with it by defining VGHandle properly */
+/* Keep legacy MSVC pointer conversion warnings disabled for internal helper
+   casts in older build configurations. Public VGHandle values are 32-bit
+   OpenVG handles, not object pointers. */
 
 #if defined(_MSC_VER)
 #  pragma warning(disable:4311)

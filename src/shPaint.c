@@ -140,6 +140,7 @@ void SHPaint_ctor(SHPaint *p)
 {
   int i;
   
+  p->handle = VG_INVALID_HANDLE;
   p->type = VG_PAINT_TYPE_COLOR;
   CSET(p->color, 0,0,0,1);
   SH_INITOBJ(SHStopArray, p->instops);
@@ -149,7 +150,7 @@ void SHPaint_ctor(SHPaint *p)
   p->tilingMode = VG_TILE_FILL;
   for (i=0; i<4; ++i) p->linearGradient[i] = 0.0f;
   for (i=0; i<5; ++i) p->radialGradient[i] = 0.0f;
-  p->pattern = VG_INVALID_HANDLE;
+  p->pattern = NULL;
   p->texture = 0;
 }
 
@@ -158,10 +159,10 @@ void SHPaint_dtor(SHPaint *p)
   SH_DEINITOBJ(SHStopArray, p->instops);
   SH_DEINITOBJ(SHStopArray, p->stops);
   
-  if (p->pattern != VG_INVALID_HANDLE) {
-    shImageReleasePaintPatternRef((SHImage*)p->pattern);
-    shImageRelease((SHImage*)p->pattern);
-    p->pattern = VG_INVALID_HANDLE;
+  if (p->pattern) {
+    shImageReleasePaintPatternRef(p->pattern);
+    shImageRelease(p->pattern);
+    p->pattern = NULL;
   }
 
   if (shCanDeleteResourceGL() &&
@@ -185,26 +186,36 @@ VG_API_CALL VGPaint vgCreatePaint(void)
     SH_DELETEOBJ(SHPaint, p);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
+
+  if (shRegisterResource(context, SH_RESOURCE_PAINT, p) == VG_INVALID_HANDLE) {
+    shPaintArrayRemoveAt(&context->resources->paints,
+                         context->resources->paints.size - 1);
+    SH_DELETEOBJ(SHPaint, p);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
   
-  VG_RETURN((VGPaint)p);
+  VG_RETURN((VGPaint)p->handle);
 }
 
 VG_API_CALL void vgDestroyPaint(VGPaint paint)
 {
   SHint index;
+  SHPaint *p;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if handle valid */
-  index = shPaintArrayFind(&context->resources->paints, (SHPaint*)paint);
+  p = shGetPaint(context, paint);
+  index = p ? shPaintArrayFind(&context->resources->paints, p) : -1;
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  if (context->fillPaint == (SHPaint*)paint)
+  if (context->fillPaint == p)
     context->fillPaint = NULL;
-  if (context->strokePaint == (SHPaint*)paint)
+  if (context->strokePaint == p)
     context->strokePaint = NULL;
   
   /* Delete object and remove resource */
-  SH_DELETEOBJ(SHPaint, (SHPaint*)paint);
+  shUnregisterResource(context, paint, SH_RESOURCE_PAINT, p);
+  SH_DELETEOBJ(SHPaint, p);
   shPaintArrayRemoveAt(&context->resources->paints, index);
   
   VG_RETURN(VG_NO_RETVAL);
@@ -212,12 +223,14 @@ VG_API_CALL void vgDestroyPaint(VGPaint paint)
 
 VG_API_CALL void vgSetPaint(VGPaint paint, VGbitfield paintModes)
 {
+  SHPaint *p = NULL;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if handle valid */
-  VG_RETURN_ERR_IF(!shIsValidPaint(context, paint) &&
-                   paint != VG_INVALID_HANDLE,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (paint != VG_INVALID_HANDLE) {
+    p = shGetPaint(context, paint);
+    VG_RETURN_ERR_IF(!p, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  }
   
   /* Check for invalid mode */
   VG_RETURN_ERR_IF(paintModes == 0 ||
@@ -226,9 +239,9 @@ VG_API_CALL void vgSetPaint(VGPaint paint, VGbitfield paintModes)
   
   /* Set stroke / fill */
   if (paintModes & VG_STROKE_PATH)
-    context->strokePaint = (SHPaint*)paint;
+    context->strokePaint = p;
   if (paintModes & VG_FILL_PATH)
-    context->fillPaint = (SHPaint*)paint;
+    context->fillPaint = p;
   
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -242,8 +255,12 @@ VG_API_CALL VGPaint vgGetPaint(VGPaintMode paintMode)
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
 
   VG_RETURN((VGPaint)(paintMode == VG_STROKE_PATH ?
-                      context->strokePaint :
-                      context->fillPaint));
+                      (context->strokePaint ?
+                       context->strokePaint->handle :
+                       VG_INVALID_HANDLE) :
+                      (context->fillPaint ?
+                       context->fillPaint->handle :
+                       VG_INVALID_HANDLE)));
 }
 
 static SHfloat shColorByteToFloat(SHuint32 value)
@@ -265,10 +282,10 @@ VG_API_CALL void vgSetColor(VGPaint paint, VGuint rgba)
   SHPaint *p;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidPaint(context, paint),
+  p = shGetPaint(context, paint);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  p = (SHPaint*)paint;
   p->color.r = shColorByteToFloat(rgba >> 24);
   p->color.g = shColorByteToFloat(rgba >> 16);
   p->color.b = shColorByteToFloat(rgba >> 8);
@@ -283,10 +300,10 @@ VG_API_CALL VGuint vgGetColor(VGPaint paint)
   VGuint rgba;
   VG_GETCONTEXT(0);
 
-  VG_RETURN_ERR_IF(!shIsValidPaint(context, paint),
+  p = shGetPaint(context, paint);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, 0);
 
-  p = (SHPaint*)paint;
   rgba = shColorFloatToByte(p->color.r) << 24;
   rgba |= shColorFloatToByte(p->color.g) << 16;
   rgba |= shColorFloatToByte(p->color.b) << 8;
@@ -302,27 +319,27 @@ VG_API_CALL void vgPaintPattern(VGPaint paint, VGImage pattern)
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if handle valid */
-  VG_RETURN_ERR_IF(!shIsValidPaint(context, paint),
+  p = shGetPaint(context, paint);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Check if pattern image valid */
-  VG_RETURN_ERR_IF(!shIsValidImage(context, pattern),
+  image = shGetImage(context, pattern);
+  VG_RETURN_ERR_IF(!image,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  image = (SHImage*)pattern;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(image),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
   /* Set pattern image */
-  p = (SHPaint*)paint;
-  if (p->pattern != VG_INVALID_HANDLE) {
-    shImageReleasePaintPatternRef((SHImage*)p->pattern);
-    shImageRelease((SHImage*)p->pattern);
+  if (p->pattern) {
+    shImageReleasePaintPatternRef(p->pattern);
+    shImageRelease(p->pattern);
   }
 
   shImageAddRef(image);
   shImageAddPaintPatternRef(image);
-  p->pattern = pattern;
+  p->pattern = image;
   
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -591,7 +608,7 @@ void shSetPatternTexGLState(SHPaint *p, VGContext *c)
 {
   (void)c;
 
-  glBindTexture(GL_TEXTURE_2D, shImageTexture((SHImage*)p->pattern));
+  glBindTexture(GL_TEXTURE_2D, shImageTexture(p->pattern));
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -664,7 +681,7 @@ int shLoadRadialGradientMesh(SHPaint *p, VGPaintMode mode, VGMatrixMode matrixMo
 
 int shLoadPatternMesh(SHPaint *p, VGPaintMode mode, VGMatrixMode matrixMode)
 {
-  SHImage *i = (SHImage*)p->pattern;
+  SHImage *i = p->pattern;
   SHImage *root = shImageRoot(i);
   SHMatrix3x3 *m;
   SHMatrix3x3 mu2p;

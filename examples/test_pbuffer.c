@@ -22,6 +22,7 @@
 #define WARP_TEST_EPSILON 0.001f
 #define BLEND_TEST_EPSILON 0.000001f
 #define PATH_TEST_EPSILON 0.0001f
+#define EGL_OPENVG_IMAGE_BUFFER(image) ((EGLClientBuffer)(uintptr_t)(image))
 
 static int expect_rgba_at(const VGubyte *data,
                           VGint stride,
@@ -1166,6 +1167,120 @@ cleanup:
     vgDestroyPath(multi);
   if (line != VG_INVALID_HANDLE)
     vgDestroyPath(line);
+  return result;
+}
+
+static int run_handle_abi_test(void)
+{
+  VGPath path = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGImage parent = VG_INVALID_HANDLE;
+  VGImage child = VG_INVALID_HANDLE;
+  VGFont font = VG_INVALID_HANDLE;
+  VGMaskLayer maskLayer = VG_INVALID_HANDLE;
+  VGHandle handles[5];
+  int i, j;
+  int result = 0;
+
+  if (sizeof(VGHandle) != sizeof(VGuint)) {
+    fprintf(stderr, "OpenVG handle ABI is not VGuint-sized\n");
+    return 1;
+  }
+
+  path = vgCreatePath(VG_PATH_FORMAT_STANDARD,
+                      VG_PATH_DATATYPE_F,
+                      1.0f, 0.0f,
+                      0, 0,
+                      VG_PATH_CAPABILITY_ALL);
+  paint = vgCreatePaint();
+  parent = vgCreateImage(VG_sRGBA_8888, 2, 2, VG_IMAGE_QUALITY_BETTER);
+  font = vgCreateFont(1);
+  maskLayer = vgCreateMaskLayer(2, 2);
+  if (path == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE ||
+      parent == VG_INVALID_HANDLE ||
+      font == VG_INVALID_HANDLE ||
+      maskLayer == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG handle ABI test setup failed");
+    goto cleanup;
+  }
+
+  handles[0] = path;
+  handles[1] = paint;
+  handles[2] = parent;
+  handles[3] = font;
+  handles[4] = maskLayer;
+  for (i=0; i<5; ++i) {
+    if (handles[i] == VG_INVALID_HANDLE) {
+      fprintf(stderr, "OpenVG returned an invalid live resource handle\n");
+      result = 1;
+      goto cleanup;
+    }
+    for (j=i+1; j<5; ++j) {
+      if (handles[i] == handles[j]) {
+        fprintf(stderr, "OpenVG reused a live resource handle\n");
+        result = 1;
+        goto cleanup;
+      }
+    }
+  }
+
+  vgSetPaint(paint, VG_FILL_PATH);
+  if (expect_no_vg_error("OpenVG handle ABI paint bind failed") ||
+      vgGetPaint(VG_FILL_PATH) != paint) {
+    fprintf(stderr, "OpenVG did not return the bound paint handle\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  child = vgChildImage(parent, 0, 0, 1, 1);
+  if (child == VG_INVALID_HANDLE) {
+    result = fail_vg("OpenVG handle ABI child image setup failed");
+    goto cleanup;
+  }
+  if (vgGetParent(child) != parent) {
+    fprintf(stderr, "OpenVG child image did not return parent handle\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgDestroyImage(parent);
+  parent = VG_INVALID_HANDLE;
+  if (vgGetParent(child) != child) {
+    fprintf(stderr, "OpenVG child image did not ignore a destroyed parent handle\n");
+    result = 1;
+    goto cleanup;
+  }
+  vgGetParameteri(handles[2], VG_IMAGE_WIDTH);
+  if (expect_vg_error("OpenVG accepted a destroyed image handle",
+                      VG_BAD_HANDLE_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgDestroyPath(path);
+  path = VG_INVALID_HANDLE;
+  vgGetParameterVectorSize(handles[0], VG_PATH_FORMAT);
+  if (expect_vg_error("OpenVG accepted a destroyed path handle",
+                      VG_BAD_HANDLE_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+
+cleanup:
+  if (child != VG_INVALID_HANDLE)
+    vgDestroyImage(child);
+  if (parent != VG_INVALID_HANDLE)
+    vgDestroyImage(parent);
+  if (maskLayer != VG_INVALID_HANDLE)
+    vgDestroyMaskLayer(maskLayer);
+  if (font != VG_INVALID_HANDLE)
+    vgDestroyFont(font);
+  if (paint != VG_INVALID_HANDLE)
+    vgDestroyPaint(paint);
+  if (path != VG_INVALID_HANDLE)
+    vgDestroyPath(path);
+
   return result;
 }
 
@@ -4754,7 +4869,7 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
     return fail_vg("OpenVG image-backed pbuffer setup failed");
 
   if (eglCreatePbufferFromClientBuffer(display, 0,
-                                       (EGLClientBuffer)image,
+                                       EGL_OPENVG_IMAGE_BUFFER(image),
                                        config, NULL) != EGL_NO_SURFACE ||
       expect_egl_error("EGL accepted an invalid client buffer type",
                        EGL_BAD_PARAMETER)) {
@@ -4763,7 +4878,7 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
   }
 
   if (eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
-                                       (EGLClientBuffer)VG_INVALID_HANDLE,
+                                       EGL_OPENVG_IMAGE_BUFFER(VG_INVALID_HANDLE),
                                        config, NULL) != EGL_NO_SURFACE ||
       expect_egl_error("EGL accepted an invalid OpenVG image client buffer",
                        EGL_BAD_PARAMETER)) {
@@ -4780,7 +4895,7 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
   }
 
   if (eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
-                                       (EGLClientBuffer)image,
+                                       EGL_OPENVG_IMAGE_BUFFER(image),
                                        config, NULL) != EGL_NO_SURFACE ||
       expect_egl_error("EGL created an OpenVG image pbuffer without a current context",
                        EGL_BAD_ACCESS)) {
@@ -4794,7 +4909,7 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
   }
 
   if (eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
-                                       (EGLClientBuffer)image,
+                                       EGL_OPENVG_IMAGE_BUFFER(image),
                                        config,
                                        textureAttribs) != EGL_NO_SURFACE ||
       expect_egl_error("EGL accepted texture binding for an OpenVG image pbuffer",
@@ -4804,7 +4919,7 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
   }
 
   imageSurface = eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
-                                                 (EGLClientBuffer)image,
+                                                 EGL_OPENVG_IMAGE_BUFFER(image),
                                                  config, NULL);
   if (imageSurface == EGL_NO_SURFACE) {
     result = fail_egl("EGL OpenVG image pbuffer creation failed");
@@ -4812,7 +4927,7 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
   }
 
   if (eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
-                                       (EGLClientBuffer)image,
+                                       EGL_OPENVG_IMAGE_BUFFER(image),
                                        config, NULL) != EGL_NO_SURFACE ||
       expect_egl_error("EGL allowed one OpenVG image to back two pbuffers",
                        EGL_BAD_ACCESS)) {
@@ -4913,7 +5028,7 @@ static int run_client_buffer_pbuffer_test(EGLDisplay display,
   }
 
   imageSurface = eglCreatePbufferFromClientBuffer(display, EGL_OPENVG_IMAGE,
-                                                 (EGLClientBuffer)image,
+                                                 EGL_OPENVG_IMAGE_BUFFER(image),
                                                  config, NULL);
   if (imageSurface == EGL_NO_SURFACE) {
     result = fail_egl("EGL PRE OpenVG image pbuffer creation failed");
@@ -6269,6 +6384,8 @@ int main(void)
         result = run_warp_test();
       if (result == 0)
         result = run_alignment_validation_test();
+      if (result == 0)
+        result = run_handle_abi_test();
       if (result == 0)
         printf("EGL/OpenVG pbuffer smoke test passed on EGL %d.%d\n", major, minor);
     }

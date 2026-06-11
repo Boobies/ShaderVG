@@ -856,7 +856,8 @@ VG_API_CALL void vgPathBounds(VGPath path,
   SHPath *p = NULL;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+  p = shGetPath(context, path);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(minX == NULL || minY == NULL ||
@@ -869,7 +870,6 @@ VG_API_CALL void vgPathBounds(VGPath path,
                    !shIsAligned(height, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  p = (SHPath*)path;
   VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_PATH_BOUNDS),
                    VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
 
@@ -899,7 +899,8 @@ VG_API_CALL void vgPathTransformedBounds(VGPath path,
   SHPath *p = NULL;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+  p = shGetPath(context, path);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(minX == NULL || minY == NULL ||
@@ -912,7 +913,6 @@ VG_API_CALL void vgPathTransformedBounds(VGPath path,
                    !shIsAligned(height, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  p = (SHPath*)path;
   VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_PATH_BOUNDS),
                    VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
 
@@ -1258,10 +1258,10 @@ VG_API_CALL VGfloat vgPathLength(VGPath path,
   SHPathMeasure measure;
   VG_GETCONTEXT(-1.0f);
 
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+  p = shGetPath(context, path);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, -1.0f);
 
-  p = (SHPath*)path;
   VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_PATH_LENGTH),
                    VG_PATH_CAPABILITY_ERROR, -1.0f);
 
@@ -1298,10 +1298,10 @@ VG_API_CALL void vgPointAlongPath(VGPath path,
   SHint wantTangent;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+  p = shGetPath(context, path);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  p = (SHPath*)path;
   wantPoint = x != NULL && y != NULL;
   wantTangent = tangentX != NULL && tangentY != NULL;
 

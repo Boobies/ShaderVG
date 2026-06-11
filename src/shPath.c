@@ -74,6 +74,7 @@ static const SHint shBytesPerDatatype[] = {
 void shClearSegCallbacks(SHPath *p);
 void SHPath_ctor(SHPath *p)
 {
+  p->handle = VG_INVALID_HANDLE;
   p->format = 0;
   p->scale = 0.0f;
   p->bias = 0.0f;
@@ -189,8 +190,15 @@ VG_API_CALL VGPath vgCreatePath(VGint pathFormat,
     SH_DELETEOBJ(SHPath, p);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
+
+  if (shRegisterResource(context, SH_RESOURCE_PATH, p) == VG_INVALID_HANDLE) {
+    shPathArrayRemoveAt(&context->resources->paths,
+                        context->resources->paths.size - 1);
+    SH_DELETEOBJ(SHPath, p);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
   
-  VG_RETURN((VGPath)p);
+  VG_RETURN((VGPath)p->handle);
 }
 
 /*-----------------------------------------------------
@@ -203,11 +211,11 @@ VG_API_CALL void vgClearPath(VGPath path, VGbitfield capabilities)
   SHPath *p = NULL;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+  p = shGetPath(context, path);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Clear raw data */
-  p = (SHPath*)path;
   free(p->segs);
   free(p->data);
   p->segs = NULL;
@@ -235,15 +243,18 @@ VG_API_CALL void vgClearPath(VGPath path, VGbitfield capabilities)
 VG_API_CALL void vgDestroyPath(VGPath path)
 {
   int index;
+  SHPath *p;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if handle valid */
-  index = shPathArrayFind(&context->resources->paths, (SHPath*)path);
+  p = shGetPath(context, path);
+  index = p ? shPathArrayFind(&context->resources->paths, p) : -1;
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Remove the public handle; retained font glyphs may keep the object alive. */
+  shUnregisterResource(context, path, SH_RESOURCE_PATH, p);
   shPathArrayRemoveAt(&context->resources->paths, index);
-  shPathRelease((SHPath*)path);
+  shPathRelease(p);
   
   VG_RETURN_ERR(VG_NO_ERROR, VG_NO_RETVAL);
 }
@@ -255,13 +266,15 @@ VG_API_CALL void vgDestroyPath(VGPath path)
 
 VG_API_CALL void vgRemovePathCapabilities(VGPath path, VGbitfield capabilities)
 {
+  SHPath *p;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+  p = shGetPath(context, path);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   capabilities &= VG_PATH_CAPABILITY_ALL;
-  ((SHPath*)path)->caps &= ~capabilities;
+  p->caps &= ~capabilities;
   
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -272,12 +285,14 @@ VG_API_CALL void vgRemovePathCapabilities(VGPath path, VGbitfield capabilities)
 
 VG_API_CALL VGbitfield vgGetPathCapabilities(VGPath path)
 {
+  SHPath *p;
   VG_GETCONTEXT(0x0);
   
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+  p = shGetPath(context, path);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, 0x0);
   
-  VG_RETURN( ((SHPath*)path)->caps );
+  VG_RETURN(p->caps);
 }
 
 /*-----------------------------------------------------
@@ -420,11 +435,11 @@ VG_API_CALL void vgAppendPath(VGPath dstPath, VGPath srcPath)
   SHuint8 *newData = NULL;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidPath(context, srcPath) ||
-                   !shIsValidPath(context, dstPath),
+  src = shGetPath(context, srcPath);
+  dst = shGetPath(context, dstPath);
+  VG_RETURN_ERR_IF(!src || !dst,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  src = (SHPath*)srcPath; dst = (SHPath*)dstPath;
   VG_RETURN_ERR_IF(!(src->caps & VG_PATH_CAPABILITY_APPEND_FROM) ||
                    !(dst->caps & VG_PATH_CAPABILITY_APPEND_TO),
                    VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
@@ -479,10 +494,10 @@ VG_API_CALL void vgAppendPathData(VGPath dstPath, VGint newSegCount,
   SHuint8 *newData = NULL;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidPath(context, dstPath),
+  dst = shGetPath(context, dstPath);
+  VG_RETURN_ERR_IF(!dst,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  dst = (SHPath*)dstPath;
   VG_RETURN_ERR_IF(!(dst->caps & VG_PATH_CAPABILITY_APPEND_TO),
                    VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
   
@@ -546,10 +561,10 @@ VG_API_CALL void vgModifyPathCoords(VGPath dstPath, VGint startIndex,
   SHint dataStartSize;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidPath(context, dstPath),
+  p = shGetPath(context, dstPath);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  p = (SHPath*)dstPath;
   VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_MODIFY),
                    VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
   
@@ -1235,11 +1250,11 @@ VG_API_CALL void vgTransformPath(VGPath dstPath, VGPath srcPath)
   
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidPath(context, dstPath) ||
-                   !shIsValidPath(context, srcPath),
+  src = shGetPath(context, srcPath);
+  dst = shGetPath(context, dstPath);
+  VG_RETURN_ERR_IF(!dst || !src,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  src = (SHPath*)srcPath; dst = (SHPath*)dstPath;
   VG_RETURN_ERR_IF(!(src->caps & VG_PATH_CAPABILITY_TRANSFORM_FROM) ||
                    !(dst->caps & VG_PATH_CAPABILITY_TRANSFORM_TO),
                    VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
@@ -1313,12 +1328,12 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
   
   VG_GETCONTEXT(VG_FALSE);
   
-  VG_RETURN_ERR_IF(!shIsValidPath(context, dstPath) ||
-                   !shIsValidPath(context, startPath) ||
-                   !shIsValidPath(context, endPath),
+  dst = shGetPath(context, dstPath);
+  start = shGetPath(context, startPath);
+  end = shGetPath(context, endPath);
+  VG_RETURN_ERR_IF(!dst || !start || !end,
                    VG_BAD_HANDLE_ERROR, VG_FALSE);
   
-  dst = (SHPath*)dstPath; start = (SHPath*)startPath; end = (SHPath*)endPath;
   VG_RETURN_ERR_IF(!(start->caps & VG_PATH_CAPABILITY_INTERPOLATE_FROM) ||
                    !(end->caps & VG_PATH_CAPABILITY_INTERPOLATE_FROM) ||
                    !(dst->caps & VG_PATH_CAPABILITY_INTERPOLATE_TO),

@@ -68,6 +68,7 @@ void shFontReleaseGlyph(SHGlyph *glyph)
 
 void SHFont_ctor(SHFont *f)
 {
+  f->handle = VG_INVALID_HANDLE;
   f->glyphCapacityHint = 0;
   SH_INITOBJ(SHGlyphArray, f->glyphs);
 }
@@ -129,18 +130,28 @@ VG_API_CALL VGFont vgCreateFont(VGint glyphCapacityHint)
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
 
-  VG_RETURN((VGFont)f);
+  if (shRegisterResource(context, SH_RESOURCE_FONT, f) == VG_INVALID_HANDLE) {
+    shFontArrayRemoveAt(&context->resources->fonts,
+                        context->resources->fonts.size - 1);
+    SH_DELETEOBJ(SHFont, f);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
+
+  VG_RETURN((VGFont)f->handle);
 }
 
 VG_API_CALL void vgDestroyFont(VGFont font)
 {
   SHint index;
+  SHFont *f;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  index = shFontArrayFind(&context->resources->fonts, (SHFont*)font);
+  f = shGetFont(context, font);
+  index = f ? shFontArrayFind(&context->resources->fonts, f) : -1;
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  SH_DELETEOBJ(SHFont, (SHFont*)font);
+  shUnregisterResource(context, font, SH_RESOURCE_FONT, f);
+  SH_DELETEOBJ(SHFont, f);
   shFontArrayRemoveAt(&context->resources->fonts, index);
 
   VG_RETURN(VG_NO_RETVAL);
@@ -158,23 +169,23 @@ VG_API_CALL void vgSetGlyphToPath(VGFont font,
   SHPath *newPath = NULL;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidFont(context, font),
+  f = shGetFont(context, font);
+  VG_RETURN_ERR_IF(!f,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!glyphOrigin || !escapement,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(path != VG_INVALID_HANDLE &&
-                   !shIsValidPath(context, path),
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (path != VG_INVALID_HANDLE) {
+    newPath = shGetPath(context, path);
+    VG_RETURN_ERR_IF(!newPath, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  }
   VG_RETURN_ERR_IF(!shIsAligned(glyphOrigin, sizeof(VGfloat)) ||
                    !shIsAligned(escapement, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  f = (SHFont*)font;
   glyph = shFontEnsureGlyph(f, glyphIndex);
   VG_RETURN_ERR_IF(!glyph, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   if (path != VG_INVALID_HANDLE) {
-    newPath = (SHPath*)path;
     shPathAddRef(newPath);
   }
 
@@ -201,26 +212,25 @@ VG_API_CALL void vgSetGlyphToImage(VGFont font,
   SHImage *newImage = NULL;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidFont(context, font),
+  f = shGetFont(context, font);
+  VG_RETURN_ERR_IF(!f,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!glyphOrigin || !escapement,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(image != VG_INVALID_HANDLE &&
-                   !shIsValidImage(context, image),
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(image != VG_INVALID_HANDLE &&
-                   shImageIsRenderTarget((SHImage*)image),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  if (image != VG_INVALID_HANDLE) {
+    newImage = shGetImage(context, image);
+    VG_RETURN_ERR_IF(!newImage, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+    VG_RETURN_ERR_IF(shImageIsRenderTarget(newImage),
+                     VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
   VG_RETURN_ERR_IF(!shIsAligned(glyphOrigin, sizeof(VGfloat)) ||
                    !shIsAligned(escapement, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  f = (SHFont*)font;
   glyph = shFontEnsureGlyph(f, glyphIndex);
   VG_RETURN_ERR_IF(!glyph, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   if (image != VG_INVALID_HANDLE) {
-    newImage = (SHImage*)image;
     shImageAddRef(newImage);
     shImageAddGlyphRef(newImage);
   }
@@ -243,10 +253,10 @@ VG_API_CALL void vgClearGlyph(VGFont font, VGuint glyphIndex)
   SHint index;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidFont(context, font),
+  f = shGetFont(context, font);
+  VG_RETURN_ERR_IF(!f,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  f = (SHFont*)font;
   index = shFontFindGlyphIndex(f, glyphIndex);
   VG_RETURN_ERR_IF(index == -1, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
@@ -479,17 +489,19 @@ VG_API_CALL void vgDrawGlyph(VGFont font,
                              VGbitfield paintModes,
                              VGboolean allowAutoHinting)
 {
+  SHFont *f;
   SHGlyph *glyph;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   (void)allowAutoHinting;
 
-  VG_RETURN_ERR_IF(!shIsValidFont(context, font),
+  f = shGetFont(context, font);
+  VG_RETURN_ERR_IF(!f,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  glyph = shFontFindGlyph((SHFont*)font, glyphIndex);
+  glyph = shFontFindGlyph(f, glyphIndex);
   VG_RETURN_ERR_IF(!glyph, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   shDrawGlyphObject(context, glyph, paintModes);
@@ -519,7 +531,8 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
 
   (void)allowAutoHinting;
 
-  VG_RETURN_ERR_IF(!shIsValidFont(context, font),
+  f = shGetFont(context, font);
+  VG_RETURN_ERR_IF(!f,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(glyphCount <= 0 || !glyphIndices,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
@@ -532,7 +545,6 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
                     !shIsAligned(adjustments_y, sizeof(VGfloat))),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  f = (SHFont*)font;
   for (i=0; i<glyphCount; ++i) {
     VG_RETURN_ERR_IF(!shFontFindGlyph(f, glyphIndices[i]),
                      VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);

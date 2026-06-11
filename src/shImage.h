@@ -75,6 +75,7 @@ void SHColor_dtor(SHColor *c);
 
 struct SHImage
 {
+  VGHandle handle;
   SHuint8 *data;
   SHint width;
   SHint height;

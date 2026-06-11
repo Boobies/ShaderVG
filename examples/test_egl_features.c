@@ -1,7 +1,10 @@
 #include "test.h"
 
+#include <stdint.h>
+
 #define IMAGE_WIDTH 192
 #define IMAGE_HEIGHT 128
+#define EGL_OPENVG_IMAGE_BUFFER(image) ((EGLClientBuffer)(uintptr_t)(image))
 
 static EGLDisplay eglDisplayHandle = EGL_NO_DISPLAY;
 static EGLSurface windowSurface = EGL_NO_SURFACE;
@@ -451,7 +454,7 @@ static void createContent(void)
   imageSurface =
     eglCreatePbufferFromClientBuffer(eglDisplayHandle,
                                      EGL_OPENVG_IMAGE,
-                                     (EGLClientBuffer)offscreenImage,
+                                     EGL_OPENVG_IMAGE_BUFFER(offscreenImage),
                                      pbufferConfig,
                                      NULL);
   if (imageSurface == EGL_NO_SURFACE)

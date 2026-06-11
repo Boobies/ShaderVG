@@ -40,6 +40,7 @@ typedef struct
 
 typedef struct
 {
+  VGHandle handle;
   VGPaintType type;
   SHColor color;
   SHColorArray colors;
@@ -51,7 +52,7 @@ typedef struct
   SHfloat linearGradient[4];
   SHfloat radialGradient[5];
   GLuint texture;
-  VGImage pattern;
+  SHImage *pattern;
   
 } SHPaint;
 

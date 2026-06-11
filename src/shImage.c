@@ -595,6 +595,7 @@ void SHColor_dtor(SHColor *c) {
 
 void SHImage_ctor(SHImage *i)
 {
+  i->handle = VG_INVALID_HANDLE;
   i->data = NULL;
   i->width = 0;
   i->height = 0;
@@ -1036,22 +1037,32 @@ VG_API_CALL VGImage vgCreateImage(VGImageFormat format,
     SH_DELETEOBJ(SHImage, i);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
+
+  if (shRegisterResource(context, SH_RESOURCE_IMAGE, i) == VG_INVALID_HANDLE) {
+    shImageArrayRemoveAt(&context->resources->images,
+                         context->resources->images.size - 1);
+    SH_DELETEOBJ(SHImage, i);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
   
-  VG_RETURN((VGImage)i);
+  VG_RETURN((VGImage)i->handle);
 }
 
 VG_API_CALL void vgDestroyImage(VGImage image)
 {
   SHint index;
+  SHImage *i;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if valid resource */
-  index = shImageArrayFind(&context->resources->images, (SHImage*)image);
+  i = shGetImage(context, image);
+  index = i ? shImageArrayFind(&context->resources->images, i) : -1;
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Remove the public handle; retained font glyphs may keep the object alive. */
+  shUnregisterResource(context, image, SH_RESOURCE_IMAGE, i);
   shImageArrayRemoveAt(&context->resources->images, index);
-  shImageRelease((SHImage*)image);
+  shImageRelease(i);
   
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -1092,10 +1103,10 @@ VG_API_CALL void vgClearImage(VGImage image,
   SHColor clear;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidImage(context, image),
+  i = shGetImage(context, image);
+  VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  i = (SHImage*)image;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
@@ -2611,9 +2622,9 @@ VG_API_CALL void vgImageSubData(VGImage image,
   SHImage *i;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidImage(context, image),
+  i = shGetImage(context, image);
+  VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  i = (SHImage*)image;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
@@ -2664,9 +2675,9 @@ VG_API_CALL void vgGetImageSubData(VGImage image,
   SHImage *i;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidImage(context, image),
+  i = shGetImage(context, image);
+  VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  i = (SHImage*)image;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
@@ -2717,11 +2728,11 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
-                   !shIsValidImage(context, dst),
+  s = shGetImage(context, src);
+  d = shGetImage(context, dst);
+  VG_RETURN_ERR_IF(!s || !d,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  s = (SHImage*)src; d = (SHImage*)dst;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
                    shImageIsRenderTarget(d),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
@@ -2748,10 +2759,10 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src),
+  i = shGetImage(context, src);
+  VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  i = (SHImage*)src;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
@@ -2820,10 +2831,10 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
   SHImage *i;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(!shIsValidImage(context, dst),
+  i = shGetImage(context, dst);
+  VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  i = (SHImage*)dst;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
@@ -2952,10 +2963,10 @@ VG_API_CALL VGImage vgChildImage(VGImage parent,
   long long top;
   VG_GETCONTEXT(VG_INVALID_HANDLE);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, parent),
+  parentImage = shGetImage(context, parent);
+  VG_RETURN_ERR_IF(!parentImage,
                    VG_BAD_HANDLE_ERROR, VG_INVALID_HANDLE);
 
-  parentImage = (SHImage*)parent;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(parentImage),
                    VG_IMAGE_IN_USE_ERROR, VG_INVALID_HANDLE);
 
@@ -2993,7 +3004,14 @@ VG_API_CALL VGImage vgChildImage(VGImage parent,
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
 
-  VG_RETURN((VGImage)child);
+  if (shRegisterResource(context, SH_RESOURCE_IMAGE, child) == VG_INVALID_HANDLE) {
+    shImageArrayRemoveAt(&context->resources->images,
+                         context->resources->images.size - 1);
+    SH_DELETEOBJ(SHImage, child);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
+
+  VG_RETURN((VGImage)child->handle);
 }
 
 VG_API_CALL VGImage vgGetParent(VGImage image)
@@ -3002,15 +3020,15 @@ VG_API_CALL VGImage vgGetParent(VGImage image)
   SHImage *parent;
   VG_GETCONTEXT(VG_INVALID_HANDLE);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, image),
+  i = shGetImage(context, image);
+  VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_INVALID_HANDLE);
 
-  i = (SHImage*)image;
   parent = i->parent;
-  while (parent && !shIsValidImage(context, (VGHandle)parent))
+  while (parent && !shIsLiveImage(context, parent))
     parent = parent->parent;
 
-  VG_RETURN((VGImage)(parent ? parent : i));
+  VG_RETURN((VGImage)(parent ? parent->handle : i->handle));
 }
 
 static VGboolean shImageFilterImagesOverlap(const SHImage *dst,
@@ -4049,15 +4067,14 @@ VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,
   SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
-                   !shIsValidImage(context, dst),
+  s = shGetImage(context, src);
+  d = shGetImage(context, dst);
+  VG_RETURN_ERR_IF(!s || !d,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!matrix ||
                    !shIsAligned(matrix, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  s = (SHImage*)src;
-  d = (SHImage*)dst;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
                    shImageIsRenderTarget(d),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
@@ -4119,8 +4136,9 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
   SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
-                   !shIsValidImage(context, dst),
+  s = shGetImage(context, src);
+  d = shGetImage(context, dst);
+  VG_RETURN_ERR_IF(!s || !d,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!kernel ||
                    !shIsAligned(kernel, sizeof(VGshort)) ||
@@ -4132,8 +4150,6 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
   VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  s = (SHImage*)src;
-  d = (SHImage*)dst;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
                    shImageIsRenderTarget(d),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
@@ -4194,8 +4210,9 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
   SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
-                   !shIsValidImage(context, dst),
+  s = shGetImage(context, src);
+  d = shGetImage(context, dst);
+  VG_RETURN_ERR_IF(!s || !d,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!kernelX ||
                    !kernelY ||
@@ -4209,8 +4226,6 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
   VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  s = (SHImage*)src;
-  d = (SHImage*)dst;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
                    shImageIsRenderTarget(d),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
@@ -4385,8 +4400,9 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
   SHint k;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
-                   !shIsValidImage(context, dst),
+  s = shGetImage(context, src);
+  d = shGetImage(context, dst);
+  VG_RETURN_ERR_IF(!s || !d,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode) ||
                    SH_ISNAN(stdDeviationX) ||
@@ -4397,8 +4413,6 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
                    stdDeviationY > SH_MAX_GAUSSIAN_STD_DEVIATION,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  s = (SHImage*)src;
-  d = (SHImage*)dst;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
                    shImageIsRenderTarget(d),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
@@ -4571,8 +4585,9 @@ VG_API_CALL void vgIterativeAverageBlurKHR(VGImage dst,
   SHint shiftY = 0;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
-                   !shIsValidImage(context, dst),
+  s = shGetImage(context, src);
+  d = shGetImage(context, dst);
+  VG_RETURN_ERR_IF(!s || !d,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode) ||
                    SH_ISNAN(dimX) ||
@@ -4584,8 +4599,6 @@ VG_API_CALL void vgIterativeAverageBlurKHR(VGImage dst,
                    iterative > SH_MAX_AVERAGE_BLUR_ITERATIONS,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  s = (SHImage*)src;
-  d = (SHImage*)dst;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
                    shImageIsRenderTarget(d),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
@@ -4646,12 +4659,12 @@ static VGboolean shParametricFilterPaintInfo(VGContext *context,
   if (paint == VG_INVALID_HANDLE)
     return VG_TRUE;
 
-  if (!shIsValidPaint(context, paint)) {
+  p = shGetPaint(context, paint);
+  if (!p) {
     shSetError(context, VG_BAD_HANDLE_ERROR);
     return VG_FALSE;
   }
 
-  p = (SHPaint*)paint;
   if (p->type == VG_PAINT_TYPE_COLOR) {
     *mode = SH_PARAMETRIC_PAINT_COLOR;
     color[0] = p->color.r;
@@ -4696,9 +4709,10 @@ VG_API_CALL void vgParametricFilterKHR(VGImage dst,
                           VG_PF_INNER_FLAG_KHR;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
-                   !shIsValidImage(context, dst) ||
-                   !shIsValidImage(context, blur),
+  s = shGetImage(context, src);
+  d = shGetImage(context, dst);
+  b = shGetImage(context, blur);
+  VG_RETURN_ERR_IF(!s || !d || !b,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(SH_ISNAN(strength) ||
                    SH_ISNAN(offsetX) ||
@@ -4706,9 +4720,6 @@ VG_API_CALL void vgParametricFilterKHR(VGImage dst,
                    (filterFlags & ~validFlags),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  s = (SHImage*)src;
-  d = (SHImage*)dst;
-  b = (SHImage*)blur;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
                    shImageIsRenderTarget(d) ||
                    shImageIsRenderTarget(b),
@@ -4775,8 +4786,9 @@ VG_API_CALL void vgLookup(VGImage dst, VGImage src,
   SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
-                   !shIsValidImage(context, dst),
+  s = shGetImage(context, src);
+  d = shGetImage(context, dst);
+  VG_RETURN_ERR_IF(!s || !d,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!redLUT ||
                    !greenLUT ||
@@ -4784,8 +4796,6 @@ VG_API_CALL void vgLookup(VGImage dst, VGImage src,
                    !alphaLUT,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  s = (SHImage*)src;
-  d = (SHImage*)dst;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
                    shImageIsRenderTarget(d),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
@@ -4836,8 +4846,9 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
   SHImageFilterPass pass;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, src) ||
-                   !shIsValidImage(context, dst),
+  s = shGetImage(context, src);
+  d = shGetImage(context, dst);
+  VG_RETURN_ERR_IF(!s || !d,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!lookupTable ||
                    !shIsAligned(lookupTable, sizeof(VGuint)),
@@ -4848,8 +4859,6 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
                    sourceChannel != VG_ALPHA,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  s = (SHImage*)src;
-  d = (SHImage*)dst;
   VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
                    shImageIsRenderTarget(d),
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
@@ -4907,12 +4916,13 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
 }
 
 VG_API_CALL void vgBindImageSH(VGImage image, VGImageUnitSH unit){
+  SHImage *i;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   SH_RETURN_ERR_IF(unit < VG_IMAGE_UNIT_OFFSET_SH, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
   SH_RETURN_ERR_IF(image == VG_INVALID_HANDLE,     VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
-  SH_RETURN_ERR_IF(!shIsValidImage(context, image), VG_BAD_HANDLE_ERROR, SH_NO_RETVAL);
-  SHImage *i = (SHImage*)image;
+  i = shGetImage(context, image);
+  SH_RETURN_ERR_IF(!i, VG_BAD_HANDLE_ERROR, SH_NO_RETVAL);
   SH_RETURN_ERR_IF(shImageIsRenderTarget(i), VG_IMAGE_IN_USE_ERROR, SH_NO_RETVAL);
   
   glActiveTexture(GL_TEXTURE0 + unit);

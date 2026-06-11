@@ -71,6 +71,8 @@ typedef struct
 /* SHPath */
 typedef struct SHPath
 {
+  VGHandle handle;
+
   /* Properties */
   VGint format;
   SHfloat scale;

@@ -365,8 +365,8 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
     break; 
     
   case VG_PAINT_TYPE_PATTERN:
-    if (p->pattern != VG_INVALID_HANDLE) {
-      if (shImageIsRenderTarget((SHImage*)p->pattern)) {
+    if (p->pattern) {
+      if (shImageIsRenderTarget(p->pattern)) {
         shSetError(c, VG_IMAGE_IN_USE_ERROR);
         return;
       }
@@ -1574,15 +1574,17 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
 
 VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
 {
+  SHPath *p;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+  p = shGetPath(context, path);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  shDrawPath(context, (SHPath*)path, paintModes);
+  shDrawPath(context, p, paintModes);
 
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -1596,7 +1598,8 @@ VG_API_CALL void vgRenderToMask(VGPath path,
   VGboolean success = VG_TRUE;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidPath(context, path),
+  p = shGetPath(context, path);
+  VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
@@ -1629,7 +1632,6 @@ VG_API_CALL void vgRenderToMask(VGPath path,
       context->surfaceHeight <= 0)
     VG_RETURN(VG_NO_RETVAL);
 
-  p = (SHPath*)path;
   shEnsurePathGeometry(context, p);
 
   shSaveRenderToMaskGLState(&state);
@@ -1923,12 +1925,14 @@ void shDrawImage(VGContext *context, SHImage *i)
 
 VG_API_CALL void vgDrawImage(VGImage image)
 {
+  SHImage *i;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidImage(context, image),
+  i = shGetImage(context, image);
+  VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  shDrawImage(context, (SHImage*)image);
+  shDrawImage(context, i);
 
   VG_RETURN(VG_NO_RETVAL);
 }

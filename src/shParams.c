@@ -953,7 +953,7 @@ VG_API_CALL VGint vgGetVectorSize(VGParamType type)
  * vector according to the parameter type and input type.
  *-----------------------------------------------------------*/
 
-static void shSetParameter(VGContext *context, VGHandle object,
+static void shSetParameter(VGContext *context, void *object,
                            SHResourceType rtype, VGint ptype,
                            SHint count, const void *values, SHint floats)
 {
@@ -1105,11 +1105,13 @@ static void shSetParameter(VGContext *context, VGHandle object,
 VG_API_CALL void vgSetParameterf(VGHandle object, VGint paramType, VGfloat value)
 {
   SHResourceType resType;
+  void *resource;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Validate object */
   resType = shGetResourceType(context, object);
-  VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
+  resource = shGetResource(context, object, resType);
+  VG_RETURN_ERR_IF(!resource,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Check if param vector */
@@ -1118,7 +1120,7 @@ VG_API_CALL void vgSetParameterf(VGHandle object, VGint paramType, VGfloat value
                    VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
-  shSetParameter(context, object, resType, paramType, 1, &value, 1);
+  shSetParameter(context, resource, resType, paramType, 1, &value, 1);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1129,11 +1131,13 @@ VG_API_CALL void vgSetParameterf(VGHandle object, VGint paramType, VGfloat value
 VG_API_CALL void vgSetParameteri(VGHandle object, VGint paramType, VGint value)
 {
   SHResourceType resType;
+  void *resource;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Validate object */
   resType = shGetResourceType(context, object);
-  VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
+  resource = shGetResource(context, object, resType);
+  VG_RETURN_ERR_IF(!resource,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Check if param vector */
@@ -1142,7 +1146,7 @@ VG_API_CALL void vgSetParameteri(VGHandle object, VGint paramType, VGint value)
                    VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
-  shSetParameter(context, object, resType, paramType, 1, &value, 0);
+  shSetParameter(context, resource, resType, paramType, 1, &value, 0);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1154,18 +1158,20 @@ VG_API_CALL void vgSetParameterfv(VGHandle object, VGint paramType,
                                   VGint count, const VGfloat * values)
 {
   SHResourceType resType;
+  void *resource;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Validate object */
   resType = shGetResourceType(context, object);
-  VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
+  resource = shGetResource(context, object, resType);
+  VG_RETURN_ERR_IF(!resource,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(count > 0 && !shIsAligned(values, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
-  shSetParameter(context, object, resType, paramType, count, values, 1);
+  shSetParameter(context, resource, resType, paramType, count, values, 1);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1177,18 +1183,20 @@ VG_API_CALL void vgSetParameteriv(VGHandle object, VGint paramType,
                                   VGint count, const VGint * values)
 {
   SHResourceType resType;
+  void *resource;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Validate object */
   resType = shGetResourceType(context, object);
-  VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
+  resource = shGetResource(context, object, resType);
+  VG_RETURN_ERR_IF(!resource,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(count > 0 && !shIsAligned(values, sizeof(VGint)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
-  shSetParameter(context, object, resType, paramType, count, values, 0);
+  shSetParameter(context, resource, resType, paramType, count, values, 0);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1197,7 +1205,7 @@ VG_API_CALL void vgSetParameteriv(VGHandle object, VGint paramType,
  * vector according to the parameter type and input type.
  *---------------------------------------------------------------*/
 
-static void shGetParameter(VGContext *context, VGHandle object,
+static void shGetParameter(VGContext *context, void *object,
                            SHResourceType rtype, VGint ptype,
                            SHint count, void *values, SHint floats)
 {
@@ -1366,11 +1374,13 @@ VG_API_CALL VGfloat vgGetParameterf(VGHandle object, VGint paramType)
 {
   VGfloat retval = 0.0f;
   SHResourceType resType;
+  void *resource;
   VG_GETCONTEXT(retval);
   
   /* Validate object */
   resType = shGetResourceType(context, object);
-  VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
+  resource = shGetResource(context, object, resType);
+  VG_RETURN_ERR_IF(!resource,
                    VG_BAD_HANDLE_ERROR, retval);
   
   /* Check if param vector */
@@ -1378,7 +1388,7 @@ VG_API_CALL VGfloat vgGetParameterf(VGHandle object, VGint paramType)
                    VG_ILLEGAL_ARGUMENT_ERROR, retval);
   
   /* Error code will be set by shGetParameter() */
-  shGetParameter(context, object, resType, paramType, 1, &retval, 1);
+  shGetParameter(context, resource, resType, paramType, 1, &retval, 1);
   VG_RETURN(retval);
 }
 
@@ -1390,11 +1400,13 @@ VG_API_CALL VGint vgGetParameteri(VGHandle object, VGint paramType)
 {
   VGint retval = 0;
   SHResourceType resType;
+  void *resource;
   VG_GETCONTEXT(retval);
   
   /* Validate object */
   resType = shGetResourceType(context, object);
-  VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
+  resource = shGetResource(context, object, resType);
+  VG_RETURN_ERR_IF(!resource,
                    VG_BAD_HANDLE_ERROR, retval);
   
   /* Check if param vector */
@@ -1402,7 +1414,7 @@ VG_API_CALL VGint vgGetParameteri(VGHandle object, VGint paramType)
                    VG_ILLEGAL_ARGUMENT_ERROR, retval);
   
   /* Error code will be set by shGetParameter() */
-  shGetParameter(context, object, resType, paramType, 1, &retval, 0);
+  shGetParameter(context, resource, resType, paramType, 1, &retval, 0);
   VG_RETURN(retval);
 }
 
@@ -1414,18 +1426,20 @@ VG_API_CALL void vgGetParameterfv(VGHandle object, VGint paramType,
                                   VGint count, VGfloat * values)
 {
   SHResourceType resType;
+  void *resource;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Validate object */
   resType = shGetResourceType(context, object);
-  VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
+  resource = shGetResource(context, object, resType);
+  VG_RETURN_ERR_IF(!resource,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!shIsAligned(values, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shGetParameter() */
-  shGetParameter(context, object, resType, paramType, count, values, 1);
+  shGetParameter(context, resource, resType, paramType, count, values, 1);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1437,18 +1451,20 @@ VG_API_CALL void vgGetParameteriv(VGHandle object, VGint paramType,
                                   VGint count, VGint * values)
 {
   SHResourceType resType;
+  void *resource;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Validate object */
   resType = shGetResourceType(context, object);
-  VG_RETURN_ERR_IF(resType == SH_RESOURCE_INVALID,
+  resource = shGetResource(context, object, resType);
+  VG_RETURN_ERR_IF(!resource,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!shIsAligned(values, sizeof(VGint)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shGetParameter() */
-  shGetParameter(context, object, resType, paramType, count, values, 0);
+  shGetParameter(context, resource, resType, paramType, count, values, 0);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1461,11 +1477,13 @@ VG_API_CALL VGint vgGetParameterVectorSize(VGHandle object, VGint ptype)
 {
   int retval = 0;
   SHResourceType rtype;
+  void *resource;
   VG_GETCONTEXT(retval);
   
   /* Validate object */
   rtype = shGetResourceType(context, object);
-  VG_RETURN_ERR_IF(rtype == SH_RESOURCE_INVALID,
+  resource = shGetResource(context, object, rtype);
+  VG_RETURN_ERR_IF(!resource,
                    VG_BAD_HANDLE_ERROR, retval);
   
   switch (rtype)
@@ -1500,7 +1518,7 @@ VG_API_CALL VGint vgGetParameterVectorSize(VGHandle object, VGint ptype)
       retval = 1; break;
       
     case VG_PAINT_COLOR_RAMP_STOPS:
-      retval = ((SHPaint*)object)->stops.size*5; break;
+      retval = ((SHPaint*)resource)->stops.size*5; break;
       
     case VG_PAINT_LINEAR_GRADIENT:
       retval = 4; break;

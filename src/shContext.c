@@ -31,6 +31,153 @@
 #define _ARRAY_DEFINE
 #include "shArrayBase.h"
 
+#define SH_HANDLE_SLOT_BITS 20
+#define SH_HANDLE_SLOT_MASK ((1u << SH_HANDLE_SLOT_BITS) - 1u)
+#define SH_HANDLE_GENERATION_SHIFT SH_HANDLE_SLOT_BITS
+#define SH_HANDLE_MAX_GENERATION ((1u << (32 - SH_HANDLE_SLOT_BITS)) - 1u)
+
+typedef struct
+{
+  SHResourceGroup *resources;
+  void *object;
+  SHResourceType type;
+  VGuint generation;
+  VGuint nextFree;
+} SHHandleEntry;
+
+static SHHandleEntry *g_handleEntries = NULL;
+static VGuint g_handleCapacity = 0;
+static VGuint g_handleSlotCount = 1;
+static VGuint g_freeHandleSlot = 0;
+
+static VGHandle *shResourceHandleField(SHResourceType type, void *object)
+{
+  if (!object)
+    return NULL;
+
+  switch (type) {
+  case SH_RESOURCE_PATH:
+    return &((SHPath*)object)->handle;
+  case SH_RESOURCE_PAINT:
+    return &((SHPaint*)object)->handle;
+  case SH_RESOURCE_IMAGE:
+    return &((SHImage*)object)->handle;
+  case SH_RESOURCE_FONT:
+    return &((SHFont*)object)->handle;
+  case SH_RESOURCE_MASK_LAYER:
+    return &((SHMaskLayer*)object)->handle;
+  default:
+    return NULL;
+  }
+}
+
+static VGHandle shMakeHandle(VGuint slot, VGuint generation)
+{
+  return (VGHandle)((generation << SH_HANDLE_GENERATION_SHIFT) | slot);
+}
+
+static VGuint shHandleSlot(VGHandle handle)
+{
+  return (VGuint)handle & SH_HANDLE_SLOT_MASK;
+}
+
+static VGuint shHandleGeneration(VGHandle handle)
+{
+  return (VGuint)handle >> SH_HANDLE_GENERATION_SHIFT;
+}
+
+static int shEnsureHandleCapacity(VGuint slot)
+{
+  SHHandleEntry *entries;
+  VGuint oldCapacity = g_handleCapacity;
+  VGuint newCapacity = g_handleCapacity ? g_handleCapacity : 64;
+
+  if (slot < g_handleCapacity)
+    return 1;
+
+  while (newCapacity <= slot) {
+    if (newCapacity >= SH_HANDLE_SLOT_MASK)
+      return 0;
+    newCapacity *= 2;
+    if (newCapacity > SH_HANDLE_SLOT_MASK + 1u)
+      newCapacity = SH_HANDLE_SLOT_MASK + 1u;
+  }
+
+  entries = (SHHandleEntry*)realloc(g_handleEntries,
+                                    sizeof(SHHandleEntry) * newCapacity);
+  if (!entries)
+    return 0;
+
+  g_handleEntries = entries;
+  memset(g_handleEntries + oldCapacity, 0,
+         sizeof(SHHandleEntry) * (newCapacity - oldCapacity));
+  g_handleCapacity = newCapacity;
+  return 1;
+}
+
+static SHHandleEntry *shLookupHandleEntry(SHResourceGroup *resources,
+                                          VGHandle handle,
+                                          SHResourceType type)
+{
+  VGuint slot = shHandleSlot(handle);
+  VGuint generation = shHandleGeneration(handle);
+  SHHandleEntry *entry;
+
+  if (handle == VG_INVALID_HANDLE ||
+      slot == 0 ||
+      slot >= g_handleSlotCount ||
+      slot >= g_handleCapacity)
+    return NULL;
+
+  entry = &g_handleEntries[slot];
+  if (!entry->object ||
+      entry->resources != resources ||
+      entry->generation != generation)
+    return NULL;
+
+  if (type != SH_RESOURCE_INVALID && entry->type != type)
+    return NULL;
+
+  return entry;
+}
+
+static void shReleaseHandle(SHResourceGroup *resources,
+                            VGHandle handle,
+                            SHResourceType type,
+                            void *object)
+{
+  VGuint slot = shHandleSlot(handle);
+  SHHandleEntry *entry;
+  VGHandle *objectHandle;
+
+  if (handle == VG_INVALID_HANDLE ||
+      slot == 0 ||
+      slot >= g_handleSlotCount ||
+      slot >= g_handleCapacity)
+    return;
+
+  entry = &g_handleEntries[slot];
+  if (!entry->object ||
+      entry->resources != resources ||
+      entry->type != type ||
+      entry->object != object ||
+      entry->generation != shHandleGeneration(handle))
+    return;
+
+  objectHandle = shResourceHandleField(type, object);
+  if (objectHandle && *objectHandle == handle)
+    *objectHandle = VG_INVALID_HANDLE;
+
+  entry->resources = NULL;
+  entry->object = NULL;
+  entry->type = SH_RESOURCE_INVALID;
+  entry->generation++;
+  if (entry->generation == 0 || entry->generation > SH_HANDLE_MAX_GENERATION)
+    entry->generation = 1;
+  entry->nextFree = g_freeHandleSlot;
+  g_freeHandleSlot = slot;
+}
+
 static void SHResourceGroup_ctor(SHResourceGroup *resources)
 {
   resources->refCount = 1;
@@ -45,20 +192,35 @@ static void SHResourceGroup_dtor(SHResourceGroup *resources)
 {
   int i;
 
-  for (i=0; i<resources->fonts.size; ++i)
+  for (i=0; i<resources->fonts.size; ++i) {
+    shReleaseHandle(resources, resources->fonts.items[i]->handle,
+                    SH_RESOURCE_FONT, resources->fonts.items[i]);
     SH_DELETEOBJ(SHFont, resources->fonts.items[i]);
+  }
 
-  for (i=0; i<resources->maskLayers.size; ++i)
+  for (i=0; i<resources->maskLayers.size; ++i) {
+    shReleaseHandle(resources, resources->maskLayers.items[i]->handle,
+                    SH_RESOURCE_MASK_LAYER, resources->maskLayers.items[i]);
     SH_DELETEOBJ(SHMaskLayer, resources->maskLayers.items[i]);
+  }
 
-  for (i=0; i<resources->paths.size; ++i)
+  for (i=0; i<resources->paths.size; ++i) {
+    shReleaseHandle(resources, resources->paths.items[i]->handle,
+                    SH_RESOURCE_PATH, resources->paths.items[i]);
     shPathRelease(resources->paths.items[i]);
+  }
 
-  for (i=0; i<resources->paints.size; ++i)
+  for (i=0; i<resources->paints.size; ++i) {
+    shReleaseHandle(resources, resources->paints.items[i]->handle,
+                    SH_RESOURCE_PAINT, resources->paints.items[i]);
     SH_DELETEOBJ(SHPaint, resources->paints.items[i]);
+  }
 
-  for (i=0; i<resources->images.size; ++i)
+  for (i=0; i<resources->images.size; ++i) {
+    shReleaseHandle(resources, resources->images.items[i]->handle,
+                    SH_RESOURCE_IMAGE, resources->images.items[i]);
     shImageRelease(resources->images.items[i]);
+  }
 
   SH_DEINITOBJ(SHMaskLayerArray, resources->maskLayers);
   SH_DEINITOBJ(SHFontArray, resources->fonts);
@@ -161,6 +323,7 @@ static const char* shMaskFragmentShaderSource =
 
 void SHMaskLayer_ctor(SHMaskLayer *m)
 {
+  m->handle = VG_INVALID_HANDLE;
   m->texture = 0;
   m->framebuffer = 0;
   m->width = 0;
@@ -830,42 +993,27 @@ void VGContext_dtor(VGContext *c)
 
 SHint shIsValidPath(VGContext *c, VGHandle h)
 {
-  int index = c && c->resources ?
-              shPathArrayFind(&c->resources->paths, (SHPath*)h) :
-              -1;
-  return (index == -1) ? 0 : 1;
+  return shGetPath(c, (VGPath)h) ? 1 : 0;
 }
 
 SHint shIsValidPaint(VGContext *c, VGHandle h)
 {
-  int index = c && c->resources ?
-              shPaintArrayFind(&c->resources->paints, (SHPaint*)h) :
-              -1;
-  return (index == -1) ? 0 : 1;
+  return shGetPaint(c, (VGPaint)h) ? 1 : 0;
 }
 
 SHint shIsValidImage(VGContext *c, VGHandle h)
 {
-  int index = c && c->resources ?
-              shImageArrayFind(&c->resources->images, (SHImage*)h) :
-              -1;
-  return (index == -1) ? 0 : 1;
+  return shGetImage(c, (VGImage)h) ? 1 : 0;
 }
 
 SHint shIsValidFont(VGContext *c, VGHandle h)
 {
-  int index = c && c->resources ?
-              shFontArrayFind(&c->resources->fonts, (SHFont*)h) :
-              -1;
-  return (index == -1) ? 0 : 1;
+  return shGetFont(c, (VGFont)h) ? 1 : 0;
 }
 
 SHint shIsValidMaskLayer(VGContext *c, VGHandle h)
 {
-  int index = c && c->resources ?
-              shMaskLayerArrayFind(&c->resources->maskLayers, (SHMaskLayer*)h) :
-              -1;
-  return (index == -1) ? 0 : 1;
+  return shGetMaskLayer(c, (VGMaskLayer)h) ? 1 : 0;
 }
 
 /*--------------------------------------------------
@@ -875,23 +1023,100 @@ SHint shIsValidMaskLayer(VGContext *c, VGHandle h)
 
 SHResourceType shGetResourceType(VGContext *c, VGHandle h)
 {
-  if (shIsValidPath(c, h))
-    return SH_RESOURCE_PATH;
-  
-  else if (shIsValidPaint(c, h))
-    return SH_RESOURCE_PAINT;
-  
-  else if (shIsValidImage(c, h))
-    return SH_RESOURCE_IMAGE;
+  SHHandleEntry *entry = c && c->resources ?
+    shLookupHandleEntry(c->resources, h, SH_RESOURCE_INVALID) :
+    NULL;
 
-  else if (shIsValidFont(c, h))
-    return SH_RESOURCE_FONT;
+  return entry ? entry->type : SH_RESOURCE_INVALID;
+}
 
-  else if (shIsValidMaskLayer(c, h))
-    return SH_RESOURCE_MASK_LAYER;
-  
-  else
-    return SH_RESOURCE_INVALID;
+VGHandle shRegisterResource(VGContext *c, SHResourceType type, void *object)
+{
+  VGuint slot;
+  SHHandleEntry *entry;
+  VGHandle handle;
+  VGHandle *objectHandle;
+
+  if (!c || !c->resources || !object)
+    return VG_INVALID_HANDLE;
+
+  if (g_freeHandleSlot != 0) {
+    slot = g_freeHandleSlot;
+    g_freeHandleSlot = g_handleEntries[slot].nextFree;
+  } else {
+    slot = g_handleSlotCount;
+    if (slot == 0 || slot > SH_HANDLE_SLOT_MASK)
+      return VG_INVALID_HANDLE;
+    if (!shEnsureHandleCapacity(slot))
+      return VG_INVALID_HANDLE;
+    g_handleSlotCount = slot + 1;
+  }
+
+  entry = &g_handleEntries[slot];
+  if (entry->generation == 0)
+    entry->generation = 1;
+
+  entry->resources = c->resources;
+  entry->object = object;
+  entry->type = type;
+  entry->nextFree = 0;
+
+  handle = shMakeHandle(slot, entry->generation);
+  objectHandle = shResourceHandleField(type, object);
+  if (objectHandle)
+    *objectHandle = handle;
+
+  return handle;
+}
+
+void shUnregisterResource(VGContext *c, VGHandle h,
+                          SHResourceType type, void *object)
+{
+  if (!c || !c->resources)
+    return;
+
+  shReleaseHandle(c->resources, h, type, object);
+}
+
+void* shGetResource(VGContext *c, VGHandle h, SHResourceType type)
+{
+  SHHandleEntry *entry = c && c->resources ?
+    shLookupHandleEntry(c->resources, h, type) :
+    NULL;
+
+  return entry ? entry->object : NULL;
+}
+
+SHPath* shGetPath(VGContext *c, VGPath path)
+{
+  return (SHPath*)shGetResource(c, (VGHandle)path, SH_RESOURCE_PATH);
+}
+
+SHPaint* shGetPaint(VGContext *c, VGPaint paint)
+{
+  return (SHPaint*)shGetResource(c, (VGHandle)paint, SH_RESOURCE_PAINT);
+}
+
+SHImage* shGetImage(VGContext *c, VGImage image)
+{
+  return (SHImage*)shGetResource(c, (VGHandle)image, SH_RESOURCE_IMAGE);
+}
+
+SHFont* shGetFont(VGContext *c, VGFont font)
+{
+  return (SHFont*)shGetResource(c, (VGHandle)font, SH_RESOURCE_FONT);
+}
+
+SHMaskLayer* shGetMaskLayer(VGContext *c, VGMaskLayer maskLayer)
+{
+  return (SHMaskLayer*)shGetResource(c, (VGHandle)maskLayer,
+                                     SH_RESOURCE_MASK_LAYER);
+}
+
+VGboolean shIsLiveImage(VGContext *c, const SHImage *image)
+{
+  return image && image->handle != VG_INVALID_HANDLE &&
+         shGetImage(c, image->handle) == image;
 }
 
 /*-----------------------------------------------------
@@ -1183,7 +1408,8 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
                      VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
     if (maskType == SH_RESOURCE_IMAGE) {
-      image = (SHImage*)mask;
+      image = shGetImage(context, (VGImage)mask);
+      VG_RETURN_ERR_IF(!image, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
       VG_RETURN_ERR_IF(shImageIsRenderTarget(image),
                        VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
       sourceWidth = image->width;
@@ -1193,7 +1419,8 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
       sourceTexture = shImageTexture(image);
       sourceMode = shMaskSourceModeForImage(image);
     } else {
-      layer = (SHMaskLayer*)mask;
+      layer = shGetMaskLayer(context, (VGMaskLayer)mask);
+      VG_RETURN_ERR_IF(!layer, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
       sourceWidth = layer->width;
       sourceHeight = layer->height;
       sourceTextureWidth = layer->width;
@@ -1295,19 +1522,31 @@ VG_API_CALL VGMaskLayer vgCreateMaskLayer(VGint width, VGint height)
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
 
-  VG_RETURN((VGMaskLayer)layer);
+  if (shRegisterResource(context, SH_RESOURCE_MASK_LAYER, layer) ==
+      VG_INVALID_HANDLE) {
+    shMaskLayerArrayRemoveAt(&context->resources->maskLayers,
+                             context->resources->maskLayers.size - 1);
+    SH_DELETEOBJ(SHMaskLayer, layer);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
+
+  VG_RETURN((VGMaskLayer)layer->handle);
 }
 
 VG_API_CALL void vgDestroyMaskLayer(VGMaskLayer maskLayer)
 {
   SHint index;
+  SHMaskLayer *layer;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  index = shMaskLayerArrayFind(&context->resources->maskLayers, (SHMaskLayer*)maskLayer);
+  layer = shGetMaskLayer(context, maskLayer);
+  index = layer ? shMaskLayerArrayFind(&context->resources->maskLayers, layer) :
+    -1;
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
+  shUnregisterResource(context, maskLayer, SH_RESOURCE_MASK_LAYER, layer);
   shMaskLayerArrayRemoveAt(&context->resources->maskLayers, index);
-  SH_DELETEOBJ(SHMaskLayer, (SHMaskLayer*)maskLayer);
+  SH_DELETEOBJ(SHMaskLayer, layer);
 
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -1321,14 +1560,14 @@ VG_API_CALL void vgFillMaskLayer(VGMaskLayer maskLayer,
   SHMaskGLState state;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidMaskLayer(context, maskLayer),
+  layer = shGetMaskLayer(context, maskLayer);
+  VG_RETURN_ERR_IF(!layer,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(x < 0 || y < 0 ||
                    width <= 0 || height <= 0 ||
                    SH_ISNAN(value) || value < 0.0f || value > 1.0f,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  layer = (SHMaskLayer*)maskLayer;
   VG_RETURN_ERR_IF((long long)x + (long long)width > layer->width ||
                    (long long)y + (long long)height > layer->height,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
@@ -1359,7 +1598,8 @@ VG_API_CALL void vgCopyMask(VGMaskLayer maskLayer,
   VGfloat s0, t0, s1, t1;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shIsValidMaskLayer(context, maskLayer),
+  layer = shGetMaskLayer(context, maskLayer);
+  VG_RETURN_ERR_IF(!layer,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
@@ -1372,8 +1612,6 @@ VG_API_CALL void vgCopyMask(VGMaskLayer maskLayer,
       context->maskWidth <= 0 ||
       context->maskHeight <= 0)
     VG_RETURN(VG_NO_RETVAL);
-
-  layer = (SHMaskLayer*)maskLayer;
 
   dstX0 = dx;
   dstY0 = dy;
