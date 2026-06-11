@@ -5,15 +5,6 @@
 # Broad API error coverage reaches known unimplemented validation cases.
 A10102
 #
-# Context/screen-layout and implementation-limit state still needs triage.
-A20301
-#
-# Image parameter coverage reaches unsupported core image-format combinations.
-A30201
-#
-# Scissoring coverage exposes a path rendering state mismatch.
-E10301
-#
 # Mask image format/default-state coverage reaches unsupported mask formats.
 F10201
 F10203

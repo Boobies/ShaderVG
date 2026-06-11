@@ -438,18 +438,25 @@ static void shSet(VGContext *context, VGParamType type, SHint count,
   case VG_SCISSOR_RECTS:
     
     SH_RETURN_ERR_IF(count % 4, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    SH_RETURN_ERR_IF(count > SH_MAX_SCISSOR_RECTS * 4,
+                     VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    SH_RETURN_ERR_IF(!shRectArrayReserveAndCopy(&context->scissor,
+                                                count / 4),
+                     VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
     shRectArrayClear(&context->scissor);
-    for (i=0; i<count && i<SH_MAX_SCISSOR_RECTS; i+=4) {
+    for (i=0; i<count; i+=4) {
       SHRectangle r;
       r.x = shParamToFloat(values, floats, i+0);
       r.y = shParamToFloat(values, floats, i+1);
       r.w = shParamToFloat(values, floats, i+2);
       r.h = shParamToFloat(values, floats, i+3);
-      shRectArrayPushBackP(&context->scissor, &r);
+      SH_RETURN_ERR_IF(!shRectArrayPushBackP(&context->scissor, &r),
+                       VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
     }
     
     break;
     
+  case VG_SCREEN_LAYOUT:
   case VG_MAX_SCISSOR_RECTS:
   case VG_MAX_DASH_COUNT:
   case VG_MAX_KERNEL_SIZE:
@@ -601,6 +608,11 @@ static void shGet(VGContext *context, VGParamType type, SHint count, void *value
   case VG_PIXEL_LAYOUT:
     SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
     shIntToParam((SHint)context->pixelLayout, count, values, floats, 0);
+    break;
+
+  case VG_SCREEN_LAYOUT:
+    SH_RETURN_ERR_IF(count != 1, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+    shIntToParam((SHint)VG_PIXEL_LAYOUT_UNKNOWN, count, values, floats, 0);
     break;
     
   case VG_FILTER_CHANNEL_MASK:
@@ -879,6 +891,7 @@ VG_API_CALL VGint vgGetVectorSize(VGParamType type)
   case VG_STROKE_CAP_STYLE:
   case VG_STROKE_JOIN_STYLE:
   case VG_PIXEL_LAYOUT:
+  case VG_SCREEN_LAYOUT:
   case VG_FILTER_CHANNEL_MASK:
   case VG_FILTER_FORMAT_LINEAR:
   case VG_FILTER_FORMAT_PREMULTIPLIED:

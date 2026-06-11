@@ -1403,12 +1403,21 @@ static int run_review_regression_test(void)
   VGfloat dashPattern[] = {3.0f, 1.0f, 2.0f, 1.0f};
   VGfloat dashRead[4];
   VGfloat *oversizedDashPattern = NULL;
+  VGint scissorRects[] = {2, 2, 3, 3, 10, 2, 3, 3};
+  VGint scissorRead[8];
+  VGint *oversizedScissorRects = NULL;
+  VGubyte scissorPixel[4];
+  VGfloat opaqueBlack[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat opaqueRed[] = {1.0f, 0.0f, 0.0f, 1.0f};
+  VGfloat opaqueGreen[] = {0.0f, 1.0f, 0.0f, 1.0f};
   VGfloat minX = -1.0f;
   VGfloat minY = -1.0f;
   VGfloat width = -1.0f;
   VGfloat height = -1.0f;
   VGint segmentCount;
+  VGint screenLayout;
   VGint maxDashCount;
+  VGint maxScissorRects;
   VGboolean interpolated;
   int i;
   int result = 0;
@@ -1422,6 +1431,15 @@ static int run_review_regression_test(void)
   if (vgGetParameteri(paint, VG_PAINT_COLOR_RAMP_PREMULTIPLIED) != VG_TRUE ||
       expect_no_vg_error("OpenVG paint premultiplied default query failed")) {
     fprintf(stderr, "OpenVG paint color ramp premultiplied default was not VG_TRUE\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  screenLayout = vgGeti(VG_SCREEN_LAYOUT);
+  if (expect_no_vg_error("OpenVG screen layout query failed") ||
+      screenLayout < VG_PIXEL_LAYOUT_UNKNOWN ||
+      screenLayout > VG_PIXEL_LAYOUT_BGR_HORIZONTAL) {
+    fprintf(stderr, "OpenVG screen layout query returned an invalid value\n");
     result = 1;
     goto cleanup;
   }
@@ -1503,6 +1521,105 @@ static int run_review_regression_test(void)
   }
   vgSetfv(VG_STROKE_DASH_PATTERN, 0, NULL);
   if (expect_no_vg_error("OpenVG dash pattern reset failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  maxScissorRects = vgGeti(VG_MAX_SCISSOR_RECTS);
+  if (expect_no_vg_error("OpenVG scissor rect limit query failed") ||
+      maxScissorRects < 32) {
+    fprintf(stderr,
+            "OpenVG VG_MAX_SCISSOR_RECTS was below the required minimum\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  oversizedScissorRects =
+    (VGint*)malloc((size_t)(maxScissorRects + 1) * 4u * sizeof(VGint));
+  if (!oversizedScissorRects) {
+    result = 1;
+    goto cleanup;
+  }
+
+  for (i=0; i<(maxScissorRects + 1) * 4; ++i)
+    oversizedScissorRects[i] = (i % 4 == 2 || i % 4 == 3) ? 1 : 0;
+
+  vgSetiv(VG_SCISSOR_RECTS, 8, scissorRects);
+  if (expect_no_vg_error("OpenVG scissor rect setup failed")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetiv(VG_SCISSOR_RECTS,
+          (maxScissorRects + 1) * 4,
+          oversizedScissorRects);
+  if (expect_vg_error("OpenVG accepted too many scissor rectangles",
+                      VG_ILLEGAL_ARGUMENT_ERROR)) {
+    result = 1;
+    goto cleanup;
+  }
+  if (vgGetVectorSize(VG_SCISSOR_RECTS) != 8 ||
+      expect_no_vg_error("OpenVG scissor rect size changed after invalid set")) {
+    fprintf(stderr,
+            "OpenVG invalid scissor rect set changed the stored count\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgGetiv(VG_SCISSOR_RECTS, 8, scissorRead);
+  if (expect_no_vg_error("OpenVG scissor rect readback failed") ||
+      memcmp(scissorRead, scissorRects, sizeof(scissorRects)) != 0) {
+    fprintf(stderr,
+            "OpenVG invalid scissor rect set changed the stored rectangles\n");
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSetfv(VG_CLEAR_COLOR, 4, opaqueBlack);
+  vgClear(0, 0, 64, 64);
+  vgSeti(VG_SCISSORING, VG_TRUE);
+  vgSetfv(VG_CLEAR_COLOR, 4, opaqueRed);
+  vgClear(0, 0, 64, 64);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgFinish();
+  vgReadPixels(scissorPixel, 4, VG_sRGBA_8888, 2, 2, 1, 1);
+  if (expect_no_vg_error("OpenVG scissored clear first rect readback failed") ||
+      expect_rgba_at(scissorPixel, 4, 0, 0, 255, 0, 0, 255,
+                     "OpenVG scissored clear missed the first rectangle")) {
+    result = 1;
+    goto cleanup;
+  }
+  vgReadPixels(scissorPixel, 4, VG_sRGBA_8888, 10, 2, 1, 1);
+  if (expect_no_vg_error("OpenVG scissored clear second rect readback failed") ||
+      expect_rgba_at(scissorPixel, 4, 0, 0, 255, 0, 0, 255,
+                     "OpenVG scissored clear missed the second rectangle")) {
+    result = 1;
+    goto cleanup;
+  }
+  vgReadPixels(scissorPixel, 4, VG_sRGBA_8888, 7, 2, 1, 1);
+  if (expect_no_vg_error("OpenVG scissored clear gap readback failed") ||
+      expect_rgba_at(scissorPixel, 4, 0, 0, 0, 0, 0, 255,
+                     "OpenVG scissored clear wrote between rectangles")) {
+    result = 1;
+    goto cleanup;
+  }
+
+  vgSetfv(VG_SCISSOR_RECTS, 0, NULL);
+  vgSeti(VG_SCISSORING, VG_TRUE);
+  vgSetfv(VG_CLEAR_COLOR, 4, opaqueGreen);
+  vgClear(20, 2, 1, 1);
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgFinish();
+  vgReadPixels(scissorPixel, 4, VG_sRGBA_8888, 20, 2, 1, 1);
+  if (expect_no_vg_error("OpenVG empty scissored clear readback failed") ||
+      expect_rgba_at(scissorPixel, 4, 0, 0, 0, 0, 0, 255,
+                     "OpenVG empty scissor rectangles did not make clear a no-op")) {
+    result = 1;
+    goto cleanup;
+  }
+  vgSetfv(VG_SCISSOR_RECTS, 0, NULL);
+  if (expect_no_vg_error("OpenVG scissor rect reset failed")) {
     result = 1;
     goto cleanup;
   }
@@ -1594,8 +1711,11 @@ static int run_review_regression_test(void)
   }
 
 cleanup:
+  vgSeti(VG_SCISSORING, VG_FALSE);
+  vgSetfv(VG_SCISSOR_RECTS, 0, NULL);
   vgSetfv(VG_STROKE_DASH_PATTERN, 0, NULL);
   vgGetError();
+  free(oversizedScissorRects);
   free(oversizedDashPattern);
   if (badCountEnd != VG_INVALID_HANDLE)
     vgDestroyPath(badCountEnd);

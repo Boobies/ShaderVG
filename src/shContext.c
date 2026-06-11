@@ -1436,6 +1436,21 @@ VG_API_CALL void vgClear(VGint x, VGint y, VGint width, VGint height)
   VGint clearY = y;
   VGint clearWidth = width;
   VGint clearHeight = height;
+  VGint clearRight;
+  VGint clearTop;
+  VGint intersectionX;
+  VGint intersectionY;
+  VGint intersectionWidth;
+  VGint intersectionHeight;
+  long long rectX;
+  long long rectY;
+  long long rectRight;
+  long long rectTop;
+  long long intersectionRight;
+  long long intersectionTop;
+  VGboolean cleared = VG_FALSE;
+  SHRectangle *rect;
+  int i;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
@@ -1462,16 +1477,6 @@ VG_API_CALL void vgClear(VGint x, VGint y, VGint width, VGint height)
   if (clearWidth <= 0 || clearHeight <= 0)
     VG_RETURN(VG_NO_RETVAL);
 
-  /* Check if scissoring needed */
-  if (clearX > 0 || clearY > 0 ||
-      clearWidth < context->surfaceWidth ||
-      clearHeight < context->surfaceHeight) {
-    
-    glScissor(clearX, clearY, clearWidth, clearHeight);
-    glEnable(GL_SCISSOR_TEST);
-  }
-  
-  /* Clear GL color buffer */
   /* TODO: what about stencil and depth? when do we clear that?
      we would need some kind of special "begin" function at
      beginning of each drawing or clear the planes prior to each
@@ -1480,7 +1485,60 @@ VG_API_CALL void vgClear(VGint x, VGint y, VGint width, VGint height)
                context->clearColor.g * context->clearColor.a,
                context->clearColor.b * context->clearColor.a,
                context->clearColor.a);
+
+  if (context->scissoring == VG_TRUE) {
+    if (context->scissor.size == 0)
+      VG_RETURN(VG_NO_RETVAL);
+
+    clearRight = clearX + clearWidth;
+    clearTop = clearY + clearHeight;
+    glEnable(GL_SCISSOR_TEST);
+
+    for (i=0; i<context->scissor.size; ++i) {
+      rect = &context->scissor.items[i];
+      if (rect->w <= 0.0f || rect->h <= 0.0f)
+        continue;
+
+      rectX = (VGint)rect->x;
+      rectY = (VGint)rect->y;
+      rectRight = rectX + (VGint)rect->w;
+      rectTop = rectY + (VGint)rect->h;
+
+      intersectionX = (VGint)SH_MAX((long long)clearX, rectX);
+      intersectionY = (VGint)SH_MAX((long long)clearY, rectY);
+      intersectionRight = SH_MIN((long long)clearRight, rectRight);
+      intersectionTop = SH_MIN((long long)clearTop, rectTop);
+      intersectionWidth = (VGint)(intersectionRight - intersectionX);
+      intersectionHeight = (VGint)(intersectionTop - intersectionY);
+      if (intersectionWidth <= 0 || intersectionHeight <= 0)
+        continue;
+
+      glScissor(intersectionX, intersectionY,
+                intersectionWidth, intersectionHeight);
+      glClear(GL_COLOR_BUFFER_BIT |
+              GL_STENCIL_BUFFER_BIT |
+              GL_DEPTH_BUFFER_BIT);
+      cleared = VG_TRUE;
+    }
+
+    glDisable(GL_SCISSOR_TEST);
+    if (cleared)
+      shMarkRenderTargetDirty(context);
+    VG_RETURN(VG_NO_RETVAL);
+  }
+
+  /* Check if scissoring needed */
+  if (clearX > 0 || clearY > 0 ||
+      clearWidth < context->surfaceWidth ||
+      clearHeight < context->surfaceHeight) {
+    
+    glScissor(clearX, clearY, clearWidth, clearHeight);
+    glEnable(GL_SCISSOR_TEST);
+  } else {
+    glDisable(GL_SCISSOR_TEST);
+  }
   
+  /* Clear GL color buffer */
   glClear(GL_COLOR_BUFFER_BIT |
           GL_STENCIL_BUFFER_BIT |
           GL_DEPTH_BUFFER_BIT);
