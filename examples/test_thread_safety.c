@@ -24,7 +24,14 @@ typedef struct
   EGLConfig config;
   EGLSurface surface;
   EGLContext context;
+  int operation;
 } ThreadArgs;
+
+enum {
+  THREAD_TEARDOWN_DESTROY_CONTEXT,
+  THREAD_TEARDOWN_DESTROY_SURFACE,
+  THREAD_TEARDOWN_TERMINATE_DISPLAY
+};
 
 static int fail_egl(const char *message)
 {
@@ -333,6 +340,43 @@ static void *make_current_conflict_worker(void *arg)
   return NULL;
 }
 
+static void *teardown_conflict_worker(void *arg)
+{
+  ThreadArgs *args = (ThreadArgs*)arg;
+  const char *operation = "teardown";
+  EGLBoolean result = EGL_FALSE;
+
+  switch (args->operation) {
+  case THREAD_TEARDOWN_DESTROY_CONTEXT:
+    operation = "context destruction";
+    result = eglDestroyContext(args->display, args->context);
+    break;
+  case THREAD_TEARDOWN_DESTROY_SURFACE:
+    operation = "surface destruction";
+    result = eglDestroySurface(args->display, args->surface);
+    break;
+  case THREAD_TEARDOWN_TERMINATE_DISPLAY:
+    operation = "display termination";
+    result = eglTerminate(args->display);
+    break;
+  default:
+    fprintf(stderr, "thread test received unknown teardown operation\n");
+    args->status = 1;
+    return NULL;
+  }
+
+  if (result) {
+    fprintf(stderr, "EGL allowed cross-thread %s of current objects\n",
+            operation);
+    args->status = 1;
+    return NULL;
+  }
+
+  args->status = expect_egl_error("EGL reported wrong cross-thread teardown error",
+                                  EGL_BAD_ACCESS);
+  return NULL;
+}
+
 static int run_concurrent_first_egl(void)
 {
   enum { THREAD_COUNT = 4 };
@@ -483,6 +527,246 @@ static int run_make_current_conflict(void)
   return status;
 }
 
+static int run_same_thread_deferred_destroy(void)
+{
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  EGLSurface surface;
+  EGLContext context;
+  EGLBoolean contextDestroyed = EGL_FALSE;
+  EGLBoolean surfaceDestroyed = EGL_FALSE;
+  int status = 0;
+
+  if (init_egl(&state, EGL_NO_CONTEXT))
+    return 1;
+
+  surface = state.surface;
+  context = state.context;
+
+  if (!eglDestroyContext(state.display, context))
+    status = fail_egl("thread test could not defer current context destruction");
+  else
+    contextDestroyed = EGL_TRUE;
+
+  if (!status) {
+    if (!eglDestroySurface(state.display, surface))
+      status = fail_egl("thread test could not defer current surface destruction");
+    else
+      surfaceDestroyed = EGL_TRUE;
+  }
+
+  if (!status && eglGetCurrentContext() != context) {
+    fprintf(stderr, "EGL cleared current context before unbind\n");
+    status = 1;
+  }
+
+  if (!status && eglGetCurrentSurface(EGL_DRAW) != surface) {
+    fprintf(stderr, "EGL cleared current draw surface before unbind\n");
+    status = 1;
+  }
+
+  if (!status && eglGetCurrentSurface(EGL_READ) != surface) {
+    fprintf(stderr, "EGL cleared current read surface before unbind\n");
+    status = 1;
+  }
+
+  if (!eglMakeCurrent(state.display,
+                      EGL_NO_SURFACE,
+                      EGL_NO_SURFACE,
+                      EGL_NO_CONTEXT)) {
+    status = fail_egl("thread test could not clear deferred current objects");
+  }
+
+  if (contextDestroyed)
+    state.context = EGL_NO_CONTEXT;
+  if (surfaceDestroyed)
+    state.surface = EGL_NO_SURFACE;
+
+  if (state.context != EGL_NO_CONTEXT &&
+      !eglDestroyContext(state.display, state.context))
+    status = fail_egl("thread test could not destroy deferred-test context");
+
+  if (state.surface != EGL_NO_SURFACE &&
+      !eglDestroySurface(state.display, state.surface))
+    status = fail_egl("thread test could not destroy deferred-test surface");
+
+  if (!eglTerminate(state.display))
+    status = fail_egl("thread test could not terminate deferred-test display");
+
+  return status;
+}
+
+static int run_release_thread_clears_current(void)
+{
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  int status = 0;
+
+  if (init_egl(&state, EGL_NO_CONTEXT))
+    return 1;
+
+  if (!eglReleaseThread())
+    status = fail_egl("thread test could not release current thread");
+
+  if (!status && eglGetCurrentContext() != EGL_NO_CONTEXT) {
+    fprintf(stderr, "eglReleaseThread left a current context\n");
+    status = 1;
+  }
+
+  if (!status && eglGetCurrentSurface(EGL_DRAW) != EGL_NO_SURFACE) {
+    fprintf(stderr, "eglReleaseThread left a current draw surface\n");
+    status = 1;
+  }
+
+  if (!status && eglGetCurrentSurface(EGL_READ) != EGL_NO_SURFACE) {
+    fprintf(stderr, "eglReleaseThread left a current read surface\n");
+    status = 1;
+  }
+
+  if (!status && eglGetCurrentDisplay() != EGL_NO_DISPLAY) {
+    fprintf(stderr, "eglReleaseThread left a current display\n");
+    status = 1;
+  }
+
+  if (state.context != EGL_NO_CONTEXT &&
+      !eglDestroyContext(state.display, state.context))
+    status = fail_egl("thread test could not destroy released context");
+
+  if (state.surface != EGL_NO_SURFACE &&
+      !eglDestroySurface(state.display, state.surface))
+    status = fail_egl("thread test could not destroy released surface");
+
+  if (!eglTerminate(state.display))
+    status = fail_egl("thread test could not terminate released display");
+
+  return status;
+}
+
+static int run_release_thread_finalizes_deferred_destroy(void)
+{
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  EGLBoolean contextDestroyed = EGL_FALSE;
+  EGLBoolean surfaceDestroyed = EGL_FALSE;
+  int status = 0;
+
+  if (init_egl(&state, EGL_NO_CONTEXT))
+    return 1;
+
+  if (!eglDestroyContext(state.display, state.context))
+    status = fail_egl("thread test could not defer context before release");
+  else
+    contextDestroyed = EGL_TRUE;
+
+  if (!status) {
+    if (!eglDestroySurface(state.display, state.surface))
+      status = fail_egl("thread test could not defer surface before release");
+    else
+      surfaceDestroyed = EGL_TRUE;
+  }
+
+  if (!eglReleaseThread())
+    status = fail_egl("thread test could not release deferred objects");
+
+  if (contextDestroyed)
+    state.context = EGL_NO_CONTEXT;
+  if (surfaceDestroyed)
+    state.surface = EGL_NO_SURFACE;
+
+  if (!status && eglGetCurrentContext() != EGL_NO_CONTEXT) {
+    fprintf(stderr, "eglReleaseThread left a deferred context current\n");
+    status = 1;
+  }
+
+  if (!status && eglGetCurrentSurface(EGL_DRAW) != EGL_NO_SURFACE) {
+    fprintf(stderr, "eglReleaseThread left a deferred draw surface current\n");
+    status = 1;
+  }
+
+  if (!status && eglGetCurrentSurface(EGL_READ) != EGL_NO_SURFACE) {
+    fprintf(stderr, "eglReleaseThread left a deferred read surface current\n");
+    status = 1;
+  }
+
+  if (state.context != EGL_NO_CONTEXT &&
+      !eglDestroyContext(state.display, state.context))
+    status = fail_egl("thread test could not destroy release-test context");
+
+  if (state.surface != EGL_NO_SURFACE &&
+      !eglDestroySurface(state.display, state.surface))
+    status = fail_egl("thread test could not destroy release-test surface");
+
+  if (!eglTerminate(state.display))
+    status = fail_egl("thread test could not terminate release-test display");
+
+  return status;
+}
+
+static int run_teardown_conflict_case(TestEGL *state, int operation)
+{
+  ThreadArgs args;
+  pthread_t thread;
+
+  args.status = 1;
+  args.display = state->display;
+  args.surface = state->surface;
+  args.context = state->context;
+  args.operation = operation;
+
+  if (pthread_create(&thread, NULL,
+                     teardown_conflict_worker, &args) != 0) {
+    fprintf(stderr, "thread test could not create teardown conflict thread\n");
+    return 1;
+  }
+
+  pthread_join(thread, NULL);
+  return args.status;
+}
+
+static int run_cross_thread_teardown_conflicts(void)
+{
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  int status = 0;
+
+  if (init_egl(&state, EGL_NO_CONTEXT))
+    return 1;
+
+  if (run_teardown_conflict_case(&state, THREAD_TEARDOWN_DESTROY_CONTEXT))
+    status = 1;
+
+  if (run_teardown_conflict_case(&state, THREAD_TEARDOWN_DESTROY_SURFACE))
+    status = 1;
+
+  if (run_teardown_conflict_case(&state, THREAD_TEARDOWN_TERMINATE_DISPLAY))
+    status = 1;
+
+  if (cleanup_egl(&state))
+    status = 1;
+
+  return status;
+}
+
 static int run_display_canonicalization(void)
 {
   TestEGL state = {
@@ -610,6 +894,14 @@ int main(void)
   if (run_display_canonicalization())
     return EXIT_FAILURE;
   if (run_display_stale_generation())
+    return EXIT_FAILURE;
+  if (run_same_thread_deferred_destroy())
+    return EXIT_FAILURE;
+  if (run_release_thread_clears_current())
+    return EXIT_FAILURE;
+  if (run_release_thread_finalizes_deferred_destroy())
+    return EXIT_FAILURE;
+  if (run_cross_thread_teardown_conflicts())
     return EXIT_FAILURE;
   if (warm_up_egl())
     return EXIT_FAILURE;
