@@ -20,6 +20,7 @@
 
 #define VG_API_EXPORT
 #include "shDefs.h"
+#include "shThread.h"
 
 /*-----------------------------------------------------
  * OpenGL core profile
@@ -85,6 +86,26 @@ PFNGLUNIFORMMATRIX4FVPROC           glUniformMatrix4fv;
 PFNGLUSEPROGRAMPROC                 glUseProgram;
 PFNGLVERTEXATTRIBPOINTERPROC        glVertexAttribPointer;
 
+static SHOnce g_glExtensionMutexOnce = SH_ONCE_INIT;
+static SHMutex g_glExtensionMutex;
+static HMODULE g_opengl32 = NULL;
+
+static void shInitGLExtensionMutex(void)
+{
+  shMutexInit(&g_glExtensionMutex);
+}
+
+static void shLockGLExtensions(void)
+{
+  shOnce(&g_glExtensionMutexOnce, shInitGLExtensionMutex);
+  shMutexLock(&g_glExtensionMutex);
+}
+
+static void shUnlockGLExtensions(void)
+{
+  shMutexUnlock(&g_glExtensionMutex);
+}
+
 static void *shGetProcAddress(const char *name)
 {
   void *proc = (void*)wglGetProcAddress(name);
@@ -94,10 +115,9 @@ static void *shGetProcAddress(const char *name)
       proc == (void*)0x2 ||
       proc == (void*)0x3 ||
       proc == (void*)-1) {
-    static HMODULE opengl32 = NULL;
-    if (opengl32 == NULL)
-      opengl32 = LoadLibraryA("opengl32.dll");
-    proc = opengl32 ? (void*)GetProcAddress(opengl32, name) : NULL;
+    if (g_opengl32 == NULL)
+      g_opengl32 = LoadLibraryA("opengl32.dll");
+    proc = g_opengl32 ? (void*)GetProcAddress(g_opengl32, name) : NULL;
   }
 
   return proc;
@@ -111,6 +131,7 @@ void shLoadExtensions(void *c)
   (void)c;
 
 #if defined(_WIN32)
+  shLockGLExtensions();
   SH_LOAD_GL(PFNGLACTIVETEXTUREPROC, glActiveTexture);
   SH_LOAD_GL(PFNGLATTACHSHADERPROC, glAttachShader);
   SH_LOAD_GL(PFNGLBINDBUFFERPROC, glBindBuffer);
@@ -170,6 +191,7 @@ void shLoadExtensions(void *c)
   SH_LOAD_GL(PFNGLUNIFORMMATRIX4FVPROC, glUniformMatrix4fv);
   SH_LOAD_GL(PFNGLUSEPROGRAMPROC, glUseProgram);
   SH_LOAD_GL(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer);
+  shUnlockGLExtensions();
 #endif
 }
 

@@ -1229,6 +1229,10 @@ SHPathGlyphBatchResult shDrawPathGlyphBatch(VGContext *context,
       shRequestedCoverageScale(context) > 1)
     return SH_PATH_GLYPH_BATCH_UNSUPPORTED;
 
+  /* Independent non-zero glyph paths need separate winding evaluation. */
+  if (context->fillRule == VG_NON_ZERO)
+    return SH_PATH_GLYPH_BATCH_UNSUPPORTED;
+
   if (context->scissoring == VG_TRUE) {
     if (context->scissor.size == 0)
       return SH_PATH_GLYPH_BATCH_DRAWN;

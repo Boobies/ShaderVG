@@ -40,7 +40,22 @@ EGL library so ShaderVG's OpenVG-aware EGL entry points are used first.
 
 ### Testing
 
-Move to examples directory, execute tests:
+Run the default offscreen regression tests:
+```
+$ make check
+```
+
+`make check` runs the pbuffer smoke test and the thread-safety smoke test when
+examples are enabled. For a longer thread-safety stress run, scale the workload
+with environment variables:
+```
+$ SHADERVG_THREAD_TEST_REPEAT=25 \
+  SHADERVG_THREAD_TEST_SHARED_WORKERS=4 \
+  SHADERVG_THREAD_TEST_SHARED_ITERATIONS=256 \
+  examples/test_thread_safety
+```
+
+Move to examples directory to execute visual examples:
 ```
 $ cd examples
 $ ./test_tiger_shader
@@ -105,6 +120,11 @@ $ ./test_tiger_shader
   Minimal EGL/OpenVG pbuffer smoke test that clears an offscreen surface
   and reads one pixel back. It also covers OpenVG image-backed pbuffers
   created with `eglCreatePbufferFromClientBuffer`.
+
+#### test_thread_safety
+  Exercises concurrent EGL/OpenVG initialization, context switching, shared
+  resource churn, retained-resource lifetime, deferred destruction, and
+  image-backed pbuffer lifetime behavior.
 
 #### test_egl_gl_vg
   Interleaves raw OpenGL and OpenVG drawing on the same EGL surface.

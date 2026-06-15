@@ -1,4 +1,6 @@
 # Relative path from here to uninstalled library
+AUTOMAKE_OPTIONS = serial-tests
+
 INCLUDE_VG_DIR = $(top_builddir)/include
 LIB_VG_DIR = $(top_builddir)/src
 LIB_VG = ${LIB_VG_DIR}/libOpenVG.la
@@ -14,6 +16,8 @@ EXAMPLE_LF = @CONFIG_LDFLAGS@ -L${prefix}/lib
 EXTRA_DIST = *.jpg *.png
 
 noinst_PROGRAMS = test_pbuffer test_egl_gl_vg test_egl_features test_masking test_pixels test_filters test_parametric_filter test_thread_safety
+
+TESTS = test_pbuffer test_thread_safety
 
 if BUILD_VGU
 noinst_PROGRAMS += test_vgu

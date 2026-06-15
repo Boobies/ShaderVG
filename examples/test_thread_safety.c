@@ -3,6 +3,7 @@
 
 #include <X11/Xlib.h>
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -55,6 +56,13 @@ typedef struct
   int destroyedImage;
 } PbufferRaceArgs;
 
+typedef struct
+{
+  int repeat;
+  int sharedWorkers;
+  int sharedIterations;
+} ThreadTestOptions;
+
 enum {
   THREAD_TEARDOWN_DESTROY_CONTEXT,
   THREAD_TEARDOWN_DESTROY_SURFACE,
@@ -63,9 +71,68 @@ enum {
 
 enum {
   THREAD_IMAGE_SIZE = 8,
-  THREAD_SHARED_WORKERS = 2,
-  THREAD_SHARED_ITERATIONS = 64
+  THREAD_DEFAULT_REPEAT = 1,
+  THREAD_DEFAULT_SHARED_WORKERS = 2,
+  THREAD_DEFAULT_SHARED_ITERATIONS = 64,
+  THREAD_MAX_REPEAT = 1000,
+  THREAD_MAX_SHARED_WORKERS = 16,
+  THREAD_MAX_SHARED_ITERATIONS = 100000
 };
+
+static int parse_positive_env(const char *name,
+                              int defaultValue,
+                              int maxValue,
+                              int *out)
+{
+  const char *value = getenv(name);
+  char *end = NULL;
+  long parsed;
+
+  if (!value || !*value) {
+    *out = defaultValue;
+    return 0;
+  }
+
+  errno = 0;
+  parsed = strtol(value, &end, 10);
+  if (errno == ERANGE ||
+      end == value ||
+      *end != '\0' ||
+      parsed < 1 ||
+      parsed > maxValue) {
+    fprintf(stderr,
+            "%s must be an integer from 1 to %d for test_thread_safety\n",
+            name,
+            maxValue);
+    return 1;
+  }
+
+  *out = (int)parsed;
+  return 0;
+}
+
+static int parse_thread_test_options(ThreadTestOptions *options)
+{
+  if (parse_positive_env("SHADERVG_THREAD_TEST_REPEAT",
+                         THREAD_DEFAULT_REPEAT,
+                         THREAD_MAX_REPEAT,
+                         &options->repeat))
+    return 1;
+
+  if (parse_positive_env("SHADERVG_THREAD_TEST_SHARED_WORKERS",
+                         THREAD_DEFAULT_SHARED_WORKERS,
+                         THREAD_MAX_SHARED_WORKERS,
+                         &options->sharedWorkers))
+    return 1;
+
+  if (parse_positive_env("SHADERVG_THREAD_TEST_SHARED_ITERATIONS",
+                         THREAD_DEFAULT_SHARED_ITERATIONS,
+                         THREAD_MAX_SHARED_ITERATIONS,
+                         &options->sharedIterations))
+    return 1;
+
+  return 0;
+}
 
 static int fail_egl(const char *message)
 {
@@ -861,7 +928,7 @@ static int run_shared_context_stress(void)
   return status;
 }
 
-static int run_shared_resource_churn(void)
+static int run_shared_resource_churn(const ThreadTestOptions *options)
 {
   TestEGL base = {
     EGL_NO_DISPLAY,
@@ -870,22 +937,36 @@ static int run_shared_resource_churn(void)
     EGL_NO_CONTEXT,
     0
   };
-  pthread_t threads[THREAD_SHARED_WORKERS];
-  ThreadArgs args[THREAD_SHARED_WORKERS];
+  pthread_t *threads = NULL;
+  ThreadArgs *args = NULL;
   int created = 0;
   int i;
   int status = 0;
 
-  if (init_egl(&base, EGL_NO_CONTEXT))
+  threads = (pthread_t*)calloc((size_t)options->sharedWorkers,
+                               sizeof(pthread_t));
+  args = (ThreadArgs*)calloc((size_t)options->sharedWorkers,
+                             sizeof(ThreadArgs));
+  if (!threads || !args) {
+    fprintf(stderr, "thread test could not allocate shared resource workers\n");
+    free(threads);
+    free(args);
     return 1;
+  }
 
-  for (i = 0; i < THREAD_SHARED_WORKERS; ++i) {
+  if (init_egl(&base, EGL_NO_CONTEXT)) {
+    free(threads);
+    free(args);
+    return 1;
+  }
+
+  for (i = 0; !status && i < options->sharedWorkers; ++i) {
     args[i].status = 1;
     args[i].display = base.display;
     args[i].config = base.config;
     args[i].context = base.context;
     args[i].workerId = i + 1;
-    args[i].iterations = THREAD_SHARED_ITERATIONS;
+    args[i].iterations = options->sharedIterations;
     if (pthread_create(&threads[i], NULL,
                        shared_resource_churn_worker, &args[i]) != 0) {
       fprintf(stderr, "thread test could not create shared resource worker\n");
@@ -904,6 +985,8 @@ static int run_shared_resource_churn(void)
   if (cleanup_egl(&base))
     status = 1;
 
+  free(threads);
+  free(args);
   return status;
 }
 
@@ -1518,39 +1601,60 @@ static int run_display_stale_generation(void)
   return status;
 }
 
+static int run_thread_safety_suite(const ThreadTestOptions *options)
+{
+  if (run_concurrent_first_egl())
+    return 1;
+  if (run_display_canonicalization())
+    return 1;
+  if (run_display_stale_generation())
+    return 1;
+  if (run_same_thread_deferred_destroy())
+    return 1;
+  if (run_release_thread_clears_current())
+    return 1;
+  if (run_release_thread_finalizes_deferred_destroy())
+    return 1;
+  if (run_cross_thread_teardown_conflicts())
+    return 1;
+  if (warm_up_egl())
+    return 1;
+  if (run_independent_contexts())
+    return 1;
+  if (run_shared_context_stress())
+    return 1;
+  if (run_shared_resource_churn(options))
+    return 1;
+  if (run_cross_thread_retained_resource_lifetime())
+    return 1;
+  if (run_image_pbuffer_ref_race())
+    return 1;
+  if (run_make_current_conflict())
+    return 1;
+
+  return 0;
+}
+
 int main(void)
 {
+  ThreadTestOptions options;
+  int i;
+
   XInitThreads();
   select_test_platform();
 
-  if (run_concurrent_first_egl())
+  if (parse_thread_test_options(&options))
     return EXIT_FAILURE;
-  if (run_display_canonicalization())
-    return EXIT_FAILURE;
-  if (run_display_stale_generation())
-    return EXIT_FAILURE;
-  if (run_same_thread_deferred_destroy())
-    return EXIT_FAILURE;
-  if (run_release_thread_clears_current())
-    return EXIT_FAILURE;
-  if (run_release_thread_finalizes_deferred_destroy())
-    return EXIT_FAILURE;
-  if (run_cross_thread_teardown_conflicts())
-    return EXIT_FAILURE;
-  if (warm_up_egl())
-    return EXIT_FAILURE;
-  if (run_independent_contexts())
-    return EXIT_FAILURE;
-  if (run_shared_context_stress())
-    return EXIT_FAILURE;
-  if (run_shared_resource_churn())
-    return EXIT_FAILURE;
-  if (run_cross_thread_retained_resource_lifetime())
-    return EXIT_FAILURE;
-  if (run_image_pbuffer_ref_race())
-    return EXIT_FAILURE;
-  if (run_make_current_conflict())
-    return EXIT_FAILURE;
+
+  for (i = 0; i < options.repeat; ++i) {
+    if (options.repeat > 1)
+      printf("EGL/OpenVG thread safety iteration %d/%d\n",
+             i + 1,
+             options.repeat);
+
+    if (run_thread_safety_suite(&options))
+      return EXIT_FAILURE;
+  }
 
   printf("EGL/OpenVG thread safety smoke test passed\n");
   return EXIT_SUCCESS;

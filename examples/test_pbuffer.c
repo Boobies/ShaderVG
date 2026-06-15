@@ -43,6 +43,14 @@ static int expect_channel_between(const VGubyte *data,
                                   VGubyte maxValue,
                                   const char *message);
 
+static void select_test_platform(void)
+{
+#if !defined(_WIN32)
+  if (!getenv("EGL_PLATFORM"))
+    setenv("EGL_PLATFORM", "surfaceless", 0);
+#endif
+}
+
 static int fail_egl(const char *message)
 {
   fprintf(stderr, "%s (EGL error 0x%04x)\n", message, eglGetError());
@@ -6278,6 +6286,8 @@ int main(void)
     EGL_NONE
   };
   VGfloat clearColor[] = { 0.2f, 0.4f, 0.7f, 1.0f };
+
+  select_test_platform();
 
   display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
   if (display == EGL_NO_DISPLAY)
