@@ -32,6 +32,17 @@ static int fail_egl(const char *message)
   return 1;
 }
 
+static int expect_egl_error(const char *message, EGLint expected)
+{
+  EGLint error = eglGetError();
+  if (error == expected)
+    return 0;
+
+  fprintf(stderr, "%s (expected EGL error 0x%04x, got 0x%04x)\n",
+          message, expected, error);
+  return 1;
+}
+
 static int fail_vg(const char *message)
 {
   fprintf(stderr, "%s (VG error 0x%04x)\n", message, vgGetError());
@@ -472,12 +483,133 @@ static int run_make_current_conflict(void)
   return status;
 }
 
+static int run_display_canonicalization(void)
+{
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  EGLDisplay duplicate;
+  EGLint major, minor;
+  int status = 0;
+
+  if (init_egl(&state, EGL_NO_CONTEXT))
+    return 1;
+
+  duplicate = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+  if (duplicate == EGL_NO_DISPLAY)
+    status = fail_egl("thread test could not get duplicate display");
+  else if (duplicate != state.display) {
+    fprintf(stderr, "EGL display handles were not canonicalized\n");
+    status = 1;
+  }
+
+  if (!status && eglTerminate(duplicate)) {
+    fprintf(stderr, "EGL terminated a display with a current context\n");
+    status = 1;
+  } else if (!status &&
+             expect_egl_error("EGL reported wrong current-display terminate error",
+                              EGL_BAD_ACCESS)) {
+    status = 1;
+  }
+
+  if (cleanup_egl(&state))
+    status = 1;
+
+  if (!status) {
+    duplicate = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (duplicate == EGL_NO_DISPLAY) {
+      status = fail_egl("thread test could not reacquire display");
+    } else if (!eglInitialize(duplicate, &major, &minor)) {
+      status = fail_egl("thread test could not reinitialize display");
+    } else if (!eglTerminate(duplicate)) {
+      status = fail_egl("thread test could not terminate reinitialized display");
+    }
+  }
+
+  return status;
+}
+
+static int run_display_stale_generation(void)
+{
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  EGLSurface staleSurface;
+  EGLContext staleContext;
+  EGLint major, minor;
+  int status = 0;
+
+  if (init_egl(&state, EGL_NO_CONTEXT))
+    return 1;
+
+  staleSurface = state.surface;
+  staleContext = state.context;
+
+  if (!eglMakeCurrent(state.display,
+                      EGL_NO_SURFACE,
+                      EGL_NO_SURFACE,
+                      EGL_NO_CONTEXT))
+    return fail_egl("thread test could not clear current context");
+
+  if (!eglTerminate(state.display))
+    return fail_egl("thread test could not terminate display with stale objects");
+
+  if (!eglInitialize(state.display, &major, &minor))
+    return fail_egl("thread test could not reinitialize stale-object display");
+
+  if (eglMakeCurrent(state.display,
+                     staleSurface,
+                     staleSurface,
+                     staleContext)) {
+    fprintf(stderr, "EGL accepted stale context/surface handles after terminate\n");
+    status = 1;
+  } else if (expect_egl_error("EGL reported wrong stale surface current error",
+                              EGL_BAD_SURFACE)) {
+    status = 1;
+  }
+
+  if (!status && eglDestroyContext(state.display, staleContext)) {
+    fprintf(stderr, "EGL destroyed a stale context handle\n");
+    status = 1;
+  } else if (!status &&
+             expect_egl_error("EGL reported wrong stale context destroy error",
+                              EGL_BAD_CONTEXT)) {
+    status = 1;
+  }
+
+  if (!status && eglDestroySurface(state.display, staleSurface)) {
+    fprintf(stderr, "EGL destroyed a stale surface handle\n");
+    status = 1;
+  } else if (!status &&
+             expect_egl_error("EGL reported wrong stale surface destroy error",
+                              EGL_BAD_SURFACE)) {
+    status = 1;
+  }
+
+  if (!eglTerminate(state.display))
+    status = fail_egl("thread test could not terminate stale-object display");
+
+  return status;
+}
+
 int main(void)
 {
   XInitThreads();
   select_test_platform();
 
   if (run_concurrent_first_egl())
+    return EXIT_FAILURE;
+  if (run_display_canonicalization())
+    return EXIT_FAILURE;
+  if (run_display_stale_generation())
     return EXIT_FAILURE;
   if (warm_up_egl())
     return EXIT_FAILURE;

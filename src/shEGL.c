@@ -52,13 +52,17 @@ typedef enum {
   SH_EGL_SURFACE_OPENVG_IMAGE = 1
 } SHEGLSurfaceType;
 
-typedef struct {
+typedef struct SHEGLDisplay SHEGLDisplay;
+
+struct SHEGLDisplay {
   unsigned int magic;
   EGLNativeDisplayType nativeDisplay;
   EGLDisplay realDisplay;
-  EGLBoolean destroyRequested;
+  EGLBoolean initialized;
+  SHuint generation;
   SHint currentCount;
-} SHEGLDisplay;
+  SHEGLDisplay *next;
+};
 
 typedef struct {
   unsigned int magic;
@@ -81,6 +85,7 @@ typedef struct {
   EGLBoolean realDestroyed;
   SHint currentCount;
   SHThreadId currentThread;
+  SHuint displayGeneration;
 } SHEGLSurface;
 
 typedef struct {
@@ -93,6 +98,7 @@ typedef struct {
   EGLBoolean realDestroyed;
   SHint currentCount;
   SHThreadId currentThread;
+  SHuint displayGeneration;
 } SHEGLContext;
 
 typedef struct {
@@ -128,6 +134,7 @@ static int g_eglLoadSuccess = 0;
 static EGLint g_eglLoadError = EGL_SUCCESS;
 static SHOnce g_eglMutexOnce = SH_ONCE_INIT;
 static SHRecursiveMutex g_eglMutex;
+static SHEGLDisplay *g_displays = NULL;
 
 #if defined(_WIN32)
 static HMODULE g_eglLibrary = NULL;
@@ -281,6 +288,26 @@ static SHEGLDisplay *shDisplay(EGLDisplay dpy)
   return display;
 }
 
+static SHuint shNextDisplayGeneration(SHuint generation)
+{
+  ++generation;
+  if (generation == 0)
+    ++generation;
+  return generation;
+}
+
+static SHEGLDisplay *shFindDisplay(EGLDisplay realDisplay)
+{
+  SHEGLDisplay *display;
+
+  for (display = g_displays; display; display = display->next) {
+    if (display->realDisplay == realDisplay)
+      return display;
+  }
+
+  return NULL;
+}
+
 static SHEGLSurface *shSurface(EGLSurface surface)
 {
   SHEGLSurface *s = (SHEGLSurface*)surface;
@@ -288,6 +315,14 @@ static SHEGLSurface *shSurface(EGLSurface surface)
     shSetEGLError(EGL_BAD_SURFACE);
     return NULL;
   }
+
+  if (!s->display ||
+      s->display->magic != SH_EGL_DISPLAY_MAGIC ||
+      s->display->generation != s->displayGeneration) {
+    shSetEGLError(EGL_BAD_SURFACE);
+    return NULL;
+  }
+
   return s;
 }
 
@@ -298,6 +333,14 @@ static SHEGLContext *shContext(EGLContext context)
     shSetEGLError(EGL_BAD_CONTEXT);
     return NULL;
   }
+
+  if (!c->display ||
+      c->display->magic != SH_EGL_DISPLAY_MAGIC ||
+      c->display->generation != c->displayGeneration) {
+    shSetEGLError(EGL_BAD_CONTEXT);
+    return NULL;
+  }
+
   return c;
 }
 
@@ -783,6 +826,10 @@ EGLAPI EGLDisplay EGLAPIENTRY eglGetDisplay(EGLNativeDisplayType display_id)
   if (realDisplay == EGL_NO_DISPLAY)
     return EGL_NO_DISPLAY;
 
+  display = shFindDisplay(realDisplay);
+  if (display)
+    return (EGLDisplay)display;
+
   display = (SHEGLDisplay*)calloc(1, sizeof(SHEGLDisplay));
   if (!display) {
     shSetEGLError(EGL_BAD_ALLOC);
@@ -792,17 +839,27 @@ EGLAPI EGLDisplay EGLAPIENTRY eglGetDisplay(EGLNativeDisplayType display_id)
   display->magic = SH_EGL_DISPLAY_MAGIC;
   display->nativeDisplay = display_id;
   display->realDisplay = realDisplay;
+  display->generation = 1;
+  display->next = g_displays;
+  g_displays = display;
   return (EGLDisplay)display;
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
 {
   SHEGLDisplay *display;
+  EGLBoolean result;
   if (!shLoadRealEGL())
     return EGL_FALSE;
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
-  return display ? g_egl.Initialize(display->realDisplay, major, minor) : EGL_FALSE;
+  if (!display)
+    return EGL_FALSE;
+
+  result = g_egl.Initialize(display->realDisplay, major, minor);
+  if (result)
+    display->initialized = EGL_TRUE;
+  return result;
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy)
@@ -815,8 +872,8 @@ EGLAPI EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy)
   display = shDisplay(dpy);
   if (!display)
     return EGL_FALSE;
-  if (display->destroyRequested) {
-    shSetEGLError(EGL_BAD_DISPLAY);
+  if (!display->initialized) {
+    shSetEGLError(EGL_NOT_INITIALIZED);
     return EGL_FALSE;
   }
   if (display->currentCount > 0) {
@@ -825,9 +882,8 @@ EGLAPI EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy)
   }
   result = g_egl.Terminate(display->realDisplay);
   if (result) {
-    display->destroyRequested = EGL_TRUE;
-    display->magic = 0;
-    free(display);
+    display->initialized = EGL_FALSE;
+    display->generation = shNextDisplayGeneration(display->generation);
   }
   return result;
 }
@@ -988,6 +1044,7 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreateWindowSurface(EGLDisplay dpy, EGLConfig c
 
   surface->magic = SH_EGL_SURFACE_MAGIC;
   surface->display = display;
+  surface->displayGeneration = display->generation;
   surface->realSurface = realSurface;
   surface->type = SH_EGL_SURFACE_PLATFORM;
   surface->config = config;
@@ -1021,6 +1078,7 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig 
 
   surface->magic = SH_EGL_SURFACE_MAGIC;
   surface->display = display;
+  surface->displayGeneration = display->generation;
   surface->realSurface = realSurface;
   surface->type = SH_EGL_SURFACE_PLATFORM;
   surface->config = config;
@@ -1139,6 +1197,7 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
 
     surface->magic = SH_EGL_SURFACE_MAGIC;
     surface->display = display;
+    surface->displayGeneration = display->generation;
     surface->realSurface = realSurface;
     surface->type = SH_EGL_SURFACE_OPENVG_IMAGE;
     surface->config = config;
@@ -1312,6 +1371,7 @@ EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
 
   context->magic = SH_EGL_CONTEXT_MAGIC;
   context->display = display;
+  context->displayGeneration = display->generation;
   context->realContext = realContext;
   context->api = api;
 
