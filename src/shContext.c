@@ -344,6 +344,26 @@ VGContext* shAcquireCurrentContext(SHContextLock *lock)
   return context;
 }
 
+VGContext* shAcquireCurrentContextOnly(SHContextLock *lock)
+{
+  VGContext *context;
+
+  lock->context = NULL;
+  lock->resources = NULL;
+  lock->contextLocked = VG_FALSE;
+  lock->resourcesLocked = VG_FALSE;
+
+  context = shGetContext();
+  if (!context)
+    return NULL;
+
+  shLockContext(context);
+  lock->context = context;
+  lock->contextLocked = VG_TRUE;
+
+  return context;
+}
+
 void shContextLockCleanup(SHContextLock *lock)
 {
   if (!lock)
@@ -1271,7 +1291,7 @@ void shSetError(VGContext *c, VGErrorCode e)
 VG_API_CALL VGErrorCode vgGetError(void)
 {
   VGErrorCode error;
-  VG_GETCONTEXT(VG_NO_CONTEXT_ERROR);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_CONTEXT_ERROR);
   error = context->error;
   context->error = VG_NO_ERROR;
   VG_RETURN(error);
@@ -1279,14 +1299,14 @@ VG_API_CALL VGErrorCode vgGetError(void)
 
 VG_API_CALL void vgFlush(void)
 {
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   glFlush();
   VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgFinish(void)
 {
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   glFinish();
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -1947,7 +1967,7 @@ SHMatrix3x3* shCurrentMatrix(VGContext *c)
 VG_API_CALL void vgLoadIdentity(void)
 {
   SHMatrix3x3 *m;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   m = shCurrentMatrix(context);
   IDMAT((*m));
@@ -1963,7 +1983,7 @@ VG_API_CALL void vgLoadIdentity(void)
 VG_API_CALL void vgLoadMatrix(const VGfloat * mm)
 {
   SHMatrix3x3 *m;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!mm, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!shIsAligned(mm, sizeof(VGfloat)),
@@ -1995,7 +2015,7 @@ VG_API_CALL void vgLoadMatrix(const VGfloat * mm)
 VG_API_CALL void vgGetMatrix(VGfloat * mm)
 {
   SHMatrix3x3 *m; int i,j,k=0;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!mm, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!shIsAligned(mm, sizeof(VGfloat)),
@@ -2019,7 +2039,7 @@ VG_API_CALL void vgGetMatrix(VGfloat * mm)
 VG_API_CALL void vgMultMatrix(const VGfloat * mm)
 {
   SHMatrix3x3 *m, mul, temp;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!mm, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(!shIsAligned(mm, sizeof(VGfloat)),
@@ -2050,7 +2070,7 @@ VG_API_CALL void vgMultMatrix(const VGfloat * mm)
 VG_API_CALL void vgTranslate(VGfloat tx, VGfloat ty)
 {
   SHMatrix3x3 *m;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   m = shCurrentMatrix(context);
   TRANSLATEMATR((*m), tx, ty);
@@ -2061,7 +2081,7 @@ VG_API_CALL void vgTranslate(VGfloat tx, VGfloat ty)
 VG_API_CALL void vgScale(VGfloat sx, VGfloat sy)
 {
   SHMatrix3x3 *m;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   m = shCurrentMatrix(context);
   SCALEMATR((*m), sx, sy);
@@ -2072,7 +2092,7 @@ VG_API_CALL void vgScale(VGfloat sx, VGfloat sy)
 VG_API_CALL void vgShear(VGfloat shx, VGfloat shy)
 {
   SHMatrix3x3 *m;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   m = shCurrentMatrix(context);
   SHEARMATR((*m), shx, shy);
@@ -2084,7 +2104,7 @@ VG_API_CALL void vgRotate(VGfloat angle)
 {
   SHfloat a;
   SHMatrix3x3 *m;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   a = SH_DEG2RAD(angle);
   m = shCurrentMatrix(context);
@@ -2096,7 +2116,7 @@ VG_API_CALL void vgRotate(VGfloat angle)
 VG_API_CALL VGHardwareQueryResult vgHardwareQuery(VGHardwareQueryType key,
                                                   VGint setting)
 {
-  VG_GETCONTEXT(VG_HARDWARE_UNACCELERATED);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_HARDWARE_UNACCELERATED);
 
   switch (key) {
   case VG_IMAGE_FORMAT_QUERY:

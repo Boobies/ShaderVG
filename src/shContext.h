@@ -306,6 +306,7 @@ void VGContext_ctor(VGContext *c);
 void VGContext_dtor(VGContext *c);
 void shSetError(VGContext *c, VGErrorCode e);
 VGContext* shAcquireCurrentContext(SHContextLock *lock);
+VGContext* shAcquireCurrentContextOnly(SHContextLock *lock);
 void shContextLockCleanup(SHContextLock *lock);
 void shLockContext(VGContext *c);
 void shUnlockContext(VGContext *c);
@@ -356,6 +357,12 @@ VGboolean shApplyMaskValueToSurface(VGContext *c,
 #define VG_GETCONTEXT(RETVAL) \
   SHContextLock shContextLock; \
   VGContext *context = shAcquireCurrentContext(&shContextLock); \
+  if (!context) return RETVAL;
+
+/* Use only for entry points that do not touch shared resources. */
+#define VG_GETCONTEXT_CONTEXT_ONLY(RETVAL) \
+  SHContextLock shContextLock; \
+  VGContext *context = shAcquireCurrentContextOnly(&shContextLock); \
   if (!context) return RETVAL;
   
 #define VG_RETURN(RETVAL) \

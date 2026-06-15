@@ -577,6 +577,80 @@ static int exercise_resources(int iterations)
   return 0;
 }
 
+static int exercise_context_only_state(int workerId, int iterations)
+{
+  int i;
+
+  for (i = 0; i < iterations; ++i) {
+    VGfloat clear[4] = {
+      ((VGfloat)((workerId + i) % 7)) / 6.0f,
+      ((VGfloat)((workerId * 3 + i) % 11)) / 10.0f,
+      ((VGfloat)((workerId * 5 + i) % 13)) / 12.0f,
+      1.0f
+    };
+    VGfloat readClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    VGfloat matrix[9];
+    VGint scissor[4] = {
+      (workerId + i) % 8,
+      (workerId * 2 + i) % 8,
+      8,
+      8
+    };
+    VGFillRule fillRule = (i & 1) ? VG_NON_ZERO : VG_EVEN_ODD;
+    VGErrorCode error;
+
+    vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+    vgLoadIdentity();
+    vgTranslate((VGfloat)(workerId % 3), (VGfloat)(i % 5));
+    vgScale(1.0f + (VGfloat)(workerId % 2) * 0.1f, 1.0f);
+    vgRotate((VGfloat)(i % 360));
+    vgShear(0.01f * (VGfloat)(workerId % 4), 0.0f);
+    vgGetMatrix(matrix);
+
+    vgSetfv(VG_CLEAR_COLOR, 4, clear);
+    vgGetfv(VG_CLEAR_COLOR, 4, readClear);
+    vgSeti(VG_FILL_RULE, fillRule);
+    if ((VGFillRule)vgGeti(VG_FILL_RULE) != fillRule) {
+      fprintf(stderr, "thread test context-only fill rule mismatch\n");
+      return 1;
+    }
+
+    vgSetf(VG_STROKE_LINE_WIDTH, 1.0f + (VGfloat)(i % 5));
+    if (vgGetf(VG_STROKE_LINE_WIDTH) <= 0.0f) {
+      fprintf(stderr, "thread test context-only stroke width mismatch\n");
+      return 1;
+    }
+
+    vgSetiv(VG_SCISSOR_RECTS, 4, scissor);
+    if (vgGetVectorSize(VG_SCISSOR_RECTS) != 4) {
+      fprintf(stderr, "thread test context-only vector size mismatch\n");
+      return 1;
+    }
+
+    if (!vgGetString(VG_VENDOR)) {
+      fprintf(stderr, "thread test context-only string query failed\n");
+      return 1;
+    }
+
+    (void)vgHardwareQuery(VG_IMAGE_FORMAT_QUERY, VG_sRGBA_8888);
+    if ((i & 15) == 0)
+      vgFlush();
+    if ((i & 63) == 0)
+      vgFinish();
+
+    error = vgGetError();
+    if (error != VG_NO_ERROR) {
+      fprintf(stderr,
+              "thread test context-only operation failed (VG error 0x%04x)\n",
+              error);
+      return 1;
+    }
+  }
+
+  vgFinish();
+  return expect_vg_no_error("thread test context-only finish failed");
+}
+
 static void *first_egl_worker(void *arg)
 {
   ThreadArgs *args = (ThreadArgs*)arg;
@@ -658,6 +732,32 @@ static void *shared_resource_churn_worker(void *arg)
       }
     }
   }
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
+static void *context_only_churn_worker(void *arg)
+{
+  ThreadArgs *args = (ThreadArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status)
+    args->status = exercise_context_only_state(args->workerId,
+                                               args->iterations);
 
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
@@ -930,6 +1030,7 @@ static int run_shared_context_stress(void)
 
 static int run_shared_resource_churn(const ThreadTestOptions *options)
 {
+  int threadCount = options->sharedWorkers * 2;
   TestEGL base = {
     EGL_NO_DISPLAY,
     0,
@@ -943,12 +1044,12 @@ static int run_shared_resource_churn(const ThreadTestOptions *options)
   int i;
   int status = 0;
 
-  threads = (pthread_t*)calloc((size_t)options->sharedWorkers,
+  threads = (pthread_t*)calloc((size_t)threadCount,
                                sizeof(pthread_t));
-  args = (ThreadArgs*)calloc((size_t)options->sharedWorkers,
+  args = (ThreadArgs*)calloc((size_t)threadCount,
                              sizeof(ThreadArgs));
   if (!threads || !args) {
-    fprintf(stderr, "thread test could not allocate shared resource workers\n");
+    fprintf(stderr, "thread test could not allocate shared churn workers\n");
     free(threads);
     free(args);
     return 1;
@@ -961,15 +1062,33 @@ static int run_shared_resource_churn(const ThreadTestOptions *options)
   }
 
   for (i = 0; !status && i < options->sharedWorkers; ++i) {
-    args[i].status = 1;
-    args[i].display = base.display;
-    args[i].config = base.config;
-    args[i].context = base.context;
-    args[i].workerId = i + 1;
-    args[i].iterations = options->sharedIterations;
-    if (pthread_create(&threads[i], NULL,
-                       shared_resource_churn_worker, &args[i]) != 0) {
+    args[created].status = 1;
+    args[created].display = base.display;
+    args[created].config = base.config;
+    args[created].context = base.context;
+    args[created].workerId = i + 1;
+    args[created].iterations = options->sharedIterations;
+    if (pthread_create(&threads[created], NULL,
+                       shared_resource_churn_worker,
+                       &args[created]) != 0) {
       fprintf(stderr, "thread test could not create shared resource worker\n");
+      status = 1;
+      break;
+    }
+    ++created;
+  }
+
+  for (i = 0; !status && i < options->sharedWorkers; ++i) {
+    args[created].status = 1;
+    args[created].display = base.display;
+    args[created].config = base.config;
+    args[created].context = base.context;
+    args[created].workerId = options->sharedWorkers + i + 1;
+    args[created].iterations = options->sharedIterations;
+    if (pthread_create(&threads[created], NULL,
+                       context_only_churn_worker,
+                       &args[created]) != 0) {
+      fprintf(stderr, "thread test could not create context-only worker\n");
       status = 1;
       break;
     }

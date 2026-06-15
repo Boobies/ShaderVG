@@ -487,7 +487,7 @@ static void shSet(VGContext *context, VGParamType type, SHint count,
 
 VG_API_CALL void vgSetf (VGParamType type, VGfloat value)
 {
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   /* Check if target vector */
   VG_RETURN_ERR_IF(shIsParamVector(type),
@@ -505,7 +505,7 @@ VG_API_CALL void vgSetf (VGParamType type, VGfloat value)
 
 VG_API_CALL void vgSeti (VGParamType type, VGint value)
 {
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   /* Check if target vector */
   VG_RETURN_ERR_IF(shIsParamVector(type),
@@ -524,7 +524,7 @@ VG_API_CALL void vgSeti (VGParamType type, VGint value)
 VG_API_CALL void vgSetfv(VGParamType type, VGint count,
                          const VGfloat * values)
 {
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(count > 0 && !shIsAligned(values, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
@@ -541,7 +541,7 @@ VG_API_CALL void vgSetfv(VGParamType type, VGint count,
 VG_API_CALL void vgSetiv(VGParamType type, VGint count,
                          const VGint * values)
 {
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(count > 0 && !shIsAligned(values, sizeof(VGint)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
@@ -807,7 +807,7 @@ static void shGet(VGContext *context, VGParamType type, SHint count, void *value
 VG_API_CALL VGfloat vgGetf(VGParamType type)
 {
   VGfloat retval = 0.0f;
-  VG_GETCONTEXT(retval);
+  VG_GETCONTEXT_CONTEXT_ONLY(retval);
   
   /* Check if target vector */
   VG_RETURN_ERR_IF(shIsParamVector(type),
@@ -826,7 +826,7 @@ VG_API_CALL VGfloat vgGetf(VGParamType type)
 VG_API_CALL VGint vgGeti(VGParamType type)
 {
   VGint retval = 0;
-  VG_GETCONTEXT(retval);
+  VG_GETCONTEXT_CONTEXT_ONLY(retval);
   
   /* Check if target vector */
   VG_RETURN_ERR_IF(shIsParamVector(type),
@@ -844,7 +844,7 @@ VG_API_CALL VGint vgGeti(VGParamType type)
 
 VG_API_CALL void vgGetfv(VGParamType type, VGint count, VGfloat * values)
 {
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!shIsAligned(values, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
@@ -860,7 +860,7 @@ VG_API_CALL void vgGetfv(VGParamType type, VGint count, VGfloat * values)
 
 VG_API_CALL void vgGetiv(VGParamType type, VGint count, VGint * values)
 {
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
   VG_RETURN_ERR_IF(!shIsAligned(values, sizeof(VGint)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
@@ -878,7 +878,7 @@ VG_API_CALL void vgGetiv(VGParamType type, VGint count, VGint * values)
 VG_API_CALL VGint vgGetVectorSize(VGParamType type)
 {
   int retval = 0;
-  VG_GETCONTEXT(retval);
+  VG_GETCONTEXT_CONTEXT_ONLY(retval);
   
   switch(type)
   {
@@ -1571,7 +1571,7 @@ VG_API_CALL VGint vgGetParameterVectorSize(VGHandle object, VGint ptype)
 
 VG_API_CALL const VGubyte * vgGetString(VGStringID name)
 {
-  VG_GETCONTEXT(NULL);
+  VG_GETCONTEXT_CONTEXT_ONLY(NULL);
   
   switch(name) {
   case VG_VENDOR:
