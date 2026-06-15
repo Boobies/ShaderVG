@@ -31,10 +31,6 @@
 #include "shGLState.h"
 #include "shThread.h"
 
-#if !SH_HAS_CLEANUP
-#  error "ShaderVG scoped locks require compiler cleanup attribute support"
-#endif
-
 typedef struct
 {
   VGHandle handle;
@@ -70,7 +66,7 @@ typedef enum
 typedef struct
 {
   SHRecursiveMutex mutex;
-  SHint refCount;
+  SHAtomicInt refCount;
   SHPathArray paths;
   SHPaintArray paints;
   SHImageArray images;
@@ -358,18 +354,18 @@ VGboolean shApplyMaskValueToSurface(VGContext *c,
 #define VG_NO_RETVAL
 
 #define VG_GETCONTEXT(RETVAL) \
-  SHContextLock shContextLock SH_CLEANUP(shContextLockCleanup); \
+  SHContextLock shContextLock; \
   VGContext *context = shAcquireCurrentContext(&shContextLock); \
   if (!context) return RETVAL;
   
 #define VG_RETURN(RETVAL) \
-  { return RETVAL; }
+  { shContextLockCleanup(&shContextLock); return RETVAL; }
 
 #define VG_RETURN_ERR(ERRORCODE, RETVAL) \
-  { shSetError(context,ERRORCODE); return RETVAL; }
+  { shSetError(context,ERRORCODE); shContextLockCleanup(&shContextLock); return RETVAL; }
 
 #define VG_RETURN_ERR_IF(COND, ERRORCODE, RETVAL) \
-  { if (COND) {shSetError(context,ERRORCODE); return RETVAL;} }
+  { if (COND) {shSetError(context,ERRORCODE); shContextLockCleanup(&shContextLock); return RETVAL;} }
 
 /*-----------------------------------------------------------
  * Same macros but no mutex handling - used by sub-functions

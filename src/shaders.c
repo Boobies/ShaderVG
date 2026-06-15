@@ -1147,6 +1147,7 @@ void shInitPiplelineShaders(void) {
               (GLfloat)context->surfaceWidth,
               (GLfloat)context->surfaceHeight);
   GL_CHECK_ERROR;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 void shDeinitPiplelineShaders(void){
@@ -1156,6 +1157,7 @@ void shDeinitPiplelineShaders(void){
   glDeleteShader(context->fs);
   glDeleteProgram(context->progDraw);
   GL_CHECK_ERROR;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 void shInitRampShaders(void) {
@@ -1188,11 +1190,13 @@ void shInitRampShaders(void) {
   context->locationColorRamp.startPixel = glGetUniformLocation(context->progColorRamp, "startPixel");
   context->locationColorRamp.pixelSpan = glGetUniformLocation(context->progColorRamp, "pixelSpan");
   GL_CHECK_ERROR;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 void shDeinitRampShaders(void){
   VG_GETCONTEXT(VG_NO_RETVAL);
   glDeleteProgram(context->progColorRamp);
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 void shInitCoverageShaders(void) {
@@ -1232,11 +1236,13 @@ void shInitCoverageShaders(void) {
   glUseProgram(context->progCoverage);
   glUniform1i(context->locationCoverage.sourceSampler, 0);
   GL_CHECK_ERROR;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 void shDeinitCoverageShaders(void){
   VG_GETCONTEXT(VG_NO_RETVAL);
   glDeleteProgram(context->progCoverage);
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 void shInitImageFilterShaders(void) {
@@ -1350,6 +1356,7 @@ void shInitImageFilterShaders(void) {
   glUniform1i(context->locationImageFilter.highlightSampler, 2);
   glUniform1i(context->locationImageFilter.shadowSampler, 3);
   GL_CHECK_ERROR;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 void shDeinitImageFilterShaders(void) {
@@ -1359,6 +1366,7 @@ void shDeinitImageFilterShaders(void) {
     glDeleteProgram(context->progImageFilter);
     context->progImageFilter = 0;
   }
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgShaderSourceSH(VGuint shadertype, const VGbyte* string){

@@ -23,6 +23,7 @@
 
 #include "shVectors.h"
 #include "shArrays.h"
+#include "shThread.h"
 
 /* Helper structures for subdivision */
 typedef struct {
@@ -81,7 +82,7 @@ typedef struct SHPath
   SHint dataHint;
   VGbitfield caps;
   VGPathDatatype datatype;
-  SHint refCount;
+  SHAtomicInt refCount;
   
   /* Raw data */
   SHuint8 *segs;

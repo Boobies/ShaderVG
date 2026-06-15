@@ -274,6 +274,7 @@ static void shDrawStroke(SHPath *p)
   glDisableVertexAttribArray(context->locationDraw.pos);
   shRestoreVertexState(&vertexState);
   GL_CHECK_ERROR;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 /*-----------------------------------------------------------
@@ -294,7 +295,7 @@ static void shDrawVertexData(const SHVertex *vertices,
   SHVertexState vertexState;
 
   if (!vertices || vertexCount <= 0)
-    return;
+    VG_RETURN(VG_NO_RETVAL);
 
   shBindContextVertexState(context, &vertexState);
   glBufferData(GL_ARRAY_BUFFER,
@@ -316,6 +317,7 @@ static void shDrawVertexData(const SHVertex *vertices,
   glDisableVertexAttribArray(context->locationDraw.pos);
   shRestoreVertexState(&vertexState);
   GL_CHECK_ERROR;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 static void shDrawVertices(SHPath *p, GLenum mode)
@@ -1374,14 +1376,14 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   VGboolean coverageEnabled;
 
   if (context->surfaceWidth <= 0 || context->surfaceHeight <= 0)
-    VG_RETURN( VG_NO_RETVAL );
+    return;
 
   /* Check whether scissoring is enabled and scissor
      rectangle is valid */
   if (context->scissoring == VG_TRUE) {
-    if (context->scissor.size == 0) VG_RETURN( VG_NO_RETVAL );
+    if (context->scissor.size == 0) return;
     rect = &context->scissor.items[0];
-    if (rect->w <= 0.0f || rect->h <= 0.0f) VG_RETURN( VG_NO_RETVAL );
+    if (rect->w <= 0.0f || rect->h <= 0.0f) return;
     glScissor( (GLint)rect->x, (GLint)rect->y, (GLint)rect->w, (GLint)rect->h );
     glEnable( GL_SCISSOR_TEST );
   }
@@ -1419,7 +1421,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
       if (context->scissoring == VG_TRUE)
         glDisable(GL_SCISSOR_TEST);
       shSetError(context, VG_OUT_OF_MEMORY_ERROR);
-      VG_RETURN(VG_NO_RETVAL);
+      return;
     }
 
     if (coverageEnabled == VG_TRUE) {
@@ -1433,7 +1435,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
         if (context->scissoring == VG_TRUE)
           glDisable(GL_SCISSOR_TEST);
         shSetError(context, VG_OUT_OF_MEMORY_ERROR);
-        VG_RETURN(VG_NO_RETVAL);
+        return;
       }
 
       glDisable(GL_STENCIL_TEST);
@@ -1457,7 +1459,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
         if (context->scissoring == VG_TRUE)
           glDisable(GL_SCISSOR_TEST);
         shSetError(context, VG_OUT_OF_MEMORY_ERROR);
-        VG_RETURN(VG_NO_RETVAL);
+        return;
       }
 
       /* Draw paint where the selected fill rule left stencil coverage. */
@@ -1485,7 +1487,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
         if (context->scissoring == VG_TRUE)
           glDisable(GL_SCISSOR_TEST);
         shSetError(context, VG_OUT_OF_MEMORY_ERROR);
-        VG_RETURN(VG_NO_RETVAL);
+        return;
       }
 
       if (coverageEnabled == VG_TRUE) {
@@ -1499,7 +1501,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
           if (context->scissoring == VG_TRUE)
             glDisable(GL_SCISSOR_TEST);
           shSetError(context, VG_OUT_OF_MEMORY_ERROR);
-          VG_RETURN(VG_NO_RETVAL);
+          return;
         }
 
         glDisable(GL_STENCIL_TEST);
@@ -1532,7 +1534,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
           if (context->scissoring == VG_TRUE)
             glDisable(GL_SCISSOR_TEST);
           shSetError(context, VG_OUT_OF_MEMORY_ERROR);
-          VG_RETURN(VG_NO_RETVAL);
+          return;
         }
 
         /* Draw paint where stencil odd */
@@ -1569,7 +1571,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   if (paintModes & (VG_FILL_PATH | VG_STROKE_PATH))
     shMarkRenderTargetDirty(context);
 
-  VG_RETURN(VG_NO_RETVAL);
+  return;
 }
 
 VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
@@ -1671,8 +1673,8 @@ void shDrawImageQuadBatch(VGContext *context,
 
   if (context->scissoring == VG_TRUE) {
     rect = &context->scissor.items[0];
-    if (context->scissor.size == 0) VG_RETURN( VG_NO_RETVAL );
-    if (rect->w <= 0.0f || rect->h <= 0.0f) VG_RETURN( VG_NO_RETVAL );
+    if (context->scissor.size == 0) return;
+    if (rect->w <= 0.0f || rect->h <= 0.0f) return;
     glScissor( (GLint)rect->x, (GLint)rect->y, (GLint)rect->w, (GLint)rect->h );
     glEnable( GL_SCISSOR_TEST );
   }
@@ -1719,7 +1721,7 @@ void shDrawImageQuadBatch(VGContext *context,
       glDisable(GL_SCISSOR_TEST);
     shRestoreVertexState(&vertexState);
     shSetError(context, VG_OUT_OF_MEMORY_ERROR);
-    VG_RETURN(VG_NO_RETVAL);
+    return;
   }
 
   glEnable(GL_TEXTURE_2D);
@@ -1766,7 +1768,7 @@ void shDrawImageQuadBatch(VGContext *context,
     glDisable( GL_SCISSOR_TEST );
 
   shMarkRenderTargetDirty(context);
-  VG_RETURN(VG_NO_RETVAL);
+  return;
 }
 
 void shDrawImage(VGContext *context, SHImage *i)
@@ -1801,8 +1803,8 @@ void shDrawImage(VGContext *context, SHImage *i)
      rectangle is valid */
   if (context->scissoring == VG_TRUE) {
     rect = &context->scissor.items[0];
-    if (context->scissor.size == 0) VG_RETURN( VG_NO_RETVAL );
-    if (rect->w <= 0.0f || rect->h <= 0.0f) VG_RETURN( VG_NO_RETVAL );
+    if (context->scissor.size == 0) return;
+    if (rect->w <= 0.0f || rect->h <= 0.0f) return;
     glScissor( (GLint)rect->x, (GLint)rect->y, (GLint)rect->w, (GLint)rect->h );
     glEnable( GL_SCISSOR_TEST );
   }
@@ -1874,7 +1876,7 @@ void shDrawImage(VGContext *context, SHImage *i)
       glDisable(GL_SCISSOR_TEST);
     shRestoreVertexState(&vertexState);
     shSetError(context, VG_OUT_OF_MEMORY_ERROR);
-    VG_RETURN(VG_NO_RETVAL);
+    return;
   }
 
   /* Draw textured quad */
@@ -1920,7 +1922,7 @@ void shDrawImage(VGContext *context, SHImage *i)
 
   shMarkRenderTargetDirty(context);
   
-  VG_RETURN(VG_NO_RETVAL);
+  return;
 }
 
 VG_API_CALL void vgDrawImage(VGImage image)

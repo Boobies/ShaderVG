@@ -80,7 +80,7 @@ void SHPath_ctor(SHPath *p)
   p->bias = 0.0f;
   p->caps = 0;
   p->datatype = VG_PATH_DATATYPE_F;
-  p->refCount = 1;
+  shAtomicIntInit(&p->refCount, 1);
   
   p->segs = NULL;
   p->data = NULL;
@@ -102,12 +102,13 @@ void SHPath_dtor(SHPath *p)
   
   SH_DEINITOBJ(SHVertexArray, p->vertices);
   SH_DEINITOBJ(SHVector2Array, p->stroke);
+  shAtomicIntDestroy(&p->refCount);
 }
 
 void shPathAddRef(SHPath *p)
 {
   if (p)
-    ++p->refCount;
+    shAtomicIntIncrement(&p->refCount);
 }
 
 void shPathRelease(SHPath *p)
@@ -115,8 +116,7 @@ void shPathRelease(SHPath *p)
   if (!p)
     return;
 
-  --p->refCount;
-  if (p->refCount <= 0)
+  if (shAtomicIntDecrement(&p->refCount) <= 0)
     SH_DELETEOBJ(SHPath, p);
 }
 
@@ -1233,6 +1233,7 @@ static void shTransformSegment(SHPath *p, VGPathSegment segment,
   
   /* Write segment to new dst path data */
   newSegs[(*segCount)++] = segment | VG_ABSOLUTE;
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgTransformPath(VGPath dstPath, VGPath srcPath)

@@ -22,6 +22,7 @@
 #define __SHIMAGE_H
 
 #include "shDefs.h"
+#include "shThread.h"
 
 /*-----------------------------------------------------------
  * ColorFormat holds the data necessary to pack/unpack color
@@ -87,11 +88,11 @@ struct SHImage
   SHfloat texwidthK;
   SHfloat texheightK;
   GLuint texture;
-  SHint refCount;
-  SHint eglPbufferRefs;
-  SHint renderTargetRefs;
-  SHint paintPatternRefs;
-  SHint glyphRefs;
+  SHAtomicInt refCount;
+  SHAtomicInt eglPbufferRefs;
+  SHAtomicInt renderTargetRefs;
+  SHAtomicInt paintPatternRefs;
+  SHAtomicInt glyphRefs;
   VGboolean gpuDataDirty;
   VGboolean surfaceDataPremultiplied;
   SHImage *parent;

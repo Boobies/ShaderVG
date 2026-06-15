@@ -186,8 +186,14 @@ static void shEGLCallCleanup(SHEGLLockGuard *guard)
 }
 
 #define SH_EGL_LOCK_GUARD() \
-  SHEGLLockGuard shEGLCallGuard SH_CLEANUP(shEGLCallCleanup); \
+  SHEGLLockGuard shEGLCallGuard; \
   shEGLCallLock(&shEGLCallGuard)
+
+#define SH_EGL_RETURN(value) \
+  do { \
+    shEGLCallCleanup(&shEGLCallGuard); \
+    return (value); \
+  } while (0)
 
 static void shSetEGLError(EGLint error)
 {
@@ -824,16 +830,16 @@ EGLAPI EGLDisplay EGLAPIENTRY eglGetDisplay(EGLNativeDisplayType display_id)
 
   realDisplay = g_egl.GetDisplay(display_id);
   if (realDisplay == EGL_NO_DISPLAY)
-    return EGL_NO_DISPLAY;
+    SH_EGL_RETURN(EGL_NO_DISPLAY);
 
   display = shFindDisplay(realDisplay);
   if (display)
-    return (EGLDisplay)display;
+    SH_EGL_RETURN((EGLDisplay)display);
 
   display = (SHEGLDisplay*)calloc(1, sizeof(SHEGLDisplay));
   if (!display) {
     shSetEGLError(EGL_BAD_ALLOC);
-    return EGL_NO_DISPLAY;
+    SH_EGL_RETURN(EGL_NO_DISPLAY);
   }
 
   display->magic = SH_EGL_DISPLAY_MAGIC;
@@ -842,7 +848,7 @@ EGLAPI EGLDisplay EGLAPIENTRY eglGetDisplay(EGLNativeDisplayType display_id)
   display->generation = 1;
   display->next = g_displays;
   g_displays = display;
-  return (EGLDisplay)display;
+  SH_EGL_RETURN((EGLDisplay)display);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
@@ -854,12 +860,12 @@ EGLAPI EGLBoolean EGLAPIENTRY eglInitialize(EGLDisplay dpy, EGLint *major, EGLin
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   result = g_egl.Initialize(display->realDisplay, major, minor);
   if (result)
     display->initialized = EGL_TRUE;
-  return result;
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy)
@@ -871,21 +877,21 @@ EGLAPI EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy)
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   if (!display->initialized) {
     shSetEGLError(EGL_NOT_INITIALIZED);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
   if (display->currentCount > 0) {
     shSetEGLError(EGL_BAD_ACCESS);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
   result = g_egl.Terminate(display->realDisplay);
   if (result) {
     display->initialized = EGL_FALSE;
     display->generation = shNextDisplayGeneration(display->generation);
   }
-  return result;
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigs(EGLDisplay dpy, EGLConfig *configs,
@@ -896,7 +902,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigs(EGLDisplay dpy, EGLConfig *configs,
     return EGL_FALSE;
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
-  return display ? g_egl.GetConfigs(display->realDisplay, configs, config_size, num_config) : EGL_FALSE;
+  SH_EGL_RETURN(display ? g_egl.GetConfigs(display->realDisplay, configs, config_size, num_config) : EGL_FALSE);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *attrib_list,
@@ -914,22 +920,22 @@ EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *attr
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   if (!num_config) {
     shSetEGLError(EGL_BAD_PARAMETER);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
 
   if (config_size < 0) {
     shSetEGLError(EGL_BAD_PARAMETER);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
 
   translated = shTranslateConfigAttribs(attrib_list, &emptyResult);
   if (!translated) {
     shSetEGLError(EGL_BAD_ALLOC);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
 
   if (emptyResult) {
@@ -943,7 +949,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *attr
   }
 
   free(translated);
-  return result;
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config,
@@ -957,22 +963,22 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy, EGLConfig confi
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   if (attribute == EGL_ALPHA_MASK_SIZE) {
     if (!value) {
       shSetEGLError(EGL_BAD_PARAMETER);
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     }
 
     result = g_egl.GetConfigAttrib(display->realDisplay, config,
                                    EGL_RENDERABLE_TYPE, &renderable);
     if (!result)
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
 
     if (renderable & EGL_OPENGL_BIT) {
       *value = SH_EGL_ALPHA_MASK_SIZE;
-      return EGL_TRUE;
+      SH_EGL_RETURN(EGL_TRUE);
     }
   }
 
@@ -983,7 +989,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy, EGLConfig confi
       value &&
       (*value & EGL_OPENGL_BIT))
     *value |= EGL_OPENVG_BIT;
-  return result;
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglBindAPI(EGLenum api)
@@ -998,10 +1004,10 @@ EGLAPI EGLBoolean EGLAPIENTRY eglBindAPI(EGLenum api)
     realApi = EGL_OPENGL_API;
 
   if (!g_egl.BindAPI(realApi))
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   t_boundApi = api;
-  return EGL_TRUE;
+  SH_EGL_RETURN(EGL_TRUE);
 }
 
 EGLAPI EGLenum EGLAPIENTRY eglQueryAPI(void)
@@ -1013,7 +1019,7 @@ EGLAPI EGLenum EGLAPIENTRY eglQueryAPI(void)
     return EGL_NONE;
   SH_EGL_LOCK_GUARD();
 
-  return g_egl.QueryAPI();
+  SH_EGL_RETURN(g_egl.QueryAPI());
 }
 
 EGLAPI EGLSurface EGLAPIENTRY eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config,
@@ -1029,17 +1035,17 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreateWindowSurface(EGLDisplay dpy, EGLConfig c
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
 
   realSurface = g_egl.CreateWindowSurface(display->realDisplay, config, win, attrib_list);
   if (realSurface == EGL_NO_SURFACE)
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
 
   surface = (SHEGLSurface*)calloc(1, sizeof(SHEGLSurface));
   if (!surface) {
     g_egl.DestroySurface(display->realDisplay, realSurface);
     shSetEGLError(EGL_BAD_ALLOC);
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
   }
 
   surface->magic = SH_EGL_SURFACE_MAGIC;
@@ -1048,7 +1054,7 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreateWindowSurface(EGLDisplay dpy, EGLConfig c
   surface->realSurface = realSurface;
   surface->type = SH_EGL_SURFACE_PLATFORM;
   surface->config = config;
-  return (EGLSurface)surface;
+  SH_EGL_RETURN((EGLSurface)surface);
 }
 
 EGLAPI EGLSurface EGLAPIENTRY eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig config,
@@ -1063,17 +1069,17 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig 
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
 
   realSurface = g_egl.CreatePbufferSurface(display->realDisplay, config, attrib_list);
   if (realSurface == EGL_NO_SURFACE)
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
 
   surface = (SHEGLSurface*)calloc(1, sizeof(SHEGLSurface));
   if (!surface) {
     g_egl.DestroySurface(display->realDisplay, realSurface);
     shSetEGLError(EGL_BAD_ALLOC);
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
   }
 
   surface->magic = SH_EGL_SURFACE_MAGIC;
@@ -1082,7 +1088,7 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig 
   surface->realSurface = realSurface;
   surface->type = SH_EGL_SURFACE_PLATFORM;
   surface->config = config;
-  return (EGLSurface)surface;
+  SH_EGL_RETURN((EGLSurface)surface);
 }
 
 EGLAPI EGLSurface EGLAPIENTRY
@@ -1109,60 +1115,70 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
 
   if (buftype != EGL_OPENVG_IMAGE) {
     shSetEGLError(EGL_BAD_PARAMETER);
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
   }
 
   if (!t_currentContext ||
       t_currentContext->api != EGL_OPENVG_API ||
       !t_currentContext->vgContext) {
     shSetEGLError(EGL_BAD_ACCESS);
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
   }
 
   if (t_currentContext->display != display) {
     shSetEGLError(EGL_BAD_ACCESS);
-    return EGL_NO_SURFACE;
+    SH_EGL_RETURN(EGL_NO_SURFACE);
   }
 
   {
-    SHContextLock vgLock SH_CLEANUP(shContextLockCleanup);
+    SHContextLock vgLock;
     VGContext *vgContext = shAcquireCurrentContext(&vgLock);
 
     if (!vgContext || vgContext != t_currentContext->vgContext) {
       shSetEGLError(EGL_BAD_ACCESS);
-      return EGL_NO_SURFACE;
+      shContextLockCleanup(&vgLock);
+      SH_EGL_RETURN(EGL_NO_SURFACE);
     }
 
     imageHandle = (VGHandle)(uintptr_t)buffer;
     image = shGetImage(vgContext, (VGImage)imageHandle);
     if (!image) {
       shSetEGLError(EGL_BAD_PARAMETER);
-      return EGL_NO_SURFACE;
+      shContextLockCleanup(&vgLock);
+      SH_EGL_RETURN(EGL_NO_SURFACE);
     }
 
     if (shImageIsEGLPbufferBound(image) ||
         shImageIsRenderTarget(image)) {
       shSetEGLError(EGL_BAD_ACCESS);
-      return EGL_NO_SURFACE;
+      shContextLockCleanup(&vgLock);
+      SH_EGL_RETURN(EGL_NO_SURFACE);
     }
 
     if (!shImageIsRenderTargetEligible(image)) {
       shSetEGLError(EGL_BAD_MATCH);
-      return EGL_NO_SURFACE;
+      shContextLockCleanup(&vgLock);
+      SH_EGL_RETURN(EGL_NO_SURFACE);
     }
 
     if (!shParseClientPbufferAttribs(attrib_list,
                                      &textureFormat,
                                      &textureTarget,
                                      &mipmapTexture))
-      return EGL_NO_SURFACE;
+    {
+      shContextLockCleanup(&vgLock);
+      SH_EGL_RETURN(EGL_NO_SURFACE);
+    }
 
     if (!shConfigMatchesImage(display, config, image))
-      return EGL_NO_SURFACE;
+    {
+      shContextLockCleanup(&vgLock);
+      SH_EGL_RETURN(EGL_NO_SURFACE);
+    }
 
     hiddenAttribs[0] = EGL_WIDTH;
     hiddenAttribs[1] = image->width;
@@ -1174,12 +1190,16 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
                                              config,
                                              hiddenAttribs);
     if (realSurface == EGL_NO_SURFACE)
-      return EGL_NO_SURFACE;
+    {
+      shContextLockCleanup(&vgLock);
+      SH_EGL_RETURN(EGL_NO_SURFACE);
+    }
 
     if (!shCreateImageFramebuffer(image, &framebuffer, &stencil)) {
       g_egl.DestroySurface(display->realDisplay, realSurface);
       shSetEGLError(EGL_BAD_ALLOC);
-      return EGL_NO_SURFACE;
+      shContextLockCleanup(&vgLock);
+      SH_EGL_RETURN(EGL_NO_SURFACE);
     }
 
     surface = (SHEGLSurface*)calloc(1, sizeof(SHEGLSurface));
@@ -1190,7 +1210,8 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
         glDeleteRenderbuffers(1, &stencil);
       g_egl.DestroySurface(display->realDisplay, realSurface);
       shSetEGLError(EGL_BAD_ALLOC);
-      return EGL_NO_SURFACE;
+      shContextLockCleanup(&vgLock);
+      SH_EGL_RETURN(EGL_NO_SURFACE);
     }
 
     shImageAddEGLPbufferRef(image);
@@ -1212,9 +1233,10 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
     surface->mipmapTexture = mipmapTexture;
     surface->vgColorspace = shImageVGColorspace(image);
     surface->vgAlphaFormat = shImageVGAlphaFormat(image);
+    shContextLockCleanup(&vgLock);
   }
 
-  return (EGLSurface)surface;
+  SH_EGL_RETURN((EGLSurface)surface);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surface)
@@ -1229,23 +1251,23 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
   display = shDisplay(dpy);
   s = shSurface(surface);
   if (!display || !s)
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   if (s->display != display) {
     shSetEGLError(EGL_BAD_MATCH);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
 
   if (s->destroyRequested) {
     shSetEGLError(EGL_BAD_SURFACE);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
 
   if (s->currentCount > 0) {
     if (!shThreadOwnsCurrent(s->currentCount,
                              s->currentThread)) {
       shSetEGLError(EGL_BAD_ACCESS);
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     }
 
     result = g_egl.DestroySurface(display->realDisplay,
@@ -1254,7 +1276,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
       s->destroyRequested = EGL_TRUE;
       s->realDestroyed = EGL_TRUE;
     }
-    return result;
+    SH_EGL_RETURN(result);
   }
 
   result = g_egl.DestroySurface(display->realDisplay, s->realSurface);
@@ -1265,7 +1287,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
     free(s);
   }
 
-  return result;
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglQuerySurface(EGLDisplay dpy, EGLSurface surface,
@@ -1279,42 +1301,42 @@ EGLAPI EGLBoolean EGLAPIENTRY eglQuerySurface(EGLDisplay dpy, EGLSurface surface
   display = shDisplay(dpy);
   s = shSurface(surface);
   if (!display || !s)
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   if (!value) {
     shSetEGLError(EGL_BAD_PARAMETER);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
 
   if (s->type == SH_EGL_SURFACE_OPENVG_IMAGE) {
     switch (attribute) {
     case EGL_WIDTH:
       *value = s->width;
-      return EGL_TRUE;
+      SH_EGL_RETURN(EGL_TRUE);
     case EGL_HEIGHT:
       *value = s->height;
-      return EGL_TRUE;
+      SH_EGL_RETURN(EGL_TRUE);
     case EGL_TEXTURE_FORMAT:
       *value = s->textureFormat;
-      return EGL_TRUE;
+      SH_EGL_RETURN(EGL_TRUE);
     case EGL_TEXTURE_TARGET:
       *value = s->textureTarget;
-      return EGL_TRUE;
+      SH_EGL_RETURN(EGL_TRUE);
     case EGL_MIPMAP_TEXTURE:
       *value = s->mipmapTexture;
-      return EGL_TRUE;
+      SH_EGL_RETURN(EGL_TRUE);
     case EGL_VG_COLORSPACE:
       *value = s->vgColorspace;
-      return EGL_TRUE;
+      SH_EGL_RETURN(EGL_TRUE);
     case EGL_VG_ALPHA_FORMAT:
       *value = s->vgAlphaFormat;
-      return EGL_TRUE;
+      SH_EGL_RETURN(EGL_TRUE);
     default:
       break;
     }
   }
 
-  return g_egl.QuerySurface(display->realDisplay, s->realSurface,
-                            attribute, value);
+  SH_EGL_RETURN(g_egl.QuerySurface(display->realDisplay, s->realSurface,
+                                   attribute, value));
 }
 
 EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
@@ -1333,40 +1355,40 @@ EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display)
-    return EGL_NO_CONTEXT;
+    SH_EGL_RETURN(EGL_NO_CONTEXT);
 
   if (share_context != EGL_NO_CONTEXT) {
     share = shContext(share_context);
     if (!share)
-      return EGL_NO_CONTEXT;
+      SH_EGL_RETURN(EGL_NO_CONTEXT);
     if (share->destroyRequested) {
       shSetEGLError(EGL_BAD_CONTEXT);
-      return EGL_NO_CONTEXT;
+      SH_EGL_RETURN(EGL_NO_CONTEXT);
     }
     if (share->display != display) {
       shSetEGLError(EGL_BAD_MATCH);
-      return EGL_NO_CONTEXT;
+      SH_EGL_RETURN(EGL_NO_CONTEXT);
     }
     if (share->api != api) {
       shSetEGLError(EGL_BAD_MATCH);
-      return EGL_NO_CONTEXT;
+      SH_EGL_RETURN(EGL_NO_CONTEXT);
     }
     realShare = share->realContext;
   }
 
   if (api == EGL_OPENVG_API && !g_egl.BindAPI(EGL_OPENGL_API))
-    return EGL_NO_CONTEXT;
+    SH_EGL_RETURN(EGL_NO_CONTEXT);
 
   realContext = g_egl.CreateContext(display->realDisplay, config, realShare,
                                     shContextAttribsForAPI(api, attrib_list));
   if (realContext == EGL_NO_CONTEXT)
-    return EGL_NO_CONTEXT;
+    SH_EGL_RETURN(EGL_NO_CONTEXT);
 
   context = (SHEGLContext*)calloc(1, sizeof(SHEGLContext));
   if (!context) {
     g_egl.DestroyContext(display->realDisplay, realContext);
     shSetEGLError(EGL_BAD_ALLOC);
-    return EGL_NO_CONTEXT;
+    SH_EGL_RETURN(EGL_NO_CONTEXT);
   }
 
   context->magic = SH_EGL_CONTEXT_MAGIC;
@@ -1381,11 +1403,11 @@ EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
       g_egl.DestroyContext(display->realDisplay, realContext);
       free(context);
       shSetEGLError(EGL_BAD_ALLOC);
-      return EGL_NO_CONTEXT;
+      SH_EGL_RETURN(EGL_NO_CONTEXT);
     }
   }
 
-  return (EGLContext)context;
+  SH_EGL_RETURN((EGLContext)context);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
@@ -1400,23 +1422,23 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
   display = shDisplay(dpy);
   context = shContext(ctx);
   if (!display || !context)
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   if (context->display != display) {
     shSetEGLError(EGL_BAD_MATCH);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
 
   if (context->destroyRequested) {
     shSetEGLError(EGL_BAD_CONTEXT);
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
   }
 
   if (context->currentCount > 0) {
     if (!shThreadOwnsCurrent(context->currentCount,
-                             context->currentThread)) {
+                               context->currentThread)) {
       shSetEGLError(EGL_BAD_ACCESS);
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     }
 
     result = g_egl.DestroyContext(display->realDisplay,
@@ -1425,7 +1447,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
       context->destroyRequested = EGL_TRUE;
       context->realDestroyed = EGL_TRUE;
     }
-    return result;
+    SH_EGL_RETURN(result);
   }
 
   result = g_egl.DestroyContext(display->realDisplay, context->realContext);
@@ -1438,7 +1460,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
     free(context);
   }
 
-  return result;
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
@@ -1471,33 +1493,33 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
 
   display = shDisplay(dpy);
   if (!display)
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   if (draw != EGL_NO_SURFACE) {
     drawSurface = shSurface(draw);
     if (!drawSurface)
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     realDraw = drawSurface->realSurface;
   }
 
   if (read != EGL_NO_SURFACE) {
     readSurface = shSurface(read);
     if (!readSurface)
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     realRead = readSurface->realSurface;
   }
 
   if (ctx != EGL_NO_CONTEXT) {
     context = shContext(ctx);
     if (!context)
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     realContext = context->realContext;
   }
 
   if (!shContextCanBeMadeCurrent(context) ||
       !shSurfaceCanBeMadeCurrent(drawSurface) ||
       !shSurfaceCanBeMadeCurrent(readSurface))
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   if (oldContext &&
       oldContext->api == EGL_OPENVG_API &&
@@ -1518,24 +1540,24 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
   if (usesImageSurface) {
     if (!context || context->api != EGL_OPENVG_API) {
       shSetEGLError(EGL_BAD_MATCH);
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     }
 
     if (drawSurface != readSurface) {
       shSetEGLError(EGL_BAD_MATCH);
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     }
 
     if (!drawSurface ||
         drawSurface->vgContext != context->vgContext) {
       shSetEGLError(EGL_BAD_MATCH);
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     }
 
     if (shImageIsRenderTarget(drawSurface->vgImage) &&
         t_currentDraw != drawSurface) {
       shSetEGLError(EGL_BAD_ACCESS);
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     }
   }
 
@@ -1546,18 +1568,18 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
       height = drawSurface->height;
       renderTargetImage = drawSurface->vgImage;
     } else if (!shQuerySurfaceSize(display, drawSurface, &width, &height)) {
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     }
   }
 
   if (context && context->api == EGL_OPENVG_API && !g_egl.BindAPI(EGL_OPENGL_API))
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   if (oldDraw != drawSurface && !shNormalizeImageSurface(oldDraw))
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   if (!g_egl.MakeCurrent(display->realDisplay, realDraw, realRead, realContext))
-    return EGL_FALSE;
+    SH_EGL_RETURN(EGL_FALSE);
 
   if (usesOpenVGContext) {
     if (drawSurface &&
@@ -1595,7 +1617,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
       }
 
       shSetEGLError(EGL_BAD_ALLOC);
-      return EGL_FALSE;
+      SH_EGL_RETURN(EGL_FALSE);
     }
   } else {
     shClearCurrentContext();
@@ -1649,7 +1671,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw,
       oldRead != readSurface)
     shFinalizeDestroyedSurface(oldRead);
 
-  return EGL_TRUE;
+  SH_EGL_RETURN(EGL_TRUE);
 }
 
 EGLAPI EGLContext EGLAPIENTRY eglGetCurrentContext(void)
@@ -1681,7 +1703,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   s = shSurface(surface);
-  return (display && s) ? g_egl.SwapBuffers(display->realDisplay, s->realSurface) : EGL_FALSE;
+  SH_EGL_RETURN((display && s) ? g_egl.SwapBuffers(display->realDisplay, s->realSurface) : EGL_FALSE);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
@@ -1692,8 +1714,8 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display || !g_egl.SwapInterval)
-    return EGL_FALSE;
-  return g_egl.SwapInterval(display->realDisplay, interval);
+    SH_EGL_RETURN(EGL_FALSE);
+  SH_EGL_RETURN(g_egl.SwapInterval(display->realDisplay, interval));
 }
 
 EGLAPI EGLint EGLAPIENTRY eglGetError(void)
@@ -1708,7 +1730,7 @@ EGLAPI EGLint EGLAPIENTRY eglGetError(void)
     return t_error;
 
   SH_EGL_LOCK_GUARD();
-  return g_egl.GetError();
+  SH_EGL_RETURN(g_egl.GetError());
 }
 
 EGLAPI const char *EGLAPIENTRY eglQueryString(EGLDisplay dpy, EGLint name)
@@ -1723,7 +1745,7 @@ EGLAPI const char *EGLAPIENTRY eglQueryString(EGLDisplay dpy, EGLint name)
   if (dpy != EGL_NO_DISPLAY) {
     display = shDisplay(dpy);
     if (!display)
-      return NULL;
+      SH_EGL_RETURN(NULL);
   }
 
   real = g_egl.QueryString(display ? display->realDisplay : EGL_NO_DISPLAY, name);
@@ -1732,11 +1754,11 @@ EGLAPI const char *EGLAPIENTRY eglQueryString(EGLDisplay dpy, EGLint name)
     if (!real || !strstr(real, "OpenVG")) {
       snprintf(t_clientApis, sizeof(t_clientApis), "OpenVG%s%s",
                real ? " " : "", real ? real : "");
-      return t_clientApis;
+      SH_EGL_RETURN(t_clientApis);
     }
   }
 
-  return real;
+  SH_EGL_RETURN(real);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglReleaseThread(void)
@@ -1776,7 +1798,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglReleaseThread(void)
   if (oldRead != oldDraw)
     shFinalizeDestroyedSurface(oldRead);
 
-  return g_egl.ReleaseThread();
+  SH_EGL_RETURN(g_egl.ReleaseThread());
 }
 
 EGLAPI __eglMustCastToProperFunctionPointerType EGLAPIENTRY
@@ -1821,5 +1843,5 @@ eglGetProcAddress(const char *procname)
     return NULL;
 
   SH_EGL_LOCK_GUARD();
-  return g_egl.GetProcAddress(procname);
+  SH_EGL_RETURN(g_egl.GetProcAddress(procname));
 }

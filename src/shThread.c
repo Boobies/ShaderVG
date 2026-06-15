@@ -83,6 +83,48 @@ int shThreadIdEqual(SHThreadId a, SHThreadId b)
   return a.valid && b.valid && a.value == b.value;
 }
 
+void shAtomicIntInit(SHAtomicInt *value, int initial)
+{
+  value->value = (LONG)initial;
+}
+
+void shAtomicIntDestroy(SHAtomicInt *value)
+{
+  (void)value;
+}
+
+int shAtomicIntLoad(SHAtomicInt *value)
+{
+  return (int)InterlockedCompareExchange(&value->value, 0, 0);
+}
+
+int shAtomicIntIncrement(SHAtomicInt *value)
+{
+  return (int)InterlockedIncrement(&value->value);
+}
+
+int shAtomicIntDecrement(SHAtomicInt *value)
+{
+  return (int)InterlockedDecrement(&value->value);
+}
+
+int shAtomicIntDecrementIfPositive(SHAtomicInt *value)
+{
+  LONG oldValue;
+  LONG newValue;
+
+  do {
+    oldValue = InterlockedCompareExchange(&value->value, 0, 0);
+    if (oldValue <= 0)
+      return (int)oldValue;
+    newValue = oldValue - 1;
+  } while (InterlockedCompareExchange(&value->value,
+                                      newValue,
+                                      oldValue) != oldValue);
+
+  return (int)newValue;
+}
+
 #else
 
 void shMutexInit(SHMutex *mutex)
@@ -152,6 +194,63 @@ SHThreadId shThreadInvalidId(void)
 int shThreadIdEqual(SHThreadId a, SHThreadId b)
 {
   return a.valid && b.valid && pthread_equal(a.value, b.value);
+}
+
+void shAtomicIntInit(SHAtomicInt *value, int initial)
+{
+  shMutexInit(&value->mutex);
+  value->value = initial;
+}
+
+void shAtomicIntDestroy(SHAtomicInt *value)
+{
+  shMutexDestroy(&value->mutex);
+}
+
+int shAtomicIntLoad(SHAtomicInt *value)
+{
+  int result;
+
+  shMutexLock(&value->mutex);
+  result = value->value;
+  shMutexUnlock(&value->mutex);
+
+  return result;
+}
+
+int shAtomicIntIncrement(SHAtomicInt *value)
+{
+  int result;
+
+  shMutexLock(&value->mutex);
+  result = ++value->value;
+  shMutexUnlock(&value->mutex);
+
+  return result;
+}
+
+int shAtomicIntDecrement(SHAtomicInt *value)
+{
+  int result;
+
+  shMutexLock(&value->mutex);
+  result = --value->value;
+  shMutexUnlock(&value->mutex);
+
+  return result;
+}
+
+int shAtomicIntDecrementIfPositive(SHAtomicInt *value)
+{
+  int result;
+
+  shMutexLock(&value->mutex);
+  if (value->value > 0)
+    --value->value;
+  result = value->value;
+  shMutexUnlock(&value->mutex);
+
+  return result;
 }
 
 #endif

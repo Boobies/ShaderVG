@@ -207,7 +207,7 @@ static void shReleaseHandle(SHResourceGroup *resources,
 static void SHResourceGroup_ctor(SHResourceGroup *resources)
 {
   shRecursiveMutexInit(&resources->mutex);
-  resources->refCount = 1;
+  shAtomicIntInit(&resources->refCount, 1);
   SH_INITOBJ(SHPathArray, resources->paths);
   SH_INITOBJ(SHPaintArray, resources->paints);
   SH_INITOBJ(SHImageArray, resources->images);
@@ -254,6 +254,7 @@ static void SHResourceGroup_dtor(SHResourceGroup *resources)
   SH_DEINITOBJ(SHPathArray, resources->paths);
   SH_DEINITOBJ(SHPaintArray, resources->paints);
   SH_DEINITOBJ(SHImageArray, resources->images);
+  shAtomicIntDestroy(&resources->refCount);
   shRecursiveMutexDestroy(&resources->mutex);
 }
 
@@ -262,9 +263,7 @@ static void shResourceGroupAddRef(SHResourceGroup *resources)
   if (!resources)
     return;
 
-  shLockResourceGroup(resources);
-  ++resources->refCount;
-  shUnlockResourceGroup(resources);
+  shAtomicIntIncrement(&resources->refCount);
 }
 
 static void shResourceGroupRelease(SHResourceGroup *resources)
@@ -274,10 +273,8 @@ static void shResourceGroupRelease(SHResourceGroup *resources)
   if (!resources)
     return;
 
-  shLockResourceGroup(resources);
-  --resources->refCount;
-  destroy = (resources->refCount <= 0) ? VG_TRUE : VG_FALSE;
-  shUnlockResourceGroup(resources);
+  destroy = (shAtomicIntDecrement(&resources->refCount) <= 0) ?
+            VG_TRUE : VG_FALSE;
 
   if (destroy)
     SH_DELETEOBJ(SHResourceGroup, resources);

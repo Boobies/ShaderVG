@@ -339,6 +339,7 @@ static void shSubdivideSegment(SHPath *p, VGPathSegment segment,
   
   /* Add subdivision vertex */
   shAddVertex(p, &v, contourStart);
+  VG_RETURN(VG_NO_RETVAL);
 }
 
 /*--------------------------------------------------

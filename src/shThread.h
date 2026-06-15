@@ -11,14 +11,6 @@
 #  include <pthread.h>
 #endif
 
-#if defined(__GNUC__) || defined(__clang__)
-#  define SH_CLEANUP(func) __attribute__((cleanup(func)))
-#  define SH_HAS_CLEANUP 1
-#else
-#  define SH_CLEANUP(func)
-#  define SH_HAS_CLEANUP 0
-#endif
-
 #if defined(_WIN32)
 typedef struct
 {
@@ -38,6 +30,11 @@ typedef struct
   DWORD value;
   int valid;
 } SHThreadId;
+
+typedef struct
+{
+  volatile LONG value;
+} SHAtomicInt;
 #else
 typedef struct
 {
@@ -57,6 +54,12 @@ typedef struct
   pthread_t value;
   int valid;
 } SHThreadId;
+
+typedef struct
+{
+  SHMutex mutex;
+  int value;
+} SHAtomicInt;
 #endif
 
 void shMutexInit(SHMutex *mutex);
@@ -74,5 +77,12 @@ void shOnce(SHOnce *once, void (*function)(void));
 SHThreadId shThreadCurrentId(void);
 SHThreadId shThreadInvalidId(void);
 int shThreadIdEqual(SHThreadId a, SHThreadId b);
+
+void shAtomicIntInit(SHAtomicInt *value, int initial);
+void shAtomicIntDestroy(SHAtomicInt *value);
+int shAtomicIntLoad(SHAtomicInt *value);
+int shAtomicIntIncrement(SHAtomicInt *value);
+int shAtomicIntDecrement(SHAtomicInt *value);
+int shAtomicIntDecrementIfPositive(SHAtomicInt *value);
 
 #endif /* __SHTHREAD_H */

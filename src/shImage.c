@@ -600,11 +600,11 @@ void SHImage_ctor(SHImage *i)
   i->width = 0;
   i->height = 0;
   i->texture = 0;
-  i->refCount = 1;
-  i->eglPbufferRefs = 0;
-  i->renderTargetRefs = 0;
-  i->paintPatternRefs = 0;
-  i->glyphRefs = 0;
+  shAtomicIntInit(&i->refCount, 1);
+  shAtomicIntInit(&i->eglPbufferRefs, 0);
+  shAtomicIntInit(&i->renderTargetRefs, 0);
+  shAtomicIntInit(&i->paintPatternRefs, 0);
+  shAtomicIntInit(&i->glyphRefs, 0);
   i->gpuDataDirty = VG_FALSE;
   i->surfaceDataPremultiplied = VG_FALSE;
   i->parent = NULL;
@@ -628,6 +628,12 @@ void SHImage_dtor(SHImage *i)
 
   if (parent)
     shImageRelease(parent);
+
+  shAtomicIntDestroy(&i->glyphRefs);
+  shAtomicIntDestroy(&i->paintPatternRefs);
+  shAtomicIntDestroy(&i->renderTargetRefs);
+  shAtomicIntDestroy(&i->eglPbufferRefs);
+  shAtomicIntDestroy(&i->refCount);
 }
 
 SHImage *shImageRoot(SHImage *i)
@@ -672,7 +678,7 @@ VGboolean shImageOwnsStorage(const SHImage *i)
 void shImageAddRef(SHImage *i)
 {
   if (i)
-    ++i->refCount;
+    shAtomicIntIncrement(&i->refCount);
 }
 
 void shImageRelease(SHImage *i)
@@ -680,8 +686,7 @@ void shImageRelease(SHImage *i)
   if (!i)
     return;
 
-  --i->refCount;
-  if (i->refCount <= 0)
+  if (shAtomicIntDecrement(&i->refCount) <= 0)
     SH_DELETEOBJ(SHImage, i);
 }
 
@@ -692,7 +697,7 @@ void shImageAddEGLPbufferRef(SHImage *i)
   if (!root)
     return;
 
-  ++root->eglPbufferRefs;
+  shAtomicIntIncrement(&root->eglPbufferRefs);
   shImageAddRef(root);
 }
 
@@ -703,8 +708,7 @@ void shImageReleaseEGLPbufferRef(SHImage *i)
   if (!root)
     return;
 
-  if (root->eglPbufferRefs > 0)
-    --root->eglPbufferRefs;
+  shAtomicIntDecrementIfPositive(&root->eglPbufferRefs);
   shImageRelease(root);
 }
 
@@ -713,19 +717,19 @@ void shImageAddPaintPatternRef(SHImage *i)
   SHImage *root = shImageRoot(i);
 
   if (i)
-    ++i->paintPatternRefs;
+    shAtomicIntIncrement(&i->paintPatternRefs);
   if (root && root != i)
-    ++root->paintPatternRefs;
+    shAtomicIntIncrement(&root->paintPatternRefs);
 }
 
 void shImageReleasePaintPatternRef(SHImage *i)
 {
   SHImage *root = shImageRoot(i);
 
-  if (i && i->paintPatternRefs > 0)
-    --i->paintPatternRefs;
-  if (root && root != i && root->paintPatternRefs > 0)
-    --root->paintPatternRefs;
+  if (i)
+    shAtomicIntDecrementIfPositive(&i->paintPatternRefs);
+  if (root && root != i)
+    shAtomicIntDecrementIfPositive(&root->paintPatternRefs);
 }
 
 void shImageAddGlyphRef(SHImage *i)
@@ -733,19 +737,19 @@ void shImageAddGlyphRef(SHImage *i)
   SHImage *root = shImageRoot(i);
 
   if (i)
-    ++i->glyphRefs;
+    shAtomicIntIncrement(&i->glyphRefs);
   if (root && root != i)
-    ++root->glyphRefs;
+    shAtomicIntIncrement(&root->glyphRefs);
 }
 
 void shImageReleaseGlyphRef(SHImage *i)
 {
   SHImage *root = shImageRoot(i);
 
-  if (i && i->glyphRefs > 0)
-    --i->glyphRefs;
-  if (root && root != i && root->glyphRefs > 0)
-    --root->glyphRefs;
+  if (i)
+    shAtomicIntDecrementIfPositive(&i->glyphRefs);
+  if (root && root != i)
+    shAtomicIntDecrementIfPositive(&root->glyphRefs);
 }
 
 void shImageBeginRenderTarget(SHImage *i)
@@ -753,29 +757,31 @@ void shImageBeginRenderTarget(SHImage *i)
   SHImage *root = shImageRoot(i);
 
   if (root)
-    ++root->renderTargetRefs;
+    shAtomicIntIncrement(&root->renderTargetRefs);
 }
 
 void shImageEndRenderTarget(SHImage *i)
 {
   SHImage *root = shImageRoot(i);
 
-  if (root && root->renderTargetRefs > 0)
-    --root->renderTargetRefs;
+  if (root)
+    shAtomicIntDecrementIfPositive(&root->renderTargetRefs);
 }
 
 VGboolean shImageIsEGLPbufferBound(SHImage *i)
 {
   SHImage *root = shImageRoot(i);
 
-  return (root && root->eglPbufferRefs > 0) ? VG_TRUE : VG_FALSE;
+  return (root && shAtomicIntLoad(&root->eglPbufferRefs) > 0) ?
+         VG_TRUE : VG_FALSE;
 }
 
 VGboolean shImageIsRenderTarget(SHImage *i)
 {
   SHImage *root = shImageRoot(i);
 
-  return (root && root->renderTargetRefs > 0) ? VG_TRUE : VG_FALSE;
+  return (root && shAtomicIntLoad(&root->renderTargetRefs) > 0) ?
+         VG_TRUE : VG_FALSE;
 }
 
 VGboolean shImageIsRenderTargetEligible(SHImage *i)
@@ -784,8 +790,8 @@ VGboolean shImageIsRenderTargetEligible(SHImage *i)
 
   return (i &&
           root == i &&
-          i->paintPatternRefs == 0 &&
-          i->glyphRefs == 0) ? VG_TRUE : VG_FALSE;
+          shAtomicIntLoad(&i->paintPatternRefs) == 0 &&
+          shAtomicIntLoad(&i->glyphRefs) == 0) ? VG_TRUE : VG_FALSE;
 }
 
 void shImageMarkGpuDataDirty(SHImage *i)
@@ -2910,7 +2916,7 @@ VG_API_CALL void vgReadPixels(void * data, VGint dataStride,
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   pixels = (SHuint8*)malloc(pixelBytes);
-  SH_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, SH_NO_RETVAL);
+  VG_RETURN_ERR_IF(!pixels, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   shSaveSurfaceReadGLState(&state);
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -4919,11 +4925,14 @@ VG_API_CALL void vgBindImageSH(VGImage image, VGImageUnitSH unit){
   SHImage *i;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
-  SH_RETURN_ERR_IF(unit < VG_IMAGE_UNIT_OFFSET_SH, VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
-  SH_RETURN_ERR_IF(image == VG_INVALID_HANDLE,     VG_ILLEGAL_ARGUMENT_ERROR, SH_NO_RETVAL);
+  VG_RETURN_ERR_IF(unit < VG_IMAGE_UNIT_OFFSET_SH,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(image == VG_INVALID_HANDLE,
+                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   i = shGetImage(context, image);
-  SH_RETURN_ERR_IF(!i, VG_BAD_HANDLE_ERROR, SH_NO_RETVAL);
-  SH_RETURN_ERR_IF(shImageIsRenderTarget(i), VG_IMAGE_IN_USE_ERROR, SH_NO_RETVAL);
+  VG_RETURN_ERR_IF(!i, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
+                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
   glActiveTexture(GL_TEXTURE0 + unit);
 
@@ -4935,4 +4944,5 @@ VG_API_CALL void vgBindImageSH(VGImage image, VGImageUnitSH unit){
 
   glEnable(GL_TEXTURE_2D);
   GL_CHECK_ERROR;
+  VG_RETURN(VG_NO_RETVAL);
 }

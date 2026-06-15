@@ -43,6 +43,18 @@ typedef struct
   int destroyedPatternImage;
 } DestroySharedArgs;
 
+typedef struct
+{
+  int status;
+  EGLDisplay display;
+  EGLConfig config;
+  EGLContext context;
+  EGLSurface surface;
+  VGImage image;
+  int destroyedSurface;
+  int destroyedImage;
+} PbufferRaceArgs;
+
 enum {
   THREAD_TEARDOWN_DESTROY_CONTEXT,
   THREAD_TEARDOWN_DESTROY_SURFACE,
@@ -634,6 +646,50 @@ static void *destroy_shared_handles_worker(void *arg)
   return NULL;
 }
 
+static void *destroy_pbuffer_image_worker(void *arg)
+{
+  PbufferRaceArgs *args = (PbufferRaceArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status) {
+    vgDestroyImage(args->image);
+    if (expect_vg_no_error("thread test could not destroy image pbuffer source"))
+      args->status = 1;
+    else
+      args->destroyedImage = 1;
+  }
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
+static void *destroy_image_pbuffer_surface_worker(void *arg)
+{
+  PbufferRaceArgs *args = (PbufferRaceArgs*)arg;
+
+  if (!eglDestroySurface(args->display, args->surface)) {
+    args->status = fail_egl("thread test could not destroy image pbuffer surface");
+    return NULL;
+  }
+
+  args->destroyedSurface = 1;
+  args->status = 0;
+  return NULL;
+}
+
 static void *make_current_conflict_worker(void *arg)
 {
   ThreadArgs *args = (ThreadArgs*)arg;
@@ -959,6 +1015,108 @@ static int run_cross_thread_retained_resource_lifetime(void)
   if (patternImage != VG_INVALID_HANDLE) {
     vgDestroyImage(patternImage);
     if (expect_vg_no_error("thread test could not clean up peer pattern image"))
+      status = 1;
+  }
+
+  if (cleanup_egl(&base))
+    status = 1;
+
+  return status;
+}
+
+static int run_image_pbuffer_ref_race(void)
+{
+  TestEGL base = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  PbufferRaceArgs imageArgs;
+  PbufferRaceArgs surfaceArgs;
+  pthread_t imageThread;
+  pthread_t surfaceThread;
+  VGImage image = VG_INVALID_HANDLE;
+  EGLSurface imageSurface = EGL_NO_SURFACE;
+  int imageThreadCreated = 0;
+  int surfaceThreadCreated = 0;
+  int status = 0;
+
+  if (init_egl(&base, EGL_NO_CONTEXT))
+    return 1;
+
+  image = create_colored_image(9, 3);
+  if (image == VG_INVALID_HANDLE ||
+      expect_vg_no_error("thread test could not create image pbuffer source")) {
+    status = 1;
+  }
+
+  if (!status) {
+    imageSurface = eglCreatePbufferFromClientBuffer(base.display,
+                                                   EGL_OPENVG_IMAGE,
+                                                   (EGLClientBuffer)(uintptr_t)image,
+                                                   base.config,
+                                                   NULL);
+    if (imageSurface == EGL_NO_SURFACE)
+      status = fail_egl("thread test could not create image pbuffer surface");
+  }
+
+  imageArgs.status = 1;
+  imageArgs.display = base.display;
+  imageArgs.config = base.config;
+  imageArgs.context = base.context;
+  imageArgs.surface = imageSurface;
+  imageArgs.image = image;
+  imageArgs.destroyedSurface = 0;
+  imageArgs.destroyedImage = 0;
+
+  surfaceArgs = imageArgs;
+
+  if (!status) {
+    if (pthread_create(&imageThread, NULL,
+                       destroy_pbuffer_image_worker, &imageArgs) != 0) {
+      fprintf(stderr, "thread test could not create image destroy worker\n");
+      status = 1;
+    } else {
+      imageThreadCreated = 1;
+    }
+  }
+
+  if (!status) {
+    if (pthread_create(&surfaceThread, NULL,
+                       destroy_image_pbuffer_surface_worker,
+                       &surfaceArgs) != 0) {
+      fprintf(stderr, "thread test could not create image pbuffer destroy worker\n");
+      status = 1;
+    } else {
+      surfaceThreadCreated = 1;
+    }
+  }
+
+  if (imageThreadCreated) {
+    pthread_join(imageThread, NULL);
+    if (imageArgs.destroyedImage)
+      image = VG_INVALID_HANDLE;
+    if (imageArgs.status)
+      status = 1;
+  }
+
+  if (surfaceThreadCreated) {
+    pthread_join(surfaceThread, NULL);
+    if (surfaceArgs.destroyedSurface)
+      imageSurface = EGL_NO_SURFACE;
+    if (surfaceArgs.status)
+      status = 1;
+  }
+
+  if (imageSurface != EGL_NO_SURFACE &&
+      !eglDestroySurface(base.display, imageSurface))
+    status = fail_egl("thread test could not clean up image pbuffer surface");
+
+  if (image != VG_INVALID_HANDLE) {
+    vgDestroyImage(image);
+    if (expect_vg_no_error("thread test could not clean up image pbuffer source"))
       status = 1;
   }
 
@@ -1388,6 +1546,8 @@ int main(void)
   if (run_shared_resource_churn())
     return EXIT_FAILURE;
   if (run_cross_thread_retained_resource_lifetime())
+    return EXIT_FAILURE;
+  if (run_image_pbuffer_ref_race())
     return EXIT_FAILURE;
   if (run_make_current_conflict())
     return EXIT_FAILURE;
