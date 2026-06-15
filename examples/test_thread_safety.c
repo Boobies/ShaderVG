@@ -25,12 +25,34 @@ typedef struct
   EGLSurface surface;
   EGLContext context;
   int operation;
+  int workerId;
+  int iterations;
 } ThreadArgs;
+
+typedef struct
+{
+  int status;
+  EGLDisplay display;
+  EGLConfig config;
+  EGLContext context;
+  VGPath path;
+  VGImage glyphImage;
+  VGImage patternImage;
+  int destroyedPath;
+  int destroyedGlyphImage;
+  int destroyedPatternImage;
+} DestroySharedArgs;
 
 enum {
   THREAD_TEARDOWN_DESTROY_CONTEXT,
   THREAD_TEARDOWN_DESTROY_SURFACE,
   THREAD_TEARDOWN_TERMINATE_DISPLAY
+};
+
+enum {
+  THREAD_IMAGE_SIZE = 8,
+  THREAD_SHARED_WORKERS = 2,
+  THREAD_SHARED_ITERATIONS = 64
 };
 
 static int fail_egl(const char *message)
@@ -53,6 +75,16 @@ static int expect_egl_error(const char *message, EGLint expected)
 static int fail_vg(const char *message)
 {
   fprintf(stderr, "%s (VG error 0x%04x)\n", message, vgGetError());
+  return 1;
+}
+
+static int expect_vg_no_error(const char *message)
+{
+  VGErrorCode error = vgGetError();
+  if (error == VG_NO_ERROR)
+    return 0;
+
+  fprintf(stderr, "%s (VG error 0x%04x)\n", message, error);
   return 1;
 }
 
@@ -236,6 +268,207 @@ static VGPath create_rect_path(void)
   return path;
 }
 
+static int reset_test_state(void)
+{
+  VGfloat origin[2] = { 0.0f, 0.0f };
+
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_IMAGE_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_FILL_PAINT_TO_USER);
+  vgLoadIdentity();
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_STROKE_PAINT_TO_USER);
+  vgLoadIdentity();
+  vgSeti(VG_MATRIX_MODE, VG_MATRIX_GLYPH_USER_TO_SURFACE);
+  vgLoadIdentity();
+  vgSeti(VG_IMAGE_MODE, VG_DRAW_IMAGE_NORMAL);
+  vgSetfv(VG_GLYPH_ORIGIN, 2, origin);
+
+  return expect_vg_no_error("thread test could not reset OpenVG state");
+}
+
+static VGImage create_colored_image(int workerId, int iteration)
+{
+  VGubyte pixels[THREAD_IMAGE_SIZE * THREAD_IMAGE_SIZE * 4];
+  VGImage image;
+  int x;
+  int y;
+
+  for (y = 0; y < THREAD_IMAGE_SIZE; ++y) {
+    for (x = 0; x < THREAD_IMAGE_SIZE; ++x) {
+      int offset = (y * THREAD_IMAGE_SIZE + x) * 4;
+      pixels[offset + 0] = (VGubyte)(40 + (workerId * 53 + x * 17) % 180);
+      pixels[offset + 1] = (VGubyte)(30 + (iteration * 29 + y * 19) % 190);
+      pixels[offset + 2] = (VGubyte)(60 + (workerId * 31 + iteration * 7) % 160);
+      pixels[offset + 3] = 255;
+    }
+  }
+
+  image = vgCreateImage(VG_sRGBA_8888,
+                        THREAD_IMAGE_SIZE,
+                        THREAD_IMAGE_SIZE,
+                        VG_IMAGE_QUALITY_BETTER);
+  if (image == VG_INVALID_HANDLE)
+    return image;
+
+  vgImageSubData(image,
+                 pixels,
+                 THREAD_IMAGE_SIZE * 4,
+                 VG_sRGBA_8888,
+                 0,
+                 0,
+                 THREAD_IMAGE_SIZE,
+                 THREAD_IMAGE_SIZE);
+  return image;
+}
+
+static int setup_retained_resources(VGPath path,
+                                    VGImage glyphImage,
+                                    VGImage patternImage,
+                                    VGPaint paint,
+                                    VGFont font)
+{
+  VGfloat glyphOrigin[2] = { 0.0f, 0.0f };
+  VGfloat escapement[2] = { 10.0f, 0.0f };
+
+  vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_PATTERN);
+  vgPaintPattern(paint, patternImage);
+  vgSetGlyphToPath(font, 1, path, VG_FALSE, glyphOrigin, escapement);
+  vgSetGlyphToImage(font, 2, glyphImage, glyphOrigin, escapement);
+
+  return expect_vg_no_error("thread test could not attach retained resources");
+}
+
+static int draw_retained_resources(VGPaint paint, VGFont font)
+{
+  VGuint glyphs[2] = { 1, 2 };
+
+  if (reset_test_state())
+    return 1;
+
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgDrawGlyph(font, 1, VG_FILL_PATH, VG_FALSE);
+  vgSeti(VG_IMAGE_MODE, VG_DRAW_IMAGE_NORMAL);
+  vgDrawGlyph(font, 2, VG_FILL_PATH, VG_FALSE);
+
+  if (expect_vg_no_error("thread test could not draw retained resources"))
+    return 1;
+
+  if (reset_test_state())
+    return 1;
+
+  vgSetPaint(paint, VG_FILL_PATH);
+  vgDrawGlyphs(font, 2, glyphs, NULL, NULL, VG_FILL_PATH, VG_FALSE);
+  vgFinish();
+
+  return expect_vg_no_error("thread test could not draw retained glyph run");
+}
+
+static int destroy_public_retained_handles(VGPath *path,
+                                           VGImage *glyphImage,
+                                           VGImage *patternImage)
+{
+  if (*path != VG_INVALID_HANDLE) {
+    vgDestroyPath(*path);
+    if (expect_vg_no_error("thread test could not destroy retained path handle"))
+      return 1;
+    *path = VG_INVALID_HANDLE;
+  }
+
+  if (*glyphImage != VG_INVALID_HANDLE) {
+    vgDestroyImage(*glyphImage);
+    if (expect_vg_no_error("thread test could not destroy retained glyph image handle"))
+      return 1;
+    *glyphImage = VG_INVALID_HANDLE;
+  }
+
+  if (*patternImage != VG_INVALID_HANDLE) {
+    vgDestroyImage(*patternImage);
+    if (expect_vg_no_error("thread test could not destroy retained pattern image handle"))
+      return 1;
+    *patternImage = VG_INVALID_HANDLE;
+  }
+
+  return 0;
+}
+
+static int run_shared_resource_iteration(int workerId, int iteration)
+{
+  VGPath path = VG_INVALID_HANDLE;
+  VGImage glyphImage = VG_INVALID_HANDLE;
+  VGImage patternImage = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGFont font = VG_INVALID_HANDLE;
+  int status = 0;
+
+  path = create_rect_path();
+  glyphImage = create_colored_image(workerId, iteration);
+  patternImage = create_colored_image(workerId, iteration + 1000);
+  paint = vgCreatePaint();
+  font = vgCreateFont(2);
+
+  if (path == VG_INVALID_HANDLE ||
+      glyphImage == VG_INVALID_HANDLE ||
+      patternImage == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE ||
+      font == VG_INVALID_HANDLE) {
+    status = fail_vg("thread test could not create shared retained resources");
+  } else if (expect_vg_no_error("thread test could not upload shared images")) {
+    status = 1;
+  }
+
+  if (!status &&
+      setup_retained_resources(path, glyphImage, patternImage, paint, font))
+    status = 1;
+
+  if (!status &&
+      destroy_public_retained_handles(&path, &glyphImage, &patternImage))
+    status = 1;
+
+  if (!status && draw_retained_resources(paint, font))
+    status = 1;
+
+  if (!status) {
+    vgClearGlyph(font, 1);
+    vgClearGlyph(font, 2);
+    if (expect_vg_no_error("thread test could not clear retained glyphs"))
+      status = 1;
+  }
+
+  if (font != VG_INVALID_HANDLE) {
+    vgDestroyFont(font);
+    if (expect_vg_no_error("thread test could not destroy retained font"))
+      status = 1;
+  }
+
+  if (paint != VG_INVALID_HANDLE) {
+    vgDestroyPaint(paint);
+    if (expect_vg_no_error("thread test could not destroy retained paint"))
+      status = 1;
+  }
+
+  if (path != VG_INVALID_HANDLE) {
+    vgDestroyPath(path);
+    if (expect_vg_no_error("thread test could not clean up shared path"))
+      status = 1;
+  }
+
+  if (glyphImage != VG_INVALID_HANDLE) {
+    vgDestroyImage(glyphImage);
+    if (expect_vg_no_error("thread test could not clean up shared glyph image"))
+      status = 1;
+  }
+
+  if (patternImage != VG_INVALID_HANDLE) {
+    vgDestroyImage(patternImage);
+    if (expect_vg_no_error("thread test could not clean up shared pattern image"))
+      status = 1;
+  }
+
+  return status;
+}
+
 static int exercise_resources(int iterations)
 {
   int i;
@@ -316,6 +549,86 @@ static void *shared_context_worker(void *arg)
   if (!args->status)
     args->status = exercise_resources(50);
   if (cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
+static void *shared_resource_churn_worker(void *arg)
+{
+  ThreadArgs *args = (ThreadArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  int i;
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status) {
+    for (i = 0; i < args->iterations; ++i) {
+      if (run_shared_resource_iteration(args->workerId, i)) {
+        args->status = 1;
+        break;
+      }
+    }
+  }
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
+static void *destroy_shared_handles_worker(void *arg)
+{
+  DestroySharedArgs *args = (DestroySharedArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status) {
+    if (args->path != VG_INVALID_HANDLE) {
+      vgDestroyPath(args->path);
+      if (expect_vg_no_error("thread test could not destroy shared path in peer"))
+        args->status = 1;
+      else
+        args->destroyedPath = 1;
+    }
+
+    if (!args->status && args->glyphImage != VG_INVALID_HANDLE) {
+      vgDestroyImage(args->glyphImage);
+      if (expect_vg_no_error("thread test could not destroy shared glyph image in peer"))
+        args->status = 1;
+      else
+        args->destroyedGlyphImage = 1;
+    }
+
+    if (!args->status && args->patternImage != VG_INVALID_HANDLE) {
+      vgDestroyImage(args->patternImage);
+      if (expect_vg_no_error("thread test could not destroy shared pattern image in peer"))
+        args->status = 1;
+      else
+        args->destroyedPatternImage = 1;
+    }
+  }
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
   return NULL;
@@ -485,6 +798,169 @@ static int run_shared_context_stress(void)
   pthread_join(thread, NULL);
   if (args.status)
     status = 1;
+
+  if (cleanup_egl(&base))
+    status = 1;
+
+  return status;
+}
+
+static int run_shared_resource_churn(void)
+{
+  TestEGL base = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  pthread_t threads[THREAD_SHARED_WORKERS];
+  ThreadArgs args[THREAD_SHARED_WORKERS];
+  int created = 0;
+  int i;
+  int status = 0;
+
+  if (init_egl(&base, EGL_NO_CONTEXT))
+    return 1;
+
+  for (i = 0; i < THREAD_SHARED_WORKERS; ++i) {
+    args[i].status = 1;
+    args[i].display = base.display;
+    args[i].config = base.config;
+    args[i].context = base.context;
+    args[i].workerId = i + 1;
+    args[i].iterations = THREAD_SHARED_ITERATIONS;
+    if (pthread_create(&threads[i], NULL,
+                       shared_resource_churn_worker, &args[i]) != 0) {
+      fprintf(stderr, "thread test could not create shared resource worker\n");
+      status = 1;
+      break;
+    }
+    ++created;
+  }
+
+  for (i = 0; i < created; ++i) {
+    pthread_join(threads[i], NULL);
+    if (args[i].status)
+      status = 1;
+  }
+
+  if (cleanup_egl(&base))
+    status = 1;
+
+  return status;
+}
+
+static int run_cross_thread_retained_resource_lifetime(void)
+{
+  TestEGL base = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  DestroySharedArgs args;
+  pthread_t thread;
+  VGPath path = VG_INVALID_HANDLE;
+  VGImage glyphImage = VG_INVALID_HANDLE;
+  VGImage patternImage = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGFont font = VG_INVALID_HANDLE;
+  int status = 0;
+
+  if (init_egl(&base, EGL_NO_CONTEXT))
+    return 1;
+
+  path = create_rect_path();
+  glyphImage = create_colored_image(7, 1);
+  patternImage = create_colored_image(7, 2);
+  paint = vgCreatePaint();
+  font = vgCreateFont(2);
+
+  if (path == VG_INVALID_HANDLE ||
+      glyphImage == VG_INVALID_HANDLE ||
+      patternImage == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE ||
+      font == VG_INVALID_HANDLE) {
+    status = fail_vg("thread test could not create retained peer resources");
+  } else if (expect_vg_no_error("thread test could not upload peer images")) {
+    status = 1;
+  }
+
+  if (!status &&
+      setup_retained_resources(path, glyphImage, patternImage, paint, font))
+    status = 1;
+
+  if (!status) {
+    args.status = 1;
+    args.display = base.display;
+    args.config = base.config;
+    args.context = base.context;
+    args.path = path;
+    args.glyphImage = glyphImage;
+    args.patternImage = patternImage;
+    args.destroyedPath = 0;
+    args.destroyedGlyphImage = 0;
+    args.destroyedPatternImage = 0;
+
+    if (pthread_create(&thread, NULL,
+                       destroy_shared_handles_worker, &args) != 0) {
+      fprintf(stderr, "thread test could not create shared destroy worker\n");
+      status = 1;
+    } else {
+      pthread_join(thread, NULL);
+      if (args.destroyedPath)
+        path = VG_INVALID_HANDLE;
+      if (args.destroyedGlyphImage)
+        glyphImage = VG_INVALID_HANDLE;
+      if (args.destroyedPatternImage)
+        patternImage = VG_INVALID_HANDLE;
+      if (args.status)
+        status = 1;
+    }
+  }
+
+  if (!status &&
+      (path != VG_INVALID_HANDLE ||
+       glyphImage != VG_INVALID_HANDLE ||
+       patternImage != VG_INVALID_HANDLE)) {
+    fprintf(stderr, "thread test did not destroy all shared public handles\n");
+    status = 1;
+  }
+
+  if (!status && draw_retained_resources(paint, font))
+    status = 1;
+
+  if (font != VG_INVALID_HANDLE) {
+    vgDestroyFont(font);
+    if (expect_vg_no_error("thread test could not destroy peer retained font"))
+      status = 1;
+  }
+
+  if (paint != VG_INVALID_HANDLE) {
+    vgDestroyPaint(paint);
+    if (expect_vg_no_error("thread test could not destroy peer retained paint"))
+      status = 1;
+  }
+
+  if (path != VG_INVALID_HANDLE) {
+    vgDestroyPath(path);
+    if (expect_vg_no_error("thread test could not clean up peer path"))
+      status = 1;
+  }
+
+  if (glyphImage != VG_INVALID_HANDLE) {
+    vgDestroyImage(glyphImage);
+    if (expect_vg_no_error("thread test could not clean up peer glyph image"))
+      status = 1;
+  }
+
+  if (patternImage != VG_INVALID_HANDLE) {
+    vgDestroyImage(patternImage);
+    if (expect_vg_no_error("thread test could not clean up peer pattern image"))
+      status = 1;
+  }
 
   if (cleanup_egl(&base))
     status = 1;
@@ -908,6 +1384,10 @@ int main(void)
   if (run_independent_contexts())
     return EXIT_FAILURE;
   if (run_shared_context_stress())
+    return EXIT_FAILURE;
+  if (run_shared_resource_churn())
+    return EXIT_FAILURE;
+  if (run_cross_thread_retained_resource_lifetime())
     return EXIT_FAILURE;
   if (run_make_current_conflict())
     return EXIT_FAILURE;
