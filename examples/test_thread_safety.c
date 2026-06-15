@@ -71,6 +71,18 @@ enum {
 
 enum {
   THREAD_IMAGE_SIZE = 8,
+  THREAD_PATH_CAPS =
+    VG_PATH_CAPABILITY_APPEND_TO |
+    VG_PATH_CAPABILITY_APPEND_FROM |
+    VG_PATH_CAPABILITY_MODIFY |
+    VG_PATH_CAPABILITY_TRANSFORM_TO |
+    VG_PATH_CAPABILITY_TRANSFORM_FROM |
+    VG_PATH_CAPABILITY_INTERPOLATE_TO |
+    VG_PATH_CAPABILITY_INTERPOLATE_FROM |
+    VG_PATH_CAPABILITY_PATH_BOUNDS |
+    VG_PATH_CAPABILITY_PATH_LENGTH |
+    VG_PATH_CAPABILITY_POINT_ALONG_PATH |
+    VG_PATH_CAPABILITY_TANGENT_ALONG_PATH,
   THREAD_DEFAULT_REPEAT = 1,
   THREAD_DEFAULT_SHARED_WORKERS = 2,
   THREAD_DEFAULT_SHARED_ITERATIONS = 64,
@@ -347,6 +359,65 @@ static VGPath create_rect_path(void)
   return path;
 }
 
+static VGPath create_churn_path(int workerId, int variant)
+{
+  VGubyte commands[] = {
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_CLOSE_PATH
+  };
+  VGfloat offset = (VGfloat)((workerId * 3 + variant * 5) % 11);
+  VGfloat coords[] = {
+    2.0f + offset, 2.0f,
+    14.0f + offset, 3.0f + (VGfloat)variant,
+    16.0f + offset, 15.0f,
+    3.0f + offset, 14.0f
+  };
+  VGPath path = vgCreatePath(VG_PATH_FORMAT_STANDARD,
+                             VG_PATH_DATATYPE_F,
+                             1.0f,
+                             0.0f,
+                             5,
+                             8,
+                             THREAD_PATH_CAPS);
+
+  if (path == VG_INVALID_HANDLE)
+    return path;
+
+  vgAppendPathData(path, 5, commands, coords);
+  if (vgGetError() != VG_NO_ERROR) {
+    vgDestroyPath(path);
+    return VG_INVALID_HANDLE;
+  }
+
+  return path;
+}
+
+static int reset_churn_path(VGPath path, int workerId, int iteration)
+{
+  VGubyte commands[] = {
+    VG_MOVE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_LINE_TO_ABS,
+    VG_CLOSE_PATH
+  };
+  VGfloat offset = (VGfloat)((workerId + iteration) % 13);
+  VGfloat coords[] = {
+    1.0f + offset, 1.0f,
+    13.0f + offset, 2.0f,
+    14.0f + offset, 14.0f,
+    2.0f + offset, 13.0f
+  };
+
+  vgClearPath(path, THREAD_PATH_CAPS);
+  vgAppendPathData(path, 5, commands, coords);
+
+  return expect_vg_no_error("thread test could not reset churn path");
+}
+
 static int reset_test_state(void)
 {
   VGfloat origin[2] = { 0.0f, 0.0f };
@@ -548,6 +619,81 @@ static int run_shared_resource_iteration(int workerId, int iteration)
   return status;
 }
 
+static int exercise_path_object_churn(int workerId, int iterations)
+{
+  VGPath path = VG_INVALID_HANDLE;
+  VGPath src = VG_INVALID_HANDLE;
+  VGPath end = VG_INVALID_HANDLE;
+  int i;
+  int status = 0;
+
+  path = create_churn_path(workerId, 0);
+  src = create_churn_path(workerId, 1);
+  end = create_churn_path(workerId, 2);
+  if (path == VG_INVALID_HANDLE ||
+      src == VG_INVALID_HANDLE ||
+      end == VG_INVALID_HANDLE)
+    status = fail_vg("thread test could not create churn paths");
+
+  for (i = 0; !status && i < iterations; ++i) {
+    VGfloat minX = 0.0f;
+    VGfloat minY = 0.0f;
+    VGfloat width = 0.0f;
+    VGfloat height = 0.0f;
+    VGfloat x = 0.0f;
+    VGfloat y = 0.0f;
+    VGfloat tx = 0.0f;
+    VGfloat ty = 0.0f;
+    VGfloat modify[] = {
+      12.0f + (VGfloat)((workerId + i) % 5),
+      4.0f + (VGfloat)(i % 7)
+    };
+
+    if (reset_test_state() || reset_churn_path(path, workerId, i)) {
+      status = 1;
+      break;
+    }
+
+    vgAppendPath(path, src);
+    vgModifyPathCoords(path, 1, 1, modify);
+    vgPathBounds(path, &minX, &minY, &width, &height);
+    vgPathTransformedBounds(path, &minX, &minY, &width, &height);
+    (void)vgPathLength(path, 0, 5);
+    vgPointAlongPath(path, 0, 5, 2.0f, &x, &y, &tx, &ty);
+    vgRotate((VGfloat)((workerId + i) % 45));
+    vgTransformPath(path, src);
+    if (!vgInterpolatePath(path, src, end, 0.25f)) {
+      status = fail_vg("thread test could not interpolate churn path");
+      break;
+    }
+
+    if (expect_vg_no_error("thread test path churn failed")) {
+      status = 1;
+      break;
+    }
+  }
+
+  if (path != VG_INVALID_HANDLE) {
+    vgDestroyPath(path);
+    if (expect_vg_no_error("thread test could not destroy churn path"))
+      status = 1;
+  }
+
+  if (src != VG_INVALID_HANDLE) {
+    vgDestroyPath(src);
+    if (expect_vg_no_error("thread test could not destroy churn source path"))
+      status = 1;
+  }
+
+  if (end != VG_INVALID_HANDLE) {
+    vgDestroyPath(end);
+    if (expect_vg_no_error("thread test could not destroy churn end path"))
+      status = 1;
+  }
+
+  return status;
+}
+
 static int exercise_resources(int iterations)
 {
   int i;
@@ -732,6 +878,32 @@ static void *shared_resource_churn_worker(void *arg)
       }
     }
   }
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
+static void *path_object_churn_worker(void *arg)
+{
+  ThreadArgs *args = (ThreadArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status)
+    args->status = exercise_path_object_churn(args->workerId,
+                                              args->iterations);
 
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
@@ -1030,7 +1202,7 @@ static int run_shared_context_stress(void)
 
 static int run_shared_resource_churn(const ThreadTestOptions *options)
 {
-  int threadCount = options->sharedWorkers * 2;
+  int threadCount = options->sharedWorkers * 3;
   TestEGL base = {
     EGL_NO_DISPLAY,
     0,
@@ -1084,6 +1256,23 @@ static int run_shared_resource_churn(const ThreadTestOptions *options)
     args[created].config = base.config;
     args[created].context = base.context;
     args[created].workerId = options->sharedWorkers + i + 1;
+    args[created].iterations = options->sharedIterations;
+    if (pthread_create(&threads[created], NULL,
+                       path_object_churn_worker,
+                       &args[created]) != 0) {
+      fprintf(stderr, "thread test could not create path churn worker\n");
+      status = 1;
+      break;
+    }
+    ++created;
+  }
+
+  for (i = 0; !status && i < options->sharedWorkers; ++i) {
+    args[created].status = 1;
+    args[created].display = base.display;
+    args[created].config = base.config;
+    args[created].context = base.context;
+    args[created].workerId = options->sharedWorkers * 2 + i + 1;
     args[created].iterations = options->sharedIterations;
     if (pthread_create(&threads[created], NULL,
                        context_only_churn_worker,

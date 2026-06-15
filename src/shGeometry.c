@@ -225,11 +225,12 @@ static void shSubdivideSegment(SHPath *p, VGPathSegment segment,
                                SHfloat *data, void *userData)
 {
   SHVertex v;
-  SHint *contourStart = ((SHint**)userData)[0];
-  SHint *surfaceSpace = ((SHint**)userData)[1];
+  void **callbackData = (void**)userData;
+  SHint *contourStart = (SHint*)callbackData[0];
+  SHint *surfaceSpace = (SHint*)callbackData[1];
+  VGContext *context = (VGContext*)callbackData[2];
   SHQuad quad; SHCubic cubic; SHArc arc;
   SHVector2 c, ux, uy;
-  VG_GETCONTEXT(VG_NO_RETVAL);
   
   switch (segment)
   {
@@ -339,7 +340,6 @@ static void shSubdivideSegment(SHPath *p, VGPathSegment segment,
   
   /* Add subdivision vertex */
   shAddVertex(p, &v, contourStart);
-  VG_RETURN(VG_NO_RETVAL);
 }
 
 /*--------------------------------------------------
@@ -347,11 +347,11 @@ static void shSubdivideSegment(SHPath *p, VGPathSegment segment,
  * each segment to subdivision callback function
  *--------------------------------------------------*/
 
-void shFlattenPath(SHPath *p, SHint surfaceSpace)
+void shFlattenPath(VGContext *context, SHPath *p, SHint surfaceSpace)
 {
   SHint contourStart = -1;
   SHint surfSpace = surfaceSpace;
-  SHint *userData[2];
+  void *userData[3];
   SHint processFlags =
     SH_PROCESS_SIMPLIFY_LINES |
     SH_PROCESS_SIMPLIFY_CURVES |
@@ -359,7 +359,8 @@ void shFlattenPath(SHPath *p, SHint surfaceSpace)
     SH_PROCESS_REPAIR_ENDS;
   
   userData[0] = &contourStart;
-  userData[1] = &surfaceSpace;
+  userData[1] = &surfSpace;
+  userData[2] = context;
   
   p->vertices.outofmemory = 0;
   shVertexArrayClear(&p->vertices);
@@ -854,28 +855,36 @@ VG_API_CALL void vgPathBounds(VGPath path,
                               VGfloat * minX, VGfloat * minY,
                               VGfloat * width, VGfloat * height)
 {
-  SHPath *p = NULL;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  SHPathAccess pathAccess;
+  SHPath *p;
+  VGErrorCode error = VG_NO_ERROR;
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
 
-  p = shGetPath(context, path);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shAcquirePath(context, path, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  p = pathAccess.path;
 
-  VG_RETURN_ERR_IF(minX == NULL || minY == NULL ||
-                   width == NULL || height == NULL,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (minX == NULL || minY == NULL ||
+      width == NULL || height == NULL) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
 
-  VG_RETURN_ERR_IF(!shIsAligned(minX, sizeof(VGfloat)) ||
-                   !shIsAligned(minY, sizeof(VGfloat)) ||
-                   !shIsAligned(width, sizeof(VGfloat)) ||
-                   !shIsAligned(height, sizeof(VGfloat)),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!shIsAligned(minX, sizeof(VGfloat)) ||
+      !shIsAligned(minY, sizeof(VGfloat)) ||
+      !shIsAligned(width, sizeof(VGfloat)) ||
+      !shIsAligned(height, sizeof(VGfloat))) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
 
-  VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_PATH_BOUNDS),
-                   VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
+  if (!(p->caps & VG_PATH_CAPABILITY_PATH_BOUNDS)) {
+    error = VG_PATH_CAPABILITY_ERROR;
+    goto cleanup;
+  }
 
   /* Update path geometry */
-  shFlattenPath(p, 0);
+  shFlattenPath(context, p, 0);
   shFindBoundbox(p);
 
   /* Output bounds */
@@ -884,6 +893,10 @@ VG_API_CALL void vgPathBounds(VGPath path,
   *width = p->max.x - p->min.x;
   *height = p->max.y - p->min.y;
   
+cleanup:
+  shPathAccessCleanup(&pathAccess);
+  if (error != VG_NO_ERROR)
+    VG_RETURN_ERR(error, VG_NO_RETVAL);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -897,28 +910,36 @@ VG_API_CALL void vgPathTransformedBounds(VGPath path,
                                          VGfloat * minX, VGfloat * minY,
                                          VGfloat * width, VGfloat * height)
 {
-  SHPath *p = NULL;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  SHPathAccess pathAccess;
+  SHPath *p;
+  VGErrorCode error = VG_NO_ERROR;
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
 
-  p = shGetPath(context, path);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shAcquirePath(context, path, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  p = pathAccess.path;
 
-  VG_RETURN_ERR_IF(minX == NULL || minY == NULL ||
-                   width == NULL || height == NULL,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (minX == NULL || minY == NULL ||
+      width == NULL || height == NULL) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
 
-  VG_RETURN_ERR_IF(!shIsAligned(minX, sizeof(VGfloat)) ||
-                   !shIsAligned(minY, sizeof(VGfloat)) ||
-                   !shIsAligned(width, sizeof(VGfloat)) ||
-                   !shIsAligned(height, sizeof(VGfloat)),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!shIsAligned(minX, sizeof(VGfloat)) ||
+      !shIsAligned(minY, sizeof(VGfloat)) ||
+      !shIsAligned(width, sizeof(VGfloat)) ||
+      !shIsAligned(height, sizeof(VGfloat))) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
 
-  VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_PATH_BOUNDS),
-                   VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
+  if (!(p->caps & VG_PATH_CAPABILITY_PATH_BOUNDS)) {
+    error = VG_PATH_CAPABILITY_ERROR;
+    goto cleanup;
+  }
 
   /* Update path geometry */
-  shFlattenPath(p, 1);
+  shFlattenPath(context, p, 1);
   shFindBoundbox(p);
 
   /* Output bounds */
@@ -930,6 +951,10 @@ VG_API_CALL void vgPathTransformedBounds(VGPath path,
   /* Invalidate subdivision for rendering */
   p->cacheDataValid = VG_FALSE;
   
+cleanup:
+  shPathAccessCleanup(&pathAccess);
+  if (error != VG_NO_ERROR)
+    VG_RETURN_ERR(error, VG_NO_RETVAL);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -939,6 +964,7 @@ typedef struct {
 } SHPathSegmentRange;
 
 typedef struct {
+  VGContext *context;
   SHPathSegmentRange *ranges;
   SHint *contourStart;
   SHint *surfaceSpace;
@@ -1035,11 +1061,12 @@ static void shStoreRangeSegment(SHPath *p,
   SHint first;
   SHint last;
   SHuint originalSegment;
-  SHint *subdivideUserData[2];
+  void *subdivideUserData[3];
 
   first = p->vertices.size;
   subdivideUserData[0] = rangeData->contourStart;
   subdivideUserData[1] = rangeData->surfaceSpace;
+  subdivideUserData[2] = rangeData->context;
 
   shSubdivideSegment(p, segment, originalCommand, data, subdivideUserData);
 
@@ -1056,7 +1083,8 @@ static void shStoreRangeSegment(SHPath *p,
   }
 }
 
-static SHint shFlattenPathForMeasurement(SHPath *p,
+static SHint shFlattenPathForMeasurement(VGContext *context,
+                                         SHPath *p,
                                          SHPathSegmentRange *ranges)
 {
   SHint i;
@@ -1074,6 +1102,7 @@ static SHint shFlattenPathForMeasurement(SHPath *p,
     ranges[i].last = -1;
   }
 
+  rangeData.context = context;
   rangeData.ranges = ranges;
   rangeData.contourStart = &contourStart;
   rangeData.surfaceSpace = &surfaceSpace;
@@ -1254,34 +1283,50 @@ static SHint shPointAlongMeasuredPath(SHPath *p,
 VG_API_CALL VGfloat vgPathLength(VGPath path,
                                  VGint startSegment, VGint numSegments)
 {
-  SHPath *p = NULL;
+  SHPathAccess pathAccess;
+  SHPath *p;
   SHPathSegmentRange *ranges = NULL;
   SHPathMeasure measure;
-  VG_GETCONTEXT(-1.0f);
+  VGErrorCode error = VG_NO_ERROR;
+  VGfloat result = -1.0f;
+  VG_GETCONTEXT_CONTEXT_ONLY(-1.0f);
 
-  p = shGetPath(context, path);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, -1.0f);
+  if (!shAcquirePath(context, path, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, -1.0f);
+  p = pathAccess.path;
 
-  VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_PATH_LENGTH),
-                   VG_PATH_CAPABILITY_ERROR, -1.0f);
+  if (!(p->caps & VG_PATH_CAPABILITY_PATH_LENGTH)) {
+    error = VG_PATH_CAPABILITY_ERROR;
+    goto cleanup;
+  }
 
-  VG_RETURN_ERR_IF(!shPathRangeValid(p, startSegment, numSegments),
-                   VG_ILLEGAL_ARGUMENT_ERROR, -1.0f);
+  if (!shPathRangeValid(p, startSegment, numSegments)) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
 
   ranges = (SHPathSegmentRange*)malloc(sizeof(SHPathSegmentRange) *
                                        (size_t)p->segCount);
-  VG_RETURN_ERR_IF(!ranges, VG_OUT_OF_MEMORY_ERROR, -1.0f);
+  if (!ranges) {
+    error = VG_OUT_OF_MEMORY_ERROR;
+    goto cleanup;
+  }
 
-  if (!shFlattenPathForMeasurement(p, ranges)) {
-    free(ranges);
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, -1.0f);
+  if (!shFlattenPathForMeasurement(context, p, ranges)) {
+    error = VG_OUT_OF_MEMORY_ERROR;
+    goto cleanup;
   }
 
   shMeasurePathRange(p, ranges, startSegment, numSegments, &measure);
-  free(ranges);
+  result = measure.length;
 
-  VG_RETURN(measure.length);
+cleanup:
+  free(ranges);
+  shPathAccessCleanup(&pathAccess);
+  if (error != VG_NO_ERROR)
+    VG_RETURN_ERR(error, -1.0f);
+
+  VG_RETURN(result);
 }
 
 VG_API_CALL void vgPointAlongPath(VGPath path,
@@ -1290,45 +1335,56 @@ VG_API_CALL void vgPointAlongPath(VGPath path,
                                   VGfloat * x, VGfloat * y,
                                   VGfloat * tangentX, VGfloat * tangentY)
 {
-  SHPath *p = NULL;
+  SHPathAccess pathAccess;
+  SHPath *p;
   SHPathSegmentRange *ranges = NULL;
   SHPathMeasure measure;
   SHVector2 point;
   SHVector2 tangent;
   SHint wantPoint;
   SHint wantTangent;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VGErrorCode error = VG_NO_ERROR;
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
 
-  p = shGetPath(context, path);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shAcquirePath(context, path, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  p = pathAccess.path;
 
   wantPoint = x != NULL && y != NULL;
   wantTangent = tangentX != NULL && tangentY != NULL;
 
-  VG_RETURN_ERR_IF((wantPoint &&
-                    !(p->caps & VG_PATH_CAPABILITY_POINT_ALONG_PATH)) ||
-                   (wantTangent &&
-                    !(p->caps & VG_PATH_CAPABILITY_TANGENT_ALONG_PATH)),
-                   VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
+  if ((wantPoint &&
+       !(p->caps & VG_PATH_CAPABILITY_POINT_ALONG_PATH)) ||
+      (wantTangent &&
+       !(p->caps & VG_PATH_CAPABILITY_TANGENT_ALONG_PATH))) {
+    error = VG_PATH_CAPABILITY_ERROR;
+    goto cleanup;
+  }
 
-  VG_RETURN_ERR_IF(!shPathRangeValid(p, startSegment, numSegments) ||
-                   SH_ISNAN(distance),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!shPathRangeValid(p, startSegment, numSegments) ||
+      SH_ISNAN(distance)) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
 
-  VG_RETURN_ERR_IF((x && !shIsAligned(x, sizeof(VGfloat))) ||
-                   (y && !shIsAligned(y, sizeof(VGfloat))) ||
-                   (tangentX && !shIsAligned(tangentX, sizeof(VGfloat))) ||
-                   (tangentY && !shIsAligned(tangentY, sizeof(VGfloat))),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if ((x && !shIsAligned(x, sizeof(VGfloat))) ||
+      (y && !shIsAligned(y, sizeof(VGfloat))) ||
+      (tangentX && !shIsAligned(tangentX, sizeof(VGfloat))) ||
+      (tangentY && !shIsAligned(tangentY, sizeof(VGfloat)))) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
 
   ranges = (SHPathSegmentRange*)malloc(sizeof(SHPathSegmentRange) *
                                        (size_t)p->segCount);
-  VG_RETURN_ERR_IF(!ranges, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!ranges) {
+    error = VG_OUT_OF_MEMORY_ERROR;
+    goto cleanup;
+  }
 
-  if (!shFlattenPathForMeasurement(p, ranges)) {
-    free(ranges);
-    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!shFlattenPathForMeasurement(context, p, ranges)) {
+    error = VG_OUT_OF_MEMORY_ERROR;
+    goto cleanup;
   }
 
   shMeasurePathRange(p, ranges, startSegment, numSegments, &measure);
@@ -1344,6 +1400,10 @@ VG_API_CALL void vgPointAlongPath(VGPath path,
     }
   }
 
+cleanup:
   free(ranges);
+  shPathAccessCleanup(&pathAccess);
+  if (error != VG_NO_ERROR)
+    VG_RETURN_ERR(error, VG_NO_RETVAL);
   VG_RETURN(VG_NO_RETVAL);
 }

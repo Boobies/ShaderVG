@@ -323,6 +323,11 @@ void shUnregisterResource(VGContext *c, VGHandle h,
                           SHResourceType type, void *object);
 void* shGetResource(VGContext *c, VGHandle h, SHResourceType type);
 SHPath* shGetPath(VGContext *c, VGPath path);
+VGboolean shAcquirePath(VGContext *c, VGPath path, SHPathAccess *access);
+VGboolean shAcquirePaths(VGContext *c,
+                         const VGPath *paths,
+                         SHPathAccess *accesses,
+                         SHint count);
 SHPaint* shGetPaint(VGContext *c, VGPaint paint);
 SHImage* shGetImage(VGContext *c, VGImage image);
 SHFont* shGetFont(VGContext *c, VGFont font);

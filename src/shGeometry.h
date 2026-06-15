@@ -25,7 +25,7 @@
 #include "shVectors.h"
 #include "shPath.h"
 
-void shFlattenPath(SHPath *p, SHint surfaceSpace);
+void shFlattenPath(VGContext *context, SHPath *p, SHint surfaceSpace);
 void shStrokePath(VGContext* c, SHPath *p);
 void shTransformVertices(SHMatrix3x3 *m, SHPath *p);
 void shFindBoundbox(SHPath *p);

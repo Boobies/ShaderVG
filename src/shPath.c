@@ -75,18 +75,19 @@ void shClearSegCallbacks(SHPath *p);
 void SHPath_ctor(SHPath *p)
 {
   p->handle = VG_INVALID_HANDLE;
+  shRecursiveMutexInit(&p->mutex);
   p->format = 0;
   p->scale = 0.0f;
   p->bias = 0.0f;
   p->caps = 0;
   p->datatype = VG_PATH_DATATYPE_F;
   shAtomicIntInit(&p->refCount, 1);
-  
+
   p->segs = NULL;
   p->data = NULL;
   p->segCount = 0;
   p->dataCount = 0;
-  
+
   SH_INITOBJ(SHVertexArray, p->vertices);
   SH_INITOBJ(SHVector2Array, p->stroke);
 }
@@ -99,10 +100,23 @@ void SHPath_dtor(SHPath *p)
 {
   if (p->segs) free(p->segs);
   if (p->data) free(p->data);
-  
+
   SH_DEINITOBJ(SHVertexArray, p->vertices);
   SH_DEINITOBJ(SHVector2Array, p->stroke);
   shAtomicIntDestroy(&p->refCount);
+  shRecursiveMutexDestroy(&p->mutex);
+}
+
+void shPathLock(SHPath *p)
+{
+  if (p)
+    shRecursiveMutexLock(&p->mutex);
+}
+
+void shPathUnlock(SHPath *p)
+{
+  if (p)
+    shRecursiveMutexUnlock(&p->mutex);
 }
 
 void shPathAddRef(SHPath *p)
@@ -118,6 +132,45 @@ void shPathRelease(SHPath *p)
 
   if (shAtomicIntDecrement(&p->refCount) <= 0)
     SH_DELETEOBJ(SHPath, p);
+}
+
+void shPathAccessInit(SHPathAccess *access)
+{
+  if (!access)
+    return;
+
+  access->path = NULL;
+  access->locked = VG_FALSE;
+  access->retained = VG_FALSE;
+}
+
+void shPathAccessCleanup(SHPathAccess *access)
+{
+  if (!access)
+    return;
+
+  if (access->locked) {
+    shPathUnlock(access->path);
+    access->locked = VG_FALSE;
+  }
+
+  if (access->retained) {
+    shPathRelease(access->path);
+    access->retained = VG_FALSE;
+  }
+
+  access->path = NULL;
+}
+
+void shPathAccessCleanupAll(SHPathAccess *accesses, SHint count)
+{
+  SHint i;
+
+  if (!accesses)
+    return;
+
+  for (i=0; i<count; ++i)
+    shPathAccessCleanup(&accesses[i]);
 }
 
 /*-----------------------------------------------------
@@ -208,12 +261,13 @@ VG_API_CALL VGPath vgCreatePath(VGint pathFormat,
 
 VG_API_CALL void vgClearPath(VGPath path, VGbitfield capabilities)
 {
-  SHPath *p = NULL;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  SHPathAccess pathAccess;
+  SHPath *p;
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
-  p = shGetPath(context, path);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shAcquirePath(context, path, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  p = pathAccess.path;
   
   /* Clear raw data */
   free(p->segs);
@@ -233,6 +287,7 @@ VG_API_CALL void vgClearPath(VGPath path, VGbitfield capabilities)
   /* Re-set capabilities */
   p->caps = capabilities & VG_PATH_CAPABILITY_ALL;
   
+  shPathAccessCleanup(&pathAccess);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -266,16 +321,18 @@ VG_API_CALL void vgDestroyPath(VGPath path)
 
 VG_API_CALL void vgRemovePathCapabilities(VGPath path, VGbitfield capabilities)
 {
+  SHPathAccess pathAccess;
   SHPath *p;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
-  p = shGetPath(context, path);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shAcquirePath(context, path, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  p = pathAccess.path;
   
   capabilities &= VG_PATH_CAPABILITY_ALL;
   p->caps &= ~capabilities;
   
+  shPathAccessCleanup(&pathAccess);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -285,14 +342,18 @@ VG_API_CALL void vgRemovePathCapabilities(VGPath path, VGbitfield capabilities)
 
 VG_API_CALL VGbitfield vgGetPathCapabilities(VGPath path)
 {
+  SHPathAccess pathAccess;
   SHPath *p;
-  VG_GETCONTEXT(0x0);
+  VGbitfield caps;
+  VG_GETCONTEXT_CONTEXT_ONLY(0x0);
   
-  p = shGetPath(context, path);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, 0x0);
+  if (!shAcquirePath(context, path, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, 0x0);
+  p = pathAccess.path;
+  caps = p->caps;
   
-  VG_RETURN(p->caps);
+  shPathAccessCleanup(&pathAccess);
+  VG_RETURN(caps);
 }
 
 /*-----------------------------------------------------
@@ -431,22 +492,32 @@ VG_API_CALL void vgAppendPath(VGPath dstPath, VGPath srcPath)
 {
   int i;
   SHPath *src, *dst;
+  SHPathAccess pathAccesses[2];
+  VGPath paths[2];
   SHuint8 *newSegs = NULL;
   SHuint8 *newData = NULL;
-  VG_GETCONTEXT(VG_NO_RETVAL);
-  
-  src = shGetPath(context, srcPath);
-  dst = shGetPath(context, dstPath);
-  VG_RETURN_ERR_IF(!src || !dst,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  
-  VG_RETURN_ERR_IF(!(src->caps & VG_PATH_CAPABILITY_APPEND_FROM) ||
-                   !(dst->caps & VG_PATH_CAPABILITY_APPEND_TO),
-                   VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
+  VGErrorCode error = VG_NO_ERROR;
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
+
+  paths[0] = dstPath;
+  paths[1] = srcPath;
+  if (!shAcquirePaths(context, paths, pathAccesses, 2))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  dst = pathAccesses[0].path;
+  src = pathAccesses[1].path;
+
+  if (!(src->caps & VG_PATH_CAPABILITY_APPEND_FROM) ||
+      !(dst->caps & VG_PATH_CAPABILITY_APPEND_TO)) {
+    error = VG_PATH_CAPABILITY_ERROR;
+    goto cleanup;
+  }
   
   /* Resize path storage */
   shResizePathData(dst, src->segCount, src->dataCount, &newSegs, &newData);
-  VG_RETURN_ERR_IF(!newData, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!newData) {
+    error = VG_OUT_OF_MEMORY_ERROR;
+    goto cleanup;
+  }
   
   /* Copy new segments */
   memcpy(newSegs+dst->segCount, src->segs, src->segCount);
@@ -468,12 +539,20 @@ VG_API_CALL void vgAppendPath(VGPath dstPath, VGPath srcPath)
   /* Adjust new properties */
   dst->segs = newSegs;
   dst->data = newData;
+  newSegs = NULL;
+  newData = NULL;
   dst->segCount += src->segCount;
   dst->dataCount += src->dataCount;
 
   /* Mark change */
   dst->cacheDataValid = VG_FALSE;
   
+cleanup:
+  free(newSegs);
+  free(newData);
+  shPathAccessCleanupAll(pathAccesses, 2);
+  if (error != VG_NO_ERROR)
+    VG_RETURN_ERR(error, VG_NO_RETVAL);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -486,37 +565,50 @@ VG_API_CALL void vgAppendPathData(VGPath dstPath, VGint newSegCount,
                                   const VGubyte *segs, const void *data)
 {
   int i;
+  SHPathAccess pathAccess;
   SHPath *dst = NULL;
   SHint newDataCount = 0;
   SHint oldDataSize = 0;
   SHint newDataSize = 0;
   SHuint8 *newSegs = NULL;
   SHuint8 *newData = NULL;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VGErrorCode error = VG_NO_ERROR;
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
-  dst = shGetPath(context, dstPath);
-  VG_RETURN_ERR_IF(!dst,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shAcquirePath(context, dstPath, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  dst = pathAccess.path;
   
-  VG_RETURN_ERR_IF(!(dst->caps & VG_PATH_CAPABILITY_APPEND_TO),
-                   VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
+  if (!(dst->caps & VG_PATH_CAPABILITY_APPEND_TO)) {
+    error = VG_PATH_CAPABILITY_ERROR;
+    goto cleanup;
+  }
   
-  VG_RETURN_ERR_IF(!segs || !data || newSegCount <= 0,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!segs || !data || newSegCount <= 0) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
   
-  VG_RETURN_ERR_IF(!shIsAligned(data, shBytesPerDatatype[dst->datatype]),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!shIsAligned(data, shBytesPerDatatype[dst->datatype])) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
   
   /* Count number of coordinatess in appended data */
   newDataCount = shCoordCountForData(newSegCount, segs);
+  if (newDataCount == -1) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
   newDataSize = newDataCount * shBytesPerDatatype[dst->datatype];
   oldDataSize = dst->dataCount * shBytesPerDatatype[dst->datatype];
-  VG_RETURN_ERR_IF(newDataCount == -1, VG_ILLEGAL_ARGUMENT_ERROR,
-                   VG_NO_RETVAL);
   
   /* Resize path storage */
   shResizePathData(dst, newSegCount, newDataCount, &newSegs, &newData);
-  VG_RETURN_ERR_IF(!newData, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!newData) {
+    error = VG_OUT_OF_MEMORY_ERROR;
+    goto cleanup;
+  }
   
   /* Copy new segments */
   memcpy(newSegs+dst->segCount, segs, newSegCount);
@@ -537,12 +629,20 @@ VG_API_CALL void vgAppendPathData(VGPath dstPath, VGint newSegCount,
   /* Adjust new properties */
   dst->segs = newSegs;
   dst->data = newData;
+  newSegs = NULL;
+  newData = NULL;
   dst->segCount += newSegCount;
   dst->dataCount += newDataCount;
 
   /* Mark change */
   dst->cacheDataValid = VG_FALSE;
   
+cleanup:
+  free(newSegs);
+  free(newData);
+  shPathAccessCleanup(&pathAccess);
+  if (error != VG_NO_ERROR)
+    VG_RETURN_ERR(error, VG_NO_RETVAL);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -554,26 +654,34 @@ VG_API_CALL void vgModifyPathCoords(VGPath dstPath, VGint startIndex,
                                     VGint numSegments,  const void * data)
 {
   int i;
+  SHPathAccess pathAccess;
   SHPath *p;
   SHint newDataCount;
   SHint newDataSize;
   SHint dataStartCount;
   SHint dataStartSize;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VGErrorCode error = VG_NO_ERROR;
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
-  p = shGetPath(context, dstPath);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shAcquirePath(context, dstPath, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  p = pathAccess.path;
   
-  VG_RETURN_ERR_IF(!(p->caps & VG_PATH_CAPABILITY_MODIFY),
-                   VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
+  if (!(p->caps & VG_PATH_CAPABILITY_MODIFY)) {
+    error = VG_PATH_CAPABILITY_ERROR;
+    goto cleanup;
+  }
   
-  VG_RETURN_ERR_IF(!data || startIndex<0 || numSegments <=0 ||
-                   startIndex + numSegments > p->segCount,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!data || startIndex<0 || numSegments <=0 ||
+      startIndex + numSegments > p->segCount) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
   
-  VG_RETURN_ERR_IF(!shIsAligned(data, shBytesPerDatatype[p->datatype]),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!shIsAligned(data, shBytesPerDatatype[p->datatype])) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
   
   /* Find start of the coordinates to be changed */
   dataStartCount = shCoordCountForData(startIndex, p->segs);
@@ -595,6 +703,10 @@ VG_API_CALL void vgModifyPathCoords(VGPath dstPath, VGint startIndex,
   /* Mark change */
   p->cacheDataValid = VG_FALSE;
   
+cleanup:
+  shPathAccessCleanup(&pathAccess);
+  if (error != VG_NO_ERROR)
+    VG_RETURN_ERR(error, VG_NO_RETVAL);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1096,10 +1208,10 @@ static void shTransformSegment(SHPath *p, VGPathSegment segment,
   SHuint8* newData   = (SHuint8*) ((void**)userData)[2];
   SHint*   dataCount = (SHint*)   ((void**)userData)[3];
   SHPath*  dst       = (SHPath*)  ((void**)userData)[4];
+  VGContext *context = (VGContext*) ((void**)userData)[5];
   SHMatrix3x3 *ctm;
   
   /* Get current transform matrix */
-  VG_GETCONTEXT(VG_NO_RETVAL);
   ctm = &context->pathTransform;
   
   switch (segment) {
@@ -1233,7 +1345,6 @@ static void shTransformSegment(SHPath *p, VGPathSegment segment,
   
   /* Write segment to new dst path data */
   newSegs[(*segCount)++] = segment | VG_ABSOLUTE;
-  VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL void vgTransformPath(VGPath dstPath, VGPath srcPath)
@@ -1241,29 +1352,39 @@ VG_API_CALL void vgTransformPath(VGPath dstPath, VGPath srcPath)
   SHint newSegCount=0;
   SHint newDataCount=0;
   SHPath *src, *dst;
+  SHPathAccess pathAccesses[2];
+  VGPath paths[2];
   SHuint8 *newSegs = NULL;
   SHuint8 *newData = NULL;
   SHint segCount = 0;
   SHint dataCount = 0;
-  void *userData[5];
+  void *userData[6];
+  VGErrorCode error = VG_NO_ERROR;
   SHint processFlags =
     SH_PROCESS_SIMPLIFY_LINES;
   
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
   
-  src = shGetPath(context, srcPath);
-  dst = shGetPath(context, dstPath);
-  VG_RETURN_ERR_IF(!dst || !src,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  paths[0] = dstPath;
+  paths[1] = srcPath;
+  if (!shAcquirePaths(context, paths, pathAccesses, 2))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  dst = pathAccesses[0].path;
+  src = pathAccesses[1].path;
   
-  VG_RETURN_ERR_IF(!(src->caps & VG_PATH_CAPABILITY_TRANSFORM_FROM) ||
-                   !(dst->caps & VG_PATH_CAPABILITY_TRANSFORM_TO),
-                   VG_PATH_CAPABILITY_ERROR, VG_NO_RETVAL);
+  if (!(src->caps & VG_PATH_CAPABILITY_TRANSFORM_FROM) ||
+      !(dst->caps & VG_PATH_CAPABILITY_TRANSFORM_TO)) {
+    error = VG_PATH_CAPABILITY_ERROR;
+    goto cleanup;
+  }
   
   /* Resize path storage */
   shProcessedDataCount(src, processFlags, &newSegCount, &newDataCount);
   shResizePathData(dst, newSegCount, newDataCount, &newSegs, &newData);
-  VG_RETURN_ERR_IF(!newData, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!newData) {
+    error = VG_OUT_OF_MEMORY_ERROR;
+    goto cleanup;
+  }
   
   /* Transform src path into new data */
   segCount = dst->segCount;
@@ -1271,6 +1392,7 @@ VG_API_CALL void vgTransformPath(VGPath dstPath, VGPath srcPath)
   userData[0] = newSegs; userData[1] = &segCount;
   userData[2] = newData; userData[3] = &dataCount;
   userData[4] = dst;
+  userData[5] = context;
   shProcessPathData(src, processFlags, shTransformSegment, userData);
   
   /* Free old arrays */
@@ -1280,12 +1402,20 @@ VG_API_CALL void vgTransformPath(VGPath dstPath, VGPath srcPath)
   /* Adjust new properties */
   dst->segs = newSegs;
   dst->data = newData;
+  newSegs = NULL;
+  newData = NULL;
   dst->segCount = segCount;
   dst->dataCount = dataCount;
 
   /* Mark change */
   dst->cacheDataValid = VG_FALSE;
   
+cleanup:
+  free(newSegs);
+  free(newData);
+  shPathAccessCleanupAll(pathAccesses, 2);
+  if (error != VG_NO_ERROR)
+    VG_RETURN_ERR(error, VG_NO_RETVAL);
   VG_RETURN_ERR(VG_NO_ERROR, VG_NO_RETVAL);
 }
 
@@ -1312,6 +1442,8 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
                                         VGPath endPath, VGfloat amount)
 {
   SHPath *dst, *start, *end;
+  SHPathAccess pathAccesses[3];
+  VGPath paths[3];
   SHuint8 *procSegs1 = NULL, *procSegs2 = NULL;
   SHfloat *procData1 = NULL, *procData2 = NULL;
   SHint procSegCount1=0, procSegCount2=0;
@@ -1326,30 +1458,35 @@ VG_API_CALL VGboolean vgInterpolatePath(VGPath dstPath, VGPath startPath,
   SHint processFlags =
     SH_PROCESS_SIMPLIFY_LINES |
     SH_PROCESS_SIMPLIFY_CURVES;
-  
-  VG_GETCONTEXT(VG_FALSE);
-  
-  dst = shGetPath(context, dstPath);
-  start = shGetPath(context, startPath);
-  end = shGetPath(context, endPath);
-  VG_RETURN_ERR_IF(!dst || !start || !end,
-                   VG_BAD_HANDLE_ERROR, VG_FALSE);
-  
-  VG_RETURN_ERR_IF(!(start->caps & VG_PATH_CAPABILITY_INTERPOLATE_FROM) ||
-                   !(end->caps & VG_PATH_CAPABILITY_INTERPOLATE_FROM) ||
-                   !(dst->caps & VG_PATH_CAPABILITY_INTERPOLATE_TO),
-                   VG_PATH_CAPABILITY_ERROR, VG_FALSE);
+
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_FALSE);
+
+  paths[0] = dstPath;
+  paths[1] = startPath;
+  paths[2] = endPath;
+  if (!shAcquirePaths(context, paths, pathAccesses, 3))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_FALSE);
+  dst = pathAccesses[0].path;
+  start = pathAccesses[1].path;
+  end = pathAccesses[2].path;
+
+  if (!(start->caps & VG_PATH_CAPABILITY_INTERPOLATE_FROM) ||
+      !(end->caps & VG_PATH_CAPABILITY_INTERPOLATE_FROM) ||
+      !(dst->caps & VG_PATH_CAPABILITY_INTERPOLATE_TO)) {
+    error = VG_PATH_CAPABILITY_ERROR;
+    goto cleanup;
+  }
   
   /* Segment count must be equal */
-  VG_RETURN_ERR_IF(start->segCount != end->segCount,
-                   VG_NO_ERROR, VG_FALSE);
+  if (start->segCount != end->segCount)
+    goto cleanup;
   
   /* Count and allocate storage for processed path data */
   shProcessedDataCount(start, processFlags, &procSegCount1, &procDataCount1);
   shProcessedDataCount(end, processFlags, &procSegCount2, &procDataCount2);
-  VG_RETURN_ERR_IF(procSegCount1 != procSegCount2 ||
-                   procDataCount1 != procDataCount2,
-                   VG_NO_ERROR, VG_FALSE);
+  if (procSegCount1 != procSegCount2 ||
+      procDataCount1 != procDataCount2)
+    goto cleanup;
   procSegs1 = (SHuint8*)malloc(procSegCount1 * sizeof(SHuint8));
   procSegs2 = (SHuint8*)malloc(procSegCount2 * sizeof(SHuint8));
   procData1 = (SHfloat*)malloc(procDataCount1 * sizeof(SHfloat));
@@ -1434,6 +1571,7 @@ cleanup:
   free(procSegs1); free(procData1);
   free(procSegs2); free(procData2);
   free(newSegs); free(newData);
+  shPathAccessCleanupAll(pathAccesses, 3);
   
   VG_RETURN_ERR(error, result);
 }

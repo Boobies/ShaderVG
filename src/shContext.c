@@ -1245,6 +1245,70 @@ SHPath* shGetPath(VGContext *c, VGPath path)
   return (SHPath*)shGetResource(c, (VGHandle)path, SH_RESOURCE_PATH);
 }
 
+VGboolean shAcquirePaths(VGContext *c,
+                         const VGPath *paths,
+                         SHPathAccess *accesses,
+                         SHint count)
+{
+  enum { SH_MAX_ACQUIRED_PATHS = 3 };
+  SHint order[SH_MAX_ACQUIRED_PATHS];
+  SHint i;
+  SHint j;
+
+  if (!paths || !accesses || count <= 0 || count > SH_MAX_ACQUIRED_PATHS)
+    return VG_FALSE;
+
+  for (i=0; i<count; ++i)
+    shPathAccessInit(&accesses[i]);
+
+  if (!c || !c->resources)
+    return VG_FALSE;
+
+  shLockResourceGroup(c->resources);
+  for (i=0; i<count; ++i) {
+    accesses[i].path = shGetPath(c, paths[i]);
+    if (!accesses[i].path)
+      break;
+
+    shPathAddRef(accesses[i].path);
+    accesses[i].retained = VG_TRUE;
+  }
+  shUnlockResourceGroup(c->resources);
+
+  if (i != count) {
+    shPathAccessCleanupAll(accesses, count);
+    return VG_FALSE;
+  }
+
+  for (i=0; i<count; ++i)
+    order[i] = i;
+
+  for (i=1; i<count; ++i) {
+    SHint value = order[i];
+    uintptr_t valuePath = (uintptr_t)accesses[value].path;
+    j = i - 1;
+    while (j >= 0 &&
+           (uintptr_t)accesses[order[j]].path > valuePath) {
+      order[j + 1] = order[j];
+      --j;
+    }
+    order[j + 1] = value;
+  }
+
+  for (i=0; i<count; ++i) {
+    SHPathAccess *access = &accesses[order[i]];
+    shPathLock(access->path);
+    access->locked = VG_TRUE;
+  }
+
+  return VG_TRUE;
+}
+
+VGboolean shAcquirePath(VGContext *c, VGPath path, SHPathAccess *access)
+{
+  return shAcquirePaths(c, &path, access, 1);
+}
+
 SHPaint* shGetPaint(VGContext *c, VGPaint paint)
 {
   return (SHPaint*)shGetResource(c, (VGHandle)paint, SH_RESOURCE_PAINT);

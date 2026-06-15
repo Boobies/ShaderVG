@@ -257,9 +257,8 @@ static void shApplyCoverageState(VGContext *context, VGboolean enabled)
  * Draws the triangles representing the stroke of a path.
  *-----------------------------------------------------------*/
 
-static void shDrawStroke(SHPath *p)
+static void shDrawStroke(VGContext *context, SHPath *p)
 {
-  VG_GETCONTEXT(VG_NO_RETVAL);
   SHVertexState vertexState;
 
   shBindContextVertexState(context, &vertexState);
@@ -274,7 +273,6 @@ static void shDrawStroke(SHPath *p)
   glDisableVertexAttribArray(context->locationDraw.pos);
   shRestoreVertexState(&vertexState);
   GL_CHECK_ERROR;
-  VG_RETURN(VG_NO_RETVAL);
 }
 
 /*-----------------------------------------------------------
@@ -283,6 +281,7 @@ static void shDrawStroke(SHPath *p)
  *-----------------------------------------------------------*/
 
 static void shDrawVertexData(const SHVertex *vertices,
+                             VGContext *context,
                              SHint vertexCount,
                              GLenum mode)
 {
@@ -291,11 +290,10 @@ static void shDrawVertexData(const SHVertex *vertices,
   
   /* We separate vertex arrays by contours to properly
      handle the fill modes */
-  VG_GETCONTEXT(VG_NO_RETVAL);
   SHVertexState vertexState;
 
   if (!vertices || vertexCount <= 0)
-    VG_RETURN(VG_NO_RETVAL);
+    return;
 
   shBindContextVertexState(context, &vertexState);
   glBufferData(GL_ARRAY_BUFFER,
@@ -317,12 +315,11 @@ static void shDrawVertexData(const SHVertex *vertices,
   glDisableVertexAttribArray(context->locationDraw.pos);
   shRestoreVertexState(&vertexState);
   GL_CHECK_ERROR;
-  VG_RETURN(VG_NO_RETVAL);
 }
 
-static void shDrawVertices(SHPath *p, GLenum mode)
+static void shDrawVertices(VGContext *context, SHPath *p, GLenum mode)
 {
-  shDrawVertexData(p->vertices.items, p->vertices.size, mode);
+  shDrawVertexData(p->vertices.items, context, p->vertices.size, mode);
 }
 
 /*--------------------------------------------------------------
@@ -829,10 +826,10 @@ static void shEnsurePathGeometry(VGContext *context, SHPath *p)
 
   if (shIsTessCacheValid(context, p) == VG_FALSE) {
     if (shInvertMatrix(&context->pathTransform, &mi)) {
-      shFlattenPath(p, 1);
+      shFlattenPath(context, p, 1);
       shTransformVertices(&mi, p);
     } else {
-      shFlattenPath(p, 0);
+      shFlattenPath(context, p, 0);
     }
     shFindBoundbox(p);
   }
@@ -860,7 +857,7 @@ static void shDrawFillStencilVertices(VGContext *context,
     glFrontFace(GL_CCW);
     glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_KEEP, GL_INCR_WRAP);
     glStencilOpSeparate(GL_BACK, GL_KEEP, GL_KEEP, GL_DECR_WRAP);
-    shDrawVertexData(vertices, vertexCount, GL_TRIANGLE_FAN);
+    shDrawVertexData(vertices, context, vertexCount, GL_TRIANGLE_FAN);
     glFrontFace((GLenum)frontFace);
     if (cullEnabled == GL_TRUE)
       glEnable(GL_CULL_FACE);
@@ -868,7 +865,7 @@ static void shDrawFillStencilVertices(VGContext *context,
       glDisable(GL_CULL_FACE);
   } else {
     glStencilOp(GL_INVERT, GL_INVERT, GL_INVERT);
-    shDrawVertexData(vertices, vertexCount, GL_TRIANGLE_FAN);
+    shDrawVertexData(vertices, context, vertexCount, GL_TRIANGLE_FAN);
   }
 }
 
@@ -922,7 +919,7 @@ static void shRenderStrokeToMaskTarget(VGContext *context, SHPath *p)
   glStencilFunc(GL_NOTEQUAL, 1, 1);
   glStencilOp(GL_KEEP, GL_INCR, GL_INCR);
   glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-  shDrawStroke(p);
+  shDrawStroke(context, p);
 
   glDisable(GL_BLEND);
   glStencilFunc(GL_EQUAL, 1, 1);
@@ -1397,9 +1394,9 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   if (shIsTessCacheValid( context, p ) == VG_FALSE)
   {
     if (shInvertMatrix(&context->pathTransform, &mi)) {
-      shFlattenPath(p, 1);
+      shFlattenPath(context, p, 1);
       shTransformVertices(&mi, p);
-    }else shFlattenPath(p, 0);
+    }else shFlattenPath(context, p, 0);
     shFindBoundbox(p);
   }
   
@@ -1525,7 +1522,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
         glStencilFunc(GL_NOTEQUAL, 1, 1);
         glStencilOp(GL_KEEP, GL_INCR, GL_INCR);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        shDrawStroke(p);
+        shDrawStroke(context, p);
 
         /* Setup blending */
         if (!updateBlendingStateGL(context,
@@ -1564,7 +1561,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
       /* Draw contour as a line */
       glEnable(GL_BLEND);
       glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-      shDrawVertices(p, GL_LINE_STRIP);
+      shDrawVertices(context, p, GL_LINE_STRIP);
       glDisable(GL_BLEND);
     }
   }
@@ -1590,7 +1587,9 @@ VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
   VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
+  shPathLock(p);
   shDrawPath(context, p, paintModes);
+  shPathUnlock(p);
 
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -1599,44 +1598,48 @@ VG_API_CALL void vgRenderToMask(VGPath path,
                                 VGbitfield paintModes,
                                 VGMaskOperation operation)
 {
+  SHPathAccess pathAccess;
   SHPath *p;
   SHRenderToMaskGLState state;
   VGboolean success = VG_TRUE;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VGErrorCode error = VG_NO_ERROR;
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
 
-  p = shGetPath(context, path);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(operation != VG_CLEAR_MASK &&
-                   operation != VG_FILL_MASK &&
-                   operation != VG_SET_MASK &&
-                   operation != VG_UNION_MASK &&
-                   operation != VG_INTERSECT_MASK &&
-                   operation != VG_SUBTRACT_MASK,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!shAcquirePath(context, path, &pathAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  p = pathAccess.path;
+  if (paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH))) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
+  if (operation != VG_CLEAR_MASK &&
+      operation != VG_FILL_MASK &&
+      operation != VG_SET_MASK &&
+      operation != VG_UNION_MASK &&
+      operation != VG_INTERSECT_MASK &&
+      operation != VG_SUBTRACT_MASK) {
+    error = VG_ILLEGAL_ARGUMENT_ERROR;
+    goto cleanup;
+  }
 
   if (operation == VG_CLEAR_MASK) {
-    VG_RETURN_ERR_IF(!shApplyMaskValueToSurface(context,
-                                                0.0f,
-                                                operation),
-                     VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+    shPathAccessCleanup(&pathAccess);
+    if (!shApplyMaskValueToSurface(context, 0.0f, operation))
+      VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
     VG_RETURN(VG_NO_RETVAL);
   }
 
   if (operation == VG_FILL_MASK) {
-    VG_RETURN_ERR_IF(!shApplyMaskValueToSurface(context,
-                                                1.0f,
-                                                operation),
-                     VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+    shPathAccessCleanup(&pathAccess);
+    if (!shApplyMaskValueToSurface(context, 1.0f, operation))
+      VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
     VG_RETURN(VG_NO_RETVAL);
   }
 
   if (paintModes == 0 ||
       context->surfaceWidth <= 0 ||
       context->surfaceHeight <= 0)
-    VG_RETURN(VG_NO_RETVAL);
+    goto cleanup;
 
   shEnsurePathGeometry(context, p);
 
@@ -1647,7 +1650,13 @@ VG_API_CALL void vgRenderToMask(VGPath path,
     success = shRenderPathPassToMask(context, p, VG_STROKE_PATH, operation);
   shRestoreRenderToMaskGLState(&state);
 
-  VG_RETURN_ERR_IF(!success, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!success)
+    error = VG_OUT_OF_MEMORY_ERROR;
+
+cleanup:
+  shPathAccessCleanup(&pathAccess);
+  if (error != VG_NO_ERROR)
+    VG_RETURN_ERR(error, VG_NO_RETVAL);
   VG_RETURN(VG_NO_RETVAL);
 }
 

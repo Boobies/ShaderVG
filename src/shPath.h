@@ -73,6 +73,7 @@ typedef struct
 typedef struct SHPath
 {
   VGHandle handle;
+  SHRecursiveMutex mutex;
 
   /* Properties */
   VGint format;
@@ -115,10 +116,22 @@ typedef struct SHPath
   
 } SHPath;
 
+typedef struct
+{
+  SHPath *path;
+  VGboolean locked;
+  VGboolean retained;
+} SHPathAccess;
+
 void SHPath_ctor(SHPath *p);
 void SHPath_dtor(SHPath *p);
+void shPathLock(SHPath *p);
+void shPathUnlock(SHPath *p);
 void shPathAddRef(SHPath *p);
 void shPathRelease(SHPath *p);
+void shPathAccessInit(SHPathAccess *access);
+void shPathAccessCleanup(SHPathAccess *access);
+void shPathAccessCleanupAll(SHPathAccess *accesses, SHint count);
 
 
 /* Processing normalization flags */

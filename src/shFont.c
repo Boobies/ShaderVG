@@ -111,6 +111,18 @@ SHGlyph* shFontEnsureGlyph(SHFont *f, VGuint glyphIndex)
   return &f->glyphs.items[f->glyphs.size - 1];
 }
 
+static int shComparePathPointers(const void *a, const void *b)
+{
+  uintptr_t pathA = (uintptr_t)*(SHPath* const*)a;
+  uintptr_t pathB = (uintptr_t)*(SHPath* const*)b;
+
+  if (pathA < pathB)
+    return -1;
+  if (pathA > pathB)
+    return 1;
+  return 0;
+}
+
 VG_API_CALL VGFont vgCreateFont(VGint glyphCapacityHint)
 {
   SHFont *f = NULL;
@@ -275,6 +287,7 @@ static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
     return;
 
   if (glyph->type == SH_GLYPH_PATH) {
+    shPathLock(glyph->path);
     SETMATMAT(saved, context->pathTransform);
     SETMATMAT(context->pathTransform, context->glyphTransform);
     TRANSLATEMATR(context->pathTransform,
@@ -282,6 +295,7 @@ static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
                   context->glyphOrigin.y - glyph->origin.y);
     shDrawPath(context, glyph->path, paintModes);
     SETMATMAT(context->pathTransform, saved);
+    shPathUnlock(glyph->path);
   } else if (glyph->type == SH_GLYPH_IMAGE) {
     SETMATMAT(saved, context->imageTransform);
     SETMATMAT(context->imageTransform, context->glyphTransform);
@@ -424,8 +438,10 @@ static SHPathGlyphBatchResult shTryDrawPathGlyphBatch(
 {
   SHGlyph *glyph;
   SHPathGlyph *batchGlyphs = NULL;
+  SHPath **lockedPaths = NULL;
   SHVector2 origin;
   SHint batchCount = 0;
+  SHint lockedPathCount = 0;
   SHPathGlyphBatchResult result;
   VGint i;
 
@@ -441,11 +457,19 @@ static SHPathGlyphBatchResult shTryDrawPathGlyphBatch(
     return SH_PATH_GLYPH_BATCH_ERROR;
   }
 
+  lockedPaths = (SHPath**)malloc((size_t)glyphCount * sizeof(SHPath*));
+  if (!lockedPaths) {
+    free(batchGlyphs);
+    shSetError(context, VG_OUT_OF_MEMORY_ERROR);
+    return SH_PATH_GLYPH_BATCH_ERROR;
+  }
+
   SET2V(origin, context->glyphOrigin);
   for (i=0; i<glyphCount; ++i) {
     glyph = shFontFindGlyph(font, glyphIndices[i]);
     if (glyph->type == SH_GLYPH_PATH) {
       batchGlyphs[batchCount].path = glyph->path;
+      lockedPaths[lockedPathCount++] = glyph->path;
       SETMATMAT(batchGlyphs[batchCount].transform,
                 context->glyphTransform);
       TRANSLATEMATR(batchGlyphs[batchCount].transform,
@@ -462,10 +486,24 @@ static SHPathGlyphBatchResult shTryDrawPathGlyphBatch(
       origin.y += adjustments_y[i];
   }
 
+  qsort(lockedPaths,
+        (size_t)lockedPathCount,
+        sizeof(SHPath*),
+        shComparePathPointers);
+  for (i=0; i<lockedPathCount; ++i)
+    shPathLock(lockedPaths[i]);
+
   result = shDrawPathGlyphBatch(context, batchGlyphs, batchCount);
+
+  while (lockedPathCount > 0) {
+    --lockedPathCount;
+    shPathUnlock(lockedPaths[lockedPathCount]);
+  }
+
   if (result == SH_PATH_GLYPH_BATCH_DRAWN)
     SET2V(context->glyphOrigin, origin);
 
+  free(lockedPaths);
   free(batchGlyphs);
   return result;
 }
