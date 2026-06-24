@@ -329,6 +329,9 @@ VGboolean shAcquirePaths(VGContext *c,
                          SHPathAccess *accesses,
                          SHint count);
 SHPaint* shGetPaint(VGContext *c, VGPaint paint);
+VGboolean shAcquirePaint(VGContext *c,
+                         VGPaint paint,
+                         SHPaintAccess *access);
 SHImage* shGetImage(VGContext *c, VGImage image);
 SHFont* shGetFont(VGContext *c, VGFont font);
 SHMaskLayer* shGetMaskLayer(VGContext *c, VGMaskLayer maskLayer);

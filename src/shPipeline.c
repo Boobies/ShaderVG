@@ -1577,6 +1577,7 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
 
 VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
 {
+  SHPaintLockSet paintLocks;
   SHPath *p;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
@@ -1588,7 +1589,9 @@ VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
   shPathLock(p);
+  shPaintLockSelected(context, paintModes, &paintLocks);
   shDrawPath(context, p, paintModes);
+  shPaintLockSetCleanup(&paintLocks);
   shPathUnlock(p);
 
   VG_RETURN(VG_NO_RETVAL);
@@ -1940,6 +1943,7 @@ void shDrawImage(VGContext *context, SHImage *i)
 
 VG_API_CALL void vgDrawImage(VGImage image)
 {
+  SHPaintLockSet paintLocks;
   SHImage *i;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
@@ -1947,7 +1951,9 @@ VG_API_CALL void vgDrawImage(VGImage image)
   VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
+  shPaintLockSelected(context, VG_FILL_PATH, &paintLocks);
   shDrawImage(context, i);
+  shPaintLockSetCleanup(&paintLocks);
 
   VG_RETURN(VG_NO_RETVAL);
 }

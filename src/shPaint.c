@@ -141,6 +141,8 @@ void SHPaint_ctor(SHPaint *p)
   int i;
   
   p->handle = VG_INVALID_HANDLE;
+  shRecursiveMutexInit(&p->mutex);
+  shAtomicIntInit(&p->refCount, 1);
   p->type = VG_PAINT_TYPE_COLOR;
   CSET(p->color, 0,0,0,1);
   SH_INITOBJ(SHStopArray, p->instops);
@@ -169,6 +171,146 @@ void SHPaint_dtor(SHPaint *p)
       p->texture != 0 &&
       glIsTexture(p->texture))
     glDeleteTextures(1, &p->texture);
+
+  shAtomicIntDestroy(&p->refCount);
+  shRecursiveMutexDestroy(&p->mutex);
+}
+
+void shPaintLock(SHPaint *p)
+{
+  if (p)
+    shRecursiveMutexLock(&p->mutex);
+}
+
+void shPaintUnlock(SHPaint *p)
+{
+  if (p)
+    shRecursiveMutexUnlock(&p->mutex);
+}
+
+void shPaintAddRef(SHPaint *p)
+{
+  if (p)
+    shAtomicIntIncrement(&p->refCount);
+}
+
+void shPaintRelease(SHPaint *p)
+{
+  if (!p)
+    return;
+
+  if (shAtomicIntDecrement(&p->refCount) <= 0)
+    SH_DELETEOBJ(SHPaint, p);
+}
+
+void shPaintAccessInit(SHPaintAccess *access)
+{
+  if (!access)
+    return;
+
+  access->paint = NULL;
+  access->locked = VG_FALSE;
+  access->retained = VG_FALSE;
+}
+
+void shPaintAccessCleanup(SHPaintAccess *access)
+{
+  if (!access)
+    return;
+
+  if (access->locked) {
+    shPaintUnlock(access->paint);
+    access->locked = VG_FALSE;
+  }
+
+  if (access->retained) {
+    shPaintRelease(access->paint);
+    access->retained = VG_FALSE;
+  }
+
+  access->paint = NULL;
+}
+
+void shPaintLockSetInit(SHPaintLockSet *locks)
+{
+  if (!locks)
+    return;
+
+  locks->paints[0] = NULL;
+  locks->paints[1] = NULL;
+  locks->count = 0;
+}
+
+static void shPaintLockSetAdd(SHPaintLockSet *locks, SHPaint *paint)
+{
+  if (!locks || !paint)
+    return;
+
+  if (locks->count > 0 && locks->paints[0] == paint)
+    return;
+  if (locks->count > 1 && locks->paints[1] == paint)
+    return;
+
+  if (locks->count < 2)
+    locks->paints[locks->count++] = paint;
+}
+
+void shPaintLockSelected(VGContext *context,
+                         VGbitfield paintModes,
+                         SHPaintLockSet *locks)
+{
+  SHPaint *tmp;
+  SHint i;
+
+  shPaintLockSetInit(locks);
+  if (!context || !locks)
+    return;
+
+  if (paintModes & VG_FILL_PATH)
+    shPaintLockSetAdd(locks, context->fillPaint ?
+                             context->fillPaint : &context->defaultPaint);
+  if (paintModes & VG_STROKE_PATH)
+    shPaintLockSetAdd(locks, context->strokePaint ?
+                             context->strokePaint : &context->defaultPaint);
+
+  if (locks->count == 2 &&
+      (uintptr_t)locks->paints[0] > (uintptr_t)locks->paints[1]) {
+    tmp = locks->paints[0];
+    locks->paints[0] = locks->paints[1];
+    locks->paints[1] = tmp;
+  }
+
+  for (i=0; i<locks->count; ++i)
+    shPaintLock(locks->paints[i]);
+}
+
+void shPaintLockSetCleanup(SHPaintLockSet *locks)
+{
+  if (!locks)
+    return;
+
+  while (locks->count > 0) {
+    --locks->count;
+    shPaintUnlock(locks->paints[locks->count]);
+    locks->paints[locks->count] = NULL;
+  }
+}
+
+static void shSetSelectedPaint(SHPaint **slot, SHPaint *paint)
+{
+  SHPaint *old;
+
+  if (!slot)
+    return;
+
+  if (paint)
+    shPaintAddRef(paint);
+
+  old = *slot;
+  *slot = paint;
+
+  if (old)
+    shPaintRelease(old);
 }
 
 VG_API_CALL VGPaint vgCreatePaint(void)
@@ -208,15 +350,11 @@ VG_API_CALL void vgDestroyPaint(VGPaint paint)
   index = p ? shPaintArrayFind(&context->resources->paints, p) : -1;
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  if (context->fillPaint == p)
-    context->fillPaint = NULL;
-  if (context->strokePaint == p)
-    context->strokePaint = NULL;
-  
-  /* Delete object and remove resource */
+  shPaintLock(p);
   shUnregisterResource(context, paint, SH_RESOURCE_PAINT, p);
-  SH_DELETEOBJ(SHPaint, p);
   shPaintArrayRemoveAt(&context->resources->paints, index);
+  shPaintUnlock(p);
+  shPaintRelease(p);
   
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -239,28 +377,32 @@ VG_API_CALL void vgSetPaint(VGPaint paint, VGbitfield paintModes)
   
   /* Set stroke / fill */
   if (paintModes & VG_STROKE_PATH)
-    context->strokePaint = p;
+    shSetSelectedPaint(&context->strokePaint, p);
   if (paintModes & VG_FILL_PATH)
-    context->fillPaint = p;
+    shSetSelectedPaint(&context->fillPaint, p);
   
   VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL VGPaint vgGetPaint(VGPaintMode paintMode)
 {
-  VG_GETCONTEXT(VG_INVALID_HANDLE);
+  SHPaint *p = NULL;
+  VGPaint result;
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_INVALID_HANDLE);
 
   VG_RETURN_ERR_IF(paintMode != VG_STROKE_PATH &&
                    paintMode != VG_FILL_PATH,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
 
-  VG_RETURN((VGPaint)(paintMode == VG_STROKE_PATH ?
-                      (context->strokePaint ?
-                       context->strokePaint->handle :
-                       VG_INVALID_HANDLE) :
-                      (context->fillPaint ?
-                       context->fillPaint->handle :
-                       VG_INVALID_HANDLE)));
+  p = (paintMode == VG_STROKE_PATH) ?
+      context->strokePaint : context->fillPaint;
+  if (!p)
+    VG_RETURN(VG_INVALID_HANDLE);
+
+  shPaintLock(p);
+  result = (VGPaint)p->handle;
+  shPaintUnlock(p);
+  VG_RETURN(result);
 }
 
 static SHfloat shColorByteToFloat(SHuint32 value)
@@ -279,36 +421,40 @@ static SHuint32 shColorFloatToByte(SHfloat value)
 
 VG_API_CALL void vgSetColor(VGPaint paint, VGuint rgba)
 {
+  SHPaintAccess paintAccess;
   SHPaint *p;
-  VG_GETCONTEXT(VG_NO_RETVAL);
+  VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
 
-  p = shGetPaint(context, paint);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shAcquirePaint(context, paint, &paintAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  p = paintAccess.paint;
 
   p->color.r = shColorByteToFloat(rgba >> 24);
   p->color.g = shColorByteToFloat(rgba >> 16);
   p->color.b = shColorByteToFloat(rgba >> 8);
   p->color.a = shColorByteToFloat(rgba);
 
+  shPaintAccessCleanup(&paintAccess);
   VG_RETURN(VG_NO_RETVAL);
 }
 
 VG_API_CALL VGuint vgGetColor(VGPaint paint)
 {
+  SHPaintAccess paintAccess;
   SHPaint *p;
   VGuint rgba;
-  VG_GETCONTEXT(0);
+  VG_GETCONTEXT_CONTEXT_ONLY(0);
 
-  p = shGetPaint(context, paint);
-  VG_RETURN_ERR_IF(!p,
-                   VG_BAD_HANDLE_ERROR, 0);
+  if (!shAcquirePaint(context, paint, &paintAccess))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, 0);
+  p = paintAccess.paint;
 
   rgba = shColorFloatToByte(p->color.r) << 24;
   rgba |= shColorFloatToByte(p->color.g) << 16;
   rgba |= shColorFloatToByte(p->color.b) << 8;
   rgba |= shColorFloatToByte(p->color.a);
 
+  shPaintAccessCleanup(&paintAccess);
   VG_RETURN(rgba);
 }
 
@@ -332,6 +478,7 @@ VG_API_CALL void vgPaintPattern(VGPaint paint, VGImage pattern)
                    VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
   /* Set pattern image */
+  shPaintLock(p);
   if (p->pattern) {
     shImageReleasePaintPatternRef(p->pattern);
     shImageRelease(p->pattern);
@@ -340,6 +487,7 @@ VG_API_CALL void vgPaintPattern(VGPaint paint, VGImage pattern)
   shImageAddRef(image);
   shImageAddPaintPatternRef(image);
   p->pattern = image;
+  shPaintUnlock(p);
   
   VG_RETURN(VG_NO_RETVAL);
 }

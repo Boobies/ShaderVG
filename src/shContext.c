@@ -240,7 +240,7 @@ static void SHResourceGroup_dtor(SHResourceGroup *resources)
   for (i=0; i<resources->paints.size; ++i) {
     shReleaseHandle(resources, resources->paints.items[i]->handle,
                     SH_RESOURCE_PAINT, resources->paints.items[i]);
-    SH_DELETEOBJ(SHPaint, resources->paints.items[i]);
+    shPaintRelease(resources->paints.items[i]);
   }
 
   for (i=0; i<resources->images.size; ++i) {
@@ -1112,6 +1112,15 @@ void VGContext_dtor(VGContext *c)
   SH_DEINITOBJ(SHRectArray, c->scissor);
   SH_DEINITOBJ(SHFloatArray, c->strokeDashPattern);
 
+  if (c->fillPaint) {
+    shPaintRelease(c->fillPaint);
+    c->fillPaint = NULL;
+  }
+  if (c->strokePaint) {
+    shPaintRelease(c->strokePaint);
+    c->strokePaint = NULL;
+  }
+
   shResourceGroupRelease(c->resources);
   c->resources = NULL;
   SH_DEINITOBJ(SHPaint, c->defaultPaint);
@@ -1312,6 +1321,34 @@ VGboolean shAcquirePath(VGContext *c, VGPath path, SHPathAccess *access)
 SHPaint* shGetPaint(VGContext *c, VGPaint paint)
 {
   return (SHPaint*)shGetResource(c, (VGHandle)paint, SH_RESOURCE_PAINT);
+}
+
+VGboolean shAcquirePaint(VGContext *c,
+                         VGPaint paint,
+                         SHPaintAccess *access)
+{
+  if (!access)
+    return VG_FALSE;
+
+  shPaintAccessInit(access);
+
+  if (!c || !c->resources)
+    return VG_FALSE;
+
+  shLockResourceGroup(c->resources);
+  access->paint = shGetPaint(c, paint);
+  if (access->paint) {
+    shPaintAddRef(access->paint);
+    access->retained = VG_TRUE;
+  }
+  shUnlockResourceGroup(c->resources);
+
+  if (!access->paint)
+    return VG_FALSE;
+
+  shPaintLock(access->paint);
+  access->locked = VG_TRUE;
+  return VG_TRUE;
 }
 
 SHImage* shGetImage(VGContext *c, VGImage image)

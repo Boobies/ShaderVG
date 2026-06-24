@@ -50,6 +50,16 @@ typedef struct
   EGLDisplay display;
   EGLConfig config;
   EGLContext context;
+  VGPaint paint;
+  int destroyedPaint;
+} DestroyPaintArgs;
+
+typedef struct
+{
+  int status;
+  EGLDisplay display;
+  EGLConfig config;
+  EGLContext context;
   EGLSurface surface;
   VGImage image;
   int destroyedSurface;
@@ -694,6 +704,206 @@ static int exercise_path_object_churn(int workerId, int iterations)
   return status;
 }
 
+static int verify_selected_paint_survives_destroy(VGPath path, VGPaint paint)
+{
+  VGPaint selected;
+
+  vgSetPaint(paint, VG_FILL_PATH);
+  if (expect_vg_no_error("thread test could not select retained paint"))
+    return 1;
+
+  vgDestroyPaint(paint);
+  if (expect_vg_no_error("thread test could not destroy selected paint handle"))
+    return 1;
+
+  selected = vgGetPaint(VG_FILL_PATH);
+  if (expect_vg_no_error("thread test could not query destroyed selected paint"))
+    return 1;
+  if (selected != VG_INVALID_HANDLE) {
+    fprintf(stderr, "thread test returned a live handle for destroyed selected paint\n");
+    return 1;
+  }
+
+  vgDrawPath(path, VG_FILL_PATH);
+  vgFinish();
+  if (expect_vg_no_error("thread test could not draw with retained selected paint"))
+    return 1;
+
+  vgSetPaint(VG_INVALID_HANDLE, VG_FILL_PATH);
+  return expect_vg_no_error("thread test could not release retained selected paint");
+}
+
+static int exercise_paint_object_churn(int workerId, int iterations)
+{
+  VGPath path = VG_INVALID_HANDLE;
+  VGImage pattern = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  VGPaint retained = VG_INVALID_HANDLE;
+  int i;
+  int status = 0;
+
+  path = create_rect_path();
+  pattern = create_colored_image(workerId, 2000);
+  paint = vgCreatePaint();
+  if (path == VG_INVALID_HANDLE ||
+      pattern == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE) {
+    status = fail_vg("thread test could not create paint churn resources");
+  } else if (expect_vg_no_error("thread test could not initialize paint churn resources")) {
+    status = 1;
+  }
+
+  if (!status) {
+    vgSetPaint(paint, VG_FILL_PATH | VG_STROKE_PATH);
+    vgSetf(VG_STROKE_LINE_WIDTH, 1.0f);
+    if (expect_vg_no_error("thread test could not select churn paint"))
+      status = 1;
+  }
+
+  for (i = 0; !status && i < iterations; ++i) {
+    VGfloat color[4] = {
+      ((VGfloat)((workerId + i) % 7)) / 6.0f,
+      ((VGfloat)((workerId * 3 + i) % 11)) / 10.0f,
+      ((VGfloat)((workerId * 5 + i) % 13)) / 12.0f,
+      1.0f
+    };
+    VGfloat linear[4] = {
+      0.0f,
+      0.0f,
+      24.0f + (VGfloat)(i % 5),
+      24.0f
+    };
+    VGfloat radial[5] = {
+      16.0f,
+      16.0f,
+      8.0f,
+      8.0f,
+      18.0f + (VGfloat)(i % 4)
+    };
+    VGfloat stops[10] = {
+      0.0f,
+      color[0],
+      color[1],
+      color[2],
+      1.0f,
+      1.0f,
+      color[2],
+      color[0],
+      color[1],
+      1.0f
+    };
+    VGfloat readColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    VGuint packed =
+      (((VGuint)((workerId * 41 + i * 3) & 0xff)) << 24) |
+      (((VGuint)((workerId * 17 + i * 5) & 0xff)) << 16) |
+      (((VGuint)((workerId * 29 + i * 7) & 0xff)) << 8) |
+      0xffu;
+
+    if (reset_test_state()) {
+      status = 1;
+      break;
+    }
+
+    vgSetColor(paint, packed);
+    (void)vgGetColor(paint);
+    vgSetParameterfv(paint, VG_PAINT_COLOR, 4, color);
+    vgGetParameterfv(paint, VG_PAINT_COLOR, 4, readColor);
+    vgSetParameteri(paint,
+                    VG_PAINT_COLOR_RAMP_SPREAD_MODE,
+                    (i & 1) ? VG_COLOR_RAMP_SPREAD_REPEAT :
+                              VG_COLOR_RAMP_SPREAD_PAD);
+    vgSetParameteri(paint,
+                    VG_PAINT_COLOR_RAMP_PREMULTIPLIED,
+                    (i & 1) ? VG_TRUE : VG_FALSE);
+    vgSetParameterfv(paint, VG_PAINT_LINEAR_GRADIENT, 4, linear);
+    vgSetParameterfv(paint, VG_PAINT_RADIAL_GRADIENT, 5, radial);
+    vgSetParameterfv(paint, VG_PAINT_COLOR_RAMP_STOPS, 10, stops);
+
+    switch (i & 3) {
+    case 0:
+      vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_COLOR);
+      break;
+    case 1:
+      vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_LINEAR_GRADIENT);
+      break;
+    case 2:
+      vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_RADIAL_GRADIENT);
+      break;
+    default:
+      vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_PATTERN);
+      vgSetParameteri(paint, VG_PAINT_PATTERN_TILING_MODE, VG_TILE_REPEAT);
+      vgPaintPattern(paint, pattern);
+      break;
+    }
+
+    if (vgGetParameteri(paint, VG_PAINT_TYPE) == 0) {
+      fprintf(stderr, "thread test paint type query returned zero\n");
+      status = 1;
+      break;
+    }
+
+    if (vgGetParameterVectorSize(paint, VG_PAINT_COLOR_RAMP_STOPS) < 10) {
+      fprintf(stderr, "thread test paint color-ramp vector size was too small\n");
+      status = 1;
+      break;
+    }
+
+    vgDrawPath(path, VG_FILL_PATH | VG_STROKE_PATH);
+    if ((i & 15) == 0)
+      vgFinish();
+
+    if (expect_vg_no_error("thread test paint churn failed")) {
+      status = 1;
+      break;
+    }
+  }
+
+  if (!status) {
+    retained = vgCreatePaint();
+    if (retained == VG_INVALID_HANDLE ||
+        expect_vg_no_error("thread test could not create retained selected paint")) {
+      status = 1;
+    } else {
+      vgSetColor(retained, 0x4488ccffu);
+      if (expect_vg_no_error("thread test could not color retained selected paint"))
+        status = 1;
+      else if (verify_selected_paint_survives_destroy(path, retained))
+        status = 1;
+      retained = VG_INVALID_HANDLE;
+    }
+  }
+
+  vgSetPaint(VG_INVALID_HANDLE, VG_FILL_PATH | VG_STROKE_PATH);
+  if (expect_vg_no_error("thread test could not clear paint churn selection"))
+    status = 1;
+
+  if (retained != VG_INVALID_HANDLE) {
+    vgDestroyPaint(retained);
+    if (expect_vg_no_error("thread test could not clean up retained paint"))
+      status = 1;
+  }
+
+  if (paint != VG_INVALID_HANDLE) {
+    vgDestroyPaint(paint);
+    if (expect_vg_no_error("thread test could not destroy churn paint"))
+      status = 1;
+  }
+
+  if (pattern != VG_INVALID_HANDLE) {
+    vgDestroyImage(pattern);
+    if (expect_vg_no_error("thread test could not destroy paint pattern image"))
+      status = 1;
+  }
+
+  if (path != VG_INVALID_HANDLE) {
+    vgDestroyPath(path);
+    if (expect_vg_no_error("thread test could not destroy paint churn path"))
+      status = 1;
+  }
+
+  return status;
+}
+
 static int exercise_resources(int iterations)
 {
   int i;
@@ -911,6 +1121,32 @@ static void *path_object_churn_worker(void *arg)
   return NULL;
 }
 
+static void *paint_object_churn_worker(void *arg)
+{
+  ThreadArgs *args = (ThreadArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status)
+    args->status = exercise_paint_object_churn(args->workerId,
+                                               args->iterations);
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
 static void *context_only_churn_worker(void *arg)
 {
   ThreadArgs *args = (ThreadArgs*)arg;
@@ -930,6 +1166,36 @@ static void *context_only_churn_worker(void *arg)
   if (!args->status)
     args->status = exercise_context_only_state(args->workerId,
                                                args->iterations);
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
+static void *destroy_selected_paint_worker(void *arg)
+{
+  DestroyPaintArgs *args = (DestroyPaintArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status) {
+    vgDestroyPaint(args->paint);
+    if (expect_vg_no_error("thread test could not destroy selected paint in peer"))
+      args->status = 1;
+    else
+      args->destroyedPaint = 1;
+  }
 
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
@@ -1202,7 +1468,7 @@ static int run_shared_context_stress(void)
 
 static int run_shared_resource_churn(const ThreadTestOptions *options)
 {
-  int threadCount = options->sharedWorkers * 3;
+  int threadCount = options->sharedWorkers * 4;
   TestEGL base = {
     EGL_NO_DISPLAY,
     0,
@@ -1273,6 +1539,23 @@ static int run_shared_resource_churn(const ThreadTestOptions *options)
     args[created].config = base.config;
     args[created].context = base.context;
     args[created].workerId = options->sharedWorkers * 2 + i + 1;
+    args[created].iterations = options->sharedIterations;
+    if (pthread_create(&threads[created], NULL,
+                       paint_object_churn_worker,
+                       &args[created]) != 0) {
+      fprintf(stderr, "thread test could not create paint churn worker\n");
+      status = 1;
+      break;
+    }
+    ++created;
+  }
+
+  for (i = 0; !status && i < options->sharedWorkers; ++i) {
+    args[created].status = 1;
+    args[created].display = base.display;
+    args[created].config = base.config;
+    args[created].context = base.context;
+    args[created].workerId = options->sharedWorkers * 3 + i + 1;
     args[created].iterations = options->sharedIterations;
     if (pthread_create(&threads[created], NULL,
                        context_only_churn_worker,
@@ -1406,6 +1689,95 @@ static int run_cross_thread_retained_resource_lifetime(void)
   if (patternImage != VG_INVALID_HANDLE) {
     vgDestroyImage(patternImage);
     if (expect_vg_no_error("thread test could not clean up peer pattern image"))
+      status = 1;
+  }
+
+  if (cleanup_egl(&base))
+    status = 1;
+
+  return status;
+}
+
+static int run_cross_thread_selected_paint_lifetime(void)
+{
+  TestEGL base = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  DestroyPaintArgs args;
+  pthread_t thread;
+  VGPath path = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  int status = 0;
+
+  if (init_egl(&base, EGL_NO_CONTEXT))
+    return 1;
+
+  path = create_rect_path();
+  paint = vgCreatePaint();
+  if (path == VG_INVALID_HANDLE || paint == VG_INVALID_HANDLE) {
+    status = fail_vg("thread test could not create selected paint resources");
+  } else {
+    vgSetColor(paint, 0x66aa44ffu);
+    vgSetPaint(paint, VG_FILL_PATH);
+    if (expect_vg_no_error("thread test could not select shared paint"))
+      status = 1;
+  }
+
+  if (!status) {
+    args.status = 1;
+    args.display = base.display;
+    args.config = base.config;
+    args.context = base.context;
+    args.paint = paint;
+    args.destroyedPaint = 0;
+
+    if (pthread_create(&thread, NULL,
+                       destroy_selected_paint_worker, &args) != 0) {
+      fprintf(stderr, "thread test could not create selected paint destroy worker\n");
+      status = 1;
+    } else {
+      pthread_join(thread, NULL);
+      if (args.destroyedPaint)
+        paint = VG_INVALID_HANDLE;
+      if (args.status)
+        status = 1;
+    }
+  }
+
+  if (!status) {
+    VGPaint selected = vgGetPaint(VG_FILL_PATH);
+    if (expect_vg_no_error("thread test could not query peer-destroyed selected paint")) {
+      status = 1;
+    } else if (selected != VG_INVALID_HANDLE) {
+      fprintf(stderr, "thread test kept a public handle for peer-destroyed paint\n");
+      status = 1;
+    }
+  }
+
+  if (!status) {
+    vgDrawPath(path, VG_FILL_PATH);
+    vgFinish();
+    if (expect_vg_no_error("thread test could not draw peer-destroyed selected paint"))
+      status = 1;
+  }
+
+  vgSetPaint(VG_INVALID_HANDLE, VG_FILL_PATH);
+  if (expect_vg_no_error("thread test could not release peer-destroyed selected paint"))
+    status = 1;
+
+  if (paint != VG_INVALID_HANDLE) {
+    vgDestroyPaint(paint);
+    if (expect_vg_no_error("thread test could not clean up selected paint"))
+      status = 1;
+  }
+
+  if (path != VG_INVALID_HANDLE) {
+    vgDestroyPath(path);
+    if (expect_vg_no_error("thread test could not clean up selected paint path"))
       status = 1;
   }
 
@@ -1934,6 +2306,8 @@ static int run_thread_safety_suite(const ThreadTestOptions *options)
   if (run_shared_resource_churn(options))
     return 1;
   if (run_cross_thread_retained_resource_lifetime())
+    return 1;
+  if (run_cross_thread_selected_paint_lifetime())
     return 1;
   if (run_image_pbuffer_ref_race())
     return 1;

@@ -1102,6 +1102,18 @@ static void shSetParameter(VGContext *context, void *object,
  * Sets a resource parameter which takes a single float value
  *------------------------------------------------------------*/
 
+static void shLockParameterResource(SHResourceType resType, void *resource)
+{
+  if (resType == SH_RESOURCE_PAINT)
+    shPaintLock((SHPaint*)resource);
+}
+
+static void shUnlockParameterResource(SHResourceType resType, void *resource)
+{
+  if (resType == SH_RESOURCE_PAINT)
+    shPaintUnlock((SHPaint*)resource);
+}
+
 VG_API_CALL void vgSetParameterf(VGHandle object, VGint paramType, VGfloat value)
 {
   SHResourceType resType;
@@ -1120,7 +1132,9 @@ VG_API_CALL void vgSetParameterf(VGHandle object, VGint paramType, VGfloat value
                    VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
+  shLockParameterResource(resType, resource);
   shSetParameter(context, resource, resType, paramType, 1, &value, 1);
+  shUnlockParameterResource(resType, resource);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1146,7 +1160,9 @@ VG_API_CALL void vgSetParameteri(VGHandle object, VGint paramType, VGint value)
                    VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
+  shLockParameterResource(resType, resource);
   shSetParameter(context, resource, resType, paramType, 1, &value, 0);
+  shUnlockParameterResource(resType, resource);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1171,7 +1187,9 @@ VG_API_CALL void vgSetParameterfv(VGHandle object, VGint paramType,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
+  shLockParameterResource(resType, resource);
   shSetParameter(context, resource, resType, paramType, count, values, 1);
+  shUnlockParameterResource(resType, resource);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1196,7 +1214,9 @@ VG_API_CALL void vgSetParameteriv(VGHandle object, VGint paramType,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shSetParam() */
+  shLockParameterResource(resType, resource);
   shSetParameter(context, resource, resType, paramType, count, values, 0);
+  shUnlockParameterResource(resType, resource);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1388,7 +1408,9 @@ VG_API_CALL VGfloat vgGetParameterf(VGHandle object, VGint paramType)
                    VG_ILLEGAL_ARGUMENT_ERROR, retval);
   
   /* Error code will be set by shGetParameter() */
+  shLockParameterResource(resType, resource);
   shGetParameter(context, resource, resType, paramType, 1, &retval, 1);
+  shUnlockParameterResource(resType, resource);
   VG_RETURN(retval);
 }
 
@@ -1414,7 +1436,9 @@ VG_API_CALL VGint vgGetParameteri(VGHandle object, VGint paramType)
                    VG_ILLEGAL_ARGUMENT_ERROR, retval);
   
   /* Error code will be set by shGetParameter() */
+  shLockParameterResource(resType, resource);
   shGetParameter(context, resource, resType, paramType, 1, &retval, 0);
+  shUnlockParameterResource(resType, resource);
   VG_RETURN(retval);
 }
 
@@ -1439,7 +1463,9 @@ VG_API_CALL void vgGetParameterfv(VGHandle object, VGint paramType,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shGetParameter() */
+  shLockParameterResource(resType, resource);
   shGetParameter(context, resource, resType, paramType, count, values, 1);
+  shUnlockParameterResource(resType, resource);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1464,7 +1490,9 @@ VG_API_CALL void vgGetParameteriv(VGHandle object, VGint paramType,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   
   /* Error code will be set by shGetParameter() */
+  shLockParameterResource(resType, resource);
   shGetParameter(context, resource, resType, paramType, count, values, 0);
+  shUnlockParameterResource(resType, resource);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1503,7 +1531,9 @@ VG_API_CALL VGint vgGetParameterVectorSize(VGHandle object, VGint ptype)
       VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, retval);
       
     } break;
-  case SH_RESOURCE_PAINT: switch (ptype) { /* Paint parameters */
+  case SH_RESOURCE_PAINT:
+    shPaintLock((SHPaint*)resource);
+    switch (ptype) { /* Paint parameters */
       
     case VG_PAINT_TYPE:
       retval = 1; break;
@@ -1531,9 +1561,12 @@ VG_API_CALL VGint vgGetParameterVectorSize(VGHandle object, VGint ptype)
       
     default:
       /* Invalid VGParamType */
+      shPaintUnlock((SHPaint*)resource);
       VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, retval);
       
-    } break;
+    }
+    shPaintUnlock((SHPaint*)resource);
+    break;
   case SH_RESOURCE_IMAGE: switch (ptype) { /* Image parameters */
       
     case VG_IMAGE_FORMAT:

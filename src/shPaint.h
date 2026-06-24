@@ -41,6 +41,8 @@ typedef struct
 typedef struct
 {
   VGHandle handle;
+  SHRecursiveMutex mutex;
+  SHAtomicInt refCount;
   VGPaintType type;
   SHColor color;
   SHColorArray colors;
@@ -56,8 +58,32 @@ typedef struct
   
 } SHPaint;
 
+typedef struct
+{
+  SHPaint *paint;
+  VGboolean locked;
+  VGboolean retained;
+} SHPaintAccess;
+
+typedef struct
+{
+  SHPaint *paints[2];
+  SHint count;
+} SHPaintLockSet;
+
 void SHPaint_ctor(SHPaint *p);
 void SHPaint_dtor(SHPaint *p);
+void shPaintLock(SHPaint *p);
+void shPaintUnlock(SHPaint *p);
+void shPaintAddRef(SHPaint *p);
+void shPaintRelease(SHPaint *p);
+void shPaintAccessInit(SHPaintAccess *access);
+void shPaintAccessCleanup(SHPaintAccess *access);
+void shPaintLockSetInit(SHPaintLockSet *locks);
+void shPaintLockSetCleanup(SHPaintLockSet *locks);
+void shPaintLockSelected(VGContext *context,
+                         VGbitfield paintModes,
+                         SHPaintLockSet *locks);
 
 #define _ITEM_T SHPaint*
 #define _ARRAY_T SHPaintArray

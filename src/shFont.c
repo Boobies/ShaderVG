@@ -281,6 +281,7 @@ VG_API_CALL void vgClearGlyph(VGFont font, VGuint glyphIndex)
 static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
                               VGbitfield paintModes)
 {
+  SHPaintLockSet paintLocks;
   SHMatrix3x3 saved;
 
   if (paintModes == 0 || glyph->type == SH_GLYPH_EMPTY)
@@ -288,6 +289,7 @@ static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
 
   if (glyph->type == SH_GLYPH_PATH) {
     shPathLock(glyph->path);
+    shPaintLockSelected(context, paintModes, &paintLocks);
     SETMATMAT(saved, context->pathTransform);
     SETMATMAT(context->pathTransform, context->glyphTransform);
     TRANSLATEMATR(context->pathTransform,
@@ -295,8 +297,10 @@ static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
                   context->glyphOrigin.y - glyph->origin.y);
     shDrawPath(context, glyph->path, paintModes);
     SETMATMAT(context->pathTransform, saved);
+    shPaintLockSetCleanup(&paintLocks);
     shPathUnlock(glyph->path);
   } else if (glyph->type == SH_GLYPH_IMAGE) {
+    shPaintLockSelected(context, VG_FILL_PATH, &paintLocks);
     SETMATMAT(saved, context->imageTransform);
     SETMATMAT(context->imageTransform, context->glyphTransform);
     TRANSLATEMATR(context->imageTransform,
@@ -304,17 +308,23 @@ static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
                   context->glyphOrigin.y - glyph->origin.y);
     shDrawImage(context, glyph->image);
     SETMATMAT(context->imageTransform, saved);
+    shPaintLockSetCleanup(&paintLocks);
   }
 }
 
 static VGboolean shCanBatchImageGlyphs(VGContext *context)
 {
+  SHPaintLockSet paintLocks;
   SHPaint *fill = (context->fillPaint ?
                    context->fillPaint : &context->defaultPaint);
+  VGboolean canBatch;
 
   /* Gradient and pattern image-multiply use image-local paint coordinates. */
-  return (context->imageMode != VG_DRAW_IMAGE_MULTIPLY ||
-          fill->type == VG_PAINT_TYPE_COLOR) ? VG_TRUE : VG_FALSE;
+  shPaintLockSelected(context, VG_FILL_PATH, &paintLocks);
+  canBatch = (context->imageMode != VG_DRAW_IMAGE_MULTIPLY ||
+              fill->type == VG_PAINT_TYPE_COLOR) ? VG_TRUE : VG_FALSE;
+  shPaintLockSetCleanup(&paintLocks);
+  return canBatch;
 }
 
 static SHImage* shImageGlyphBatchRoot(SHGlyph *glyph)
@@ -400,9 +410,13 @@ static void shFlushImageGlyphBatch(VGContext *context,
                                    SHImageQuad *batchQuads,
                                    SHint *batchCount)
 {
-  if (*batchCount > 0 && *batchRoot)
+  if (*batchCount > 0 && *batchRoot) {
+    SHPaintLockSet paintLocks;
+    shPaintLockSelected(context, VG_FILL_PATH, &paintLocks);
     shDrawImageQuadBatch(context, (*batchRoot)->texture,
                          batchQuads, *batchCount);
+    shPaintLockSetCleanup(&paintLocks);
+  }
 
   *batchRoot = NULL;
   *batchCount = 0;
@@ -439,6 +453,7 @@ static SHPathGlyphBatchResult shTryDrawPathGlyphBatch(
   SHGlyph *glyph;
   SHPathGlyph *batchGlyphs = NULL;
   SHPath **lockedPaths = NULL;
+  SHPaintLockSet paintLocks;
   SHVector2 origin;
   SHint batchCount = 0;
   SHint lockedPathCount = 0;
@@ -493,7 +508,9 @@ static SHPathGlyphBatchResult shTryDrawPathGlyphBatch(
   for (i=0; i<lockedPathCount; ++i)
     shPathLock(lockedPaths[i]);
 
+  shPaintLockSelected(context, VG_FILL_PATH, &paintLocks);
   result = shDrawPathGlyphBatch(context, batchGlyphs, batchCount);
+  shPaintLockSetCleanup(&paintLocks);
 
   while (lockedPathCount > 0) {
     --lockedPathCount;
