@@ -1,5 +1,6 @@
 #include <EGL/egl.h>
 #include <VG/openvg.h>
+#include <VG/vgext.h>
 
 #include <X11/Xlib.h>
 
@@ -1036,6 +1037,161 @@ static int exercise_image_object_churn(int workerId, int iterations)
   return status;
 }
 
+static void fill_filter_lookup_tables(VGubyte *redLut,
+                                      VGubyte *greenLut,
+                                      VGubyte *blueLut,
+                                      VGubyte *alphaLut,
+                                      VGuint *singleLut)
+{
+  int i;
+
+  for (i = 0; i < 256; ++i) {
+    redLut[i] = (VGubyte)(255 - i);
+    greenLut[i] = (VGubyte)i;
+    blueLut[i] = (VGubyte)((i * 3) & 0xff);
+    alphaLut[i] = 255;
+    singleLut[i] =
+      (((VGuint)(255 - i)) << 24) |
+      (((VGuint)i) << 16) |
+      (((VGuint)((i * 5) & 0xff)) << 8) |
+      255u;
+  }
+}
+
+static int exercise_filter_object_churn(int workerId, int iterations)
+{
+  VGImage source = VG_INVALID_HANDLE;
+  VGImage dest = VG_INVALID_HANDLE;
+  VGImage blur = VG_INVALID_HANDLE;
+  VGPaint highlight = VG_INVALID_HANDLE;
+  VGPaint shadow = VG_INVALID_HANDLE;
+  VGubyte redLut[256];
+  VGubyte greenLut[256];
+  VGubyte blueLut[256];
+  VGubyte alphaLut[256];
+  VGuint singleLut[256];
+  VGfloat matrix[20] = {
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f,
+    0.0f, 0.0f, 0.0f, 0.0f
+  };
+  VGshort convolveKernel[9] = {
+    0, 0, 0,
+    0, 1, 0,
+    0, 0, 0
+  };
+  VGshort separableKernel[1] = { 1 };
+  VGfloat highlightColor[4] = { 1.0f, 0.15f, 0.05f, 1.0f };
+  VGfloat shadowColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+  int i;
+  int status = 0;
+
+  fill_filter_lookup_tables(redLut, greenLut, blueLut, alphaLut, singleLut);
+
+  source = create_colored_image(workerId, 5000);
+  dest = create_colored_image(workerId, 5001);
+  blur = create_colored_image(workerId, 5002);
+  highlight = vgCreatePaint();
+  shadow = vgCreatePaint();
+  if (source == VG_INVALID_HANDLE ||
+      dest == VG_INVALID_HANDLE ||
+      blur == VG_INVALID_HANDLE ||
+      highlight == VG_INVALID_HANDLE ||
+      shadow == VG_INVALID_HANDLE ||
+      expect_vg_no_error("thread test could not create filter churn resources")) {
+    status = 1;
+  }
+
+  if (!status) {
+    vgSetParameterfv(highlight, VG_PAINT_COLOR, 4, highlightColor);
+    vgSetParameterfv(shadow, VG_PAINT_COLOR, 4, shadowColor);
+    vgSeti(VG_FILTER_FORMAT_LINEAR, VG_TRUE);
+    vgSeti(VG_FILTER_FORMAT_PREMULTIPLIED, VG_FALSE);
+    vgSeti(VG_FILTER_CHANNEL_MASK, VG_RED | VG_GREEN | VG_BLUE | VG_ALPHA);
+    if (expect_vg_no_error("thread test could not initialize filter churn state"))
+      status = 1;
+  }
+
+  for (i = 0; !status && i < iterations; ++i) {
+    switch (i & 7) {
+    case 0:
+      vgColorMatrix(dest, source, matrix);
+      break;
+    case 1:
+      vgConvolve(dest, source, 3, 3, 1, 1,
+                 convolveKernel, 1.0f, 0.0f, VG_TILE_PAD);
+      break;
+    case 2:
+      vgSeparableConvolve(dest, source, 1, 1, 0, 0,
+                          separableKernel, separableKernel,
+                          1.0f, 0.0f, VG_TILE_PAD);
+      break;
+    case 3:
+      vgGaussianBlur(dest, source, 1.0f, 1.0f, VG_TILE_PAD);
+      break;
+    case 4:
+      vgLookup(dest, source, redLut, greenLut, blueLut, alphaLut,
+               VG_TRUE, VG_FALSE);
+      break;
+    case 5:
+      vgLookupSingle(dest, source, singleLut, VG_GREEN,
+                     VG_TRUE, VG_FALSE);
+      break;
+    case 6:
+      vgIterativeAverageBlurKHR(blur, source, 2.0f, 2.0f,
+                                1, VG_TILE_PAD);
+      break;
+    default:
+      vgParametricFilterKHR(dest, source, blur,
+                            0.6f, 0.0f, 0.0f,
+                            VG_PF_OBJECT_VISIBLE_FLAG_KHR |
+                            VG_PF_OUTER_FLAG_KHR,
+                            highlight, shadow);
+      break;
+    }
+
+    if ((i & 15) == 0)
+      vgFinish();
+
+    if (expect_vg_no_error("thread test filter churn failed"))
+      status = 1;
+  }
+
+  if (shadow != VG_INVALID_HANDLE) {
+    vgDestroyPaint(shadow);
+    if (expect_vg_no_error("thread test could not destroy filter shadow paint"))
+      status = 1;
+  }
+
+  if (highlight != VG_INVALID_HANDLE) {
+    vgDestroyPaint(highlight);
+    if (expect_vg_no_error("thread test could not destroy filter highlight paint"))
+      status = 1;
+  }
+
+  if (blur != VG_INVALID_HANDLE) {
+    vgDestroyImage(blur);
+    if (expect_vg_no_error("thread test could not destroy filter blur image"))
+      status = 1;
+  }
+
+  if (dest != VG_INVALID_HANDLE) {
+    vgDestroyImage(dest);
+    if (expect_vg_no_error("thread test could not destroy filter destination image"))
+      status = 1;
+  }
+
+  if (source != VG_INVALID_HANDLE) {
+    vgDestroyImage(source);
+    if (expect_vg_no_error("thread test could not destroy filter source image"))
+      status = 1;
+  }
+
+  return status;
+}
+
 static int exercise_font_object_churn(int workerId, int iterations)
 {
   VGFont font = VG_INVALID_HANDLE;
@@ -1589,6 +1745,32 @@ static void *mask_layer_object_churn_worker(void *arg)
   return NULL;
 }
 
+static void *filter_object_churn_worker(void *arg)
+{
+  ThreadArgs *args = (ThreadArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status)
+    args->status = exercise_filter_object_churn(args->workerId,
+                                                args->iterations);
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
 static void *context_only_churn_worker(void *arg)
 {
   ThreadArgs *args = (ThreadArgs*)arg;
@@ -1910,7 +2092,7 @@ static int run_shared_context_stress(void)
 
 static int run_shared_resource_churn(const ThreadTestOptions *options)
 {
-  int threadCount = options->sharedWorkers * 7;
+  int threadCount = options->sharedWorkers * 8;
   TestEGL base = {
     EGL_NO_DISPLAY,
     0,
@@ -2049,6 +2231,23 @@ static int run_shared_resource_churn(const ThreadTestOptions *options)
     args[created].config = base.config;
     args[created].context = base.context;
     args[created].workerId = options->sharedWorkers * 6 + i + 1;
+    args[created].iterations = options->sharedIterations;
+    if (pthread_create(&threads[created], NULL,
+                       filter_object_churn_worker,
+                       &args[created]) != 0) {
+      fprintf(stderr, "thread test could not create filter churn worker\n");
+      status = 1;
+      break;
+    }
+    ++created;
+  }
+
+  for (i = 0; !status && i < options->sharedWorkers; ++i) {
+    args[created].status = 1;
+    args[created].display = base.display;
+    args[created].config = base.config;
+    args[created].context = base.context;
+    args[created].workerId = options->sharedWorkers * 7 + i + 1;
     args[created].iterations = options->sharedIterations;
     if (pthread_create(&threads[created], NULL,
                        context_only_churn_worker,

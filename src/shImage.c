@@ -3292,6 +3292,94 @@ static VGboolean shImageFilterImagesOverlap(const SHImage *dst,
           src->storageY < dstY1) ? VG_TRUE : VG_FALSE;
 }
 
+typedef struct
+{
+  SHImageAccess accesses[3];
+  SHImageLockSet locks;
+  SHint count;
+} SHImageFilterAccess;
+
+static void shImageFilterAccessInit(SHImageFilterAccess *access)
+{
+  if (!access)
+    return;
+
+  access->count = 0;
+  shImageLockSetInit(&access->locks);
+  shImageAccessInit(&access->accesses[0]);
+  shImageAccessInit(&access->accesses[1]);
+  shImageAccessInit(&access->accesses[2]);
+}
+
+static VGboolean shImageFilterAcquireImages(VGContext *context,
+                                            const VGImage *images,
+                                            SHint count,
+                                            SHImageFilterAccess *access)
+{
+  if (!access)
+    return VG_FALSE;
+
+  shImageFilterAccessInit(access);
+  if (!shAcquireImages(context, images, access->accesses,
+                       count, &access->locks))
+    return VG_FALSE;
+
+  access->count = count;
+  return VG_TRUE;
+}
+
+static VGboolean shImageFilterAcquireTwoImages(VGContext *context,
+                                               VGImage dst,
+                                               VGImage src,
+                                               SHImageFilterAccess *access,
+                                               SHImage **dstOut,
+                                               SHImage **srcOut)
+{
+  VGImage images[2];
+
+  images[0] = dst;
+  images[1] = src;
+  if (!shImageFilterAcquireImages(context, images, 2, access))
+    return VG_FALSE;
+
+  *dstOut = access->accesses[0].image;
+  *srcOut = access->accesses[1].image;
+  return VG_TRUE;
+}
+
+static VGboolean shImageFilterAcquireThreeImages(VGContext *context,
+                                                 VGImage dst,
+                                                 VGImage src,
+                                                 VGImage aux,
+                                                 SHImageFilterAccess *access,
+                                                 SHImage **dstOut,
+                                                 SHImage **srcOut,
+                                                 SHImage **auxOut)
+{
+  VGImage images[3];
+
+  images[0] = dst;
+  images[1] = src;
+  images[2] = aux;
+  if (!shImageFilterAcquireImages(context, images, 3, access))
+    return VG_FALSE;
+
+  *dstOut = access->accesses[0].image;
+  *srcOut = access->accesses[1].image;
+  *auxOut = access->accesses[2].image;
+  return VG_TRUE;
+}
+
+static void shImageFilterAccessCleanup(SHImageFilterAccess *access)
+{
+  if (!access || access->count <= 0)
+    return;
+
+  shImageLockSetCleanup(&access->locks);
+  shImageAccessCleanupAll(access->accesses, access->count);
+  access->count = 0;
+}
+
 static VGboolean shImageFilterValidTilingMode(VGTilingMode tilingMode)
 {
   return (tilingMode == VG_TILE_FILL ||
@@ -4302,21 +4390,27 @@ VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,
   SHImage *s, *d;
   SHint width, height;
   SHImageFilterPass pass;
+  SHImageFilterAccess imageAccess;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  s = shGetImage(context, src);
-  d = shGetImage(context, dst);
-  VG_RETURN_ERR_IF(!s || !d,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!matrix ||
-                   !shIsAligned(matrix, sizeof(VGfloat)),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shImageFilterAccessInit(&imageAccess);
+  if (!shImageFilterAcquireTwoImages(context, dst, src,
+                                     &imageAccess, &d, &s))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
-                   shImageIsRenderTarget(d),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!matrix || !shIsAligned(matrix, sizeof(VGfloat))) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
+
+  if (shImageIsRenderTarget(s) || shImageIsRenderTarget(d)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  if (shImageFilterImagesOverlap(d, s)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
   width = SH_MIN(d->width, s->width);
   height = SH_MIN(d->height, s->height);
@@ -4345,17 +4439,20 @@ VG_API_CALL void vgColorMatrix(VGImage dst, VGImage src,
   pass.colorBias[3] = matrix[19];
   shImageFilterSetTargetRegion(&pass, width, height);
 
-  VG_RETURN_ERR_IF(!shImageFilterRunPass(context,
-                                         shImageRoot(d),
-                                         shImageTexture(d),
-                                         shImageRoot(d)->width,
-                                         shImageRoot(d)->height,
-                                         shImageTexture(s), 0,
-                                         context->filterChannelMask,
-                                         &pass),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!shImageFilterRunPass(context,
+                            shImageRoot(d),
+                            shImageTexture(d),
+                            shImageRoot(d)->width,
+                            shImageRoot(d)->height,
+                            shImageTexture(s), 0,
+                            context->filterChannelMask,
+                            &pass)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
 
   shImageMarkGpuDataDirty(d);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -4371,31 +4468,41 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
   SHint width, height;
   GLuint kernelTexture = 0;
   SHImageFilterPass pass;
+  SHImageFilterAccess imageAccess;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  s = shGetImage(context, src);
-  d = shGetImage(context, dst);
-  VG_RETURN_ERR_IF(!s || !d,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!kernel ||
-                   !shIsAligned(kernel, sizeof(VGshort)) ||
-                   kernelWidth <= 0 ||
-                   kernelHeight <= 0 ||
-                   kernelWidth > SH_MAX_KERNEL_SIZE ||
-                   kernelHeight > SH_MAX_KERNEL_SIZE,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shImageFilterAccessInit(&imageAccess);
+  if (!shImageFilterAcquireTwoImages(context, dst, src,
+                                     &imageAccess, &d, &s))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!kernel ||
+      !shIsAligned(kernel, sizeof(VGshort)) ||
+      kernelWidth <= 0 ||
+      kernelHeight <= 0 ||
+      kernelWidth > SH_MAX_KERNEL_SIZE ||
+      kernelHeight > SH_MAX_KERNEL_SIZE) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
+  if (!shImageFilterValidTilingMode(tilingMode)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
-                   shImageIsRenderTarget(d),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (shImageIsRenderTarget(s) || shImageIsRenderTarget(d)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  if (shImageFilterImagesOverlap(d, s)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(!shImageFilterCreateConvolveKernelTexture(
-                     kernel, kernelWidth, kernelHeight, &kernelTexture),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!shImageFilterCreateConvolveKernelTexture(
+        kernel, kernelWidth, kernelHeight, &kernelTexture)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
 
   width = SH_MIN(d->width, s->width);
   height = SH_MIN(d->height, s->height);
@@ -4420,11 +4527,13 @@ VG_API_CALL void vgConvolve(VGImage dst, VGImage src,
                             context->filterChannelMask,
                             &pass)) {
     glDeleteTextures(1, &kernelTexture);
+    shImageFilterAccessCleanup(&imageAccess);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   }
 
   glDeleteTextures(1, &kernelTexture);
   shImageMarkGpuDataDirty(d);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -4445,29 +4554,37 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
   SHint width, height;
   SHint k;
   SHImageFilterPass pass;
+  SHImageFilterAccess imageAccess;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  s = shGetImage(context, src);
-  d = shGetImage(context, dst);
-  VG_RETURN_ERR_IF(!s || !d,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!kernelX ||
-                   !kernelY ||
-                   !shIsAligned(kernelX, sizeof(VGshort)) ||
-                   !shIsAligned(kernelY, sizeof(VGshort)) ||
-                   kernelWidth <= 0 ||
-                   kernelHeight <= 0 ||
-                   kernelWidth > SH_MAX_SEPARABLE_KERNEL_SIZE ||
-                   kernelHeight > SH_MAX_SEPARABLE_KERNEL_SIZE,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shImageFilterAccessInit(&imageAccess);
+  if (!shImageFilterAcquireTwoImages(context, dst, src,
+                                     &imageAccess, &d, &s))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!kernelX ||
+      !kernelY ||
+      !shIsAligned(kernelX, sizeof(VGshort)) ||
+      !shIsAligned(kernelY, sizeof(VGshort)) ||
+      kernelWidth <= 0 ||
+      kernelHeight <= 0 ||
+      kernelWidth > SH_MAX_SEPARABLE_KERNEL_SIZE ||
+      kernelHeight > SH_MAX_SEPARABLE_KERNEL_SIZE) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
+  if (!shImageFilterValidTilingMode(tilingMode)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
-                   shImageIsRenderTarget(d),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (shImageIsRenderTarget(s) || shImageIsRenderTarget(d)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  if (shImageFilterImagesOverlap(d, s)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
   for (k=0; k<kernelWidth; ++k)
     kernelXSum += (SHfloat)kernelX[k];
@@ -4531,6 +4648,7 @@ VG_API_CALL void vgSeparableConvolve(VGImage dst, VGImage src,
   glDeleteTextures(1, &kernelYTexture);
   glDeleteTextures(1, &kernelXTexture);
   shImageMarkGpuDataDirty(d);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN(VG_NO_RETVAL);
 
 separable_out_of_memory:
@@ -4538,6 +4656,7 @@ separable_out_of_memory:
     glDeleteTextures(1, &kernelYTexture);
   if (kernelXTexture != 0)
     glDeleteTextures(1, &kernelXTexture);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 }
 
@@ -4635,26 +4754,32 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
   SHint radiusX, radiusY;
   SHint sizeX, sizeY;
   SHint k;
+  SHImageFilterAccess imageAccess;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  s = shGetImage(context, src);
-  d = shGetImage(context, dst);
-  VG_RETURN_ERR_IF(!s || !d,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode) ||
-                   SH_ISNAN(stdDeviationX) ||
-                   SH_ISNAN(stdDeviationY) ||
-                   stdDeviationX <= 0.0f ||
-                   stdDeviationY <= 0.0f ||
-                   stdDeviationX > SH_MAX_GAUSSIAN_STD_DEVIATION ||
-                   stdDeviationY > SH_MAX_GAUSSIAN_STD_DEVIATION,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shImageFilterAccessInit(&imageAccess);
+  if (!shImageFilterAcquireTwoImages(context, dst, src,
+                                     &imageAccess, &d, &s))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shImageFilterValidTilingMode(tilingMode) ||
+      SH_ISNAN(stdDeviationX) ||
+      SH_ISNAN(stdDeviationY) ||
+      stdDeviationX <= 0.0f ||
+      stdDeviationY <= 0.0f ||
+      stdDeviationX > SH_MAX_GAUSSIAN_STD_DEVIATION ||
+      stdDeviationY > SH_MAX_GAUSSIAN_STD_DEVIATION) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
-                   shImageIsRenderTarget(d),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (shImageIsRenderTarget(s) || shImageIsRenderTarget(d)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  if (shImageFilterImagesOverlap(d, s)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
   radiusX = (SHint)SH_CEIL(stdDeviationX * 3.0f);
   radiusY = (SHint)SH_CEIL(stdDeviationY * 3.0f);
@@ -4705,11 +4830,13 @@ VG_API_CALL void vgGaussianBlur(VGImage dst, VGImage src,
   free(kernelY);
   free(kernelX);
   shImageMarkGpuDataDirty(d);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN(VG_NO_RETVAL);
 
 gaussian_out_of_memory:
   free(kernelY);
   free(kernelX);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 }
 
@@ -4820,27 +4947,33 @@ VG_API_CALL void vgIterativeAverageBlurKHR(VGImage dst,
   SHint kernelHeight = 0;
   SHint shiftX = 0;
   SHint shiftY = 0;
+  SHImageFilterAccess imageAccess;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  s = shGetImage(context, src);
-  d = shGetImage(context, dst);
-  VG_RETURN_ERR_IF(!s || !d,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!shImageFilterValidTilingMode(tilingMode) ||
-                   SH_ISNAN(dimX) ||
-                   SH_ISNAN(dimY) ||
-                   dimX < 0.0f ||
-                   dimY < 0.0f ||
-                   dimX > SH_MAX_AVERAGE_BLUR_DIMENSION ||
-                   dimY > SH_MAX_AVERAGE_BLUR_DIMENSION ||
-                   iterative > SH_MAX_AVERAGE_BLUR_ITERATIONS,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shImageFilterAccessInit(&imageAccess);
+  if (!shImageFilterAcquireTwoImages(context, dst, src,
+                                     &imageAccess, &d, &s))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!shImageFilterValidTilingMode(tilingMode) ||
+      SH_ISNAN(dimX) ||
+      SH_ISNAN(dimY) ||
+      dimX < 0.0f ||
+      dimY < 0.0f ||
+      dimX > SH_MAX_AVERAGE_BLUR_DIMENSION ||
+      dimY > SH_MAX_AVERAGE_BLUR_DIMENSION ||
+      iterative > SH_MAX_AVERAGE_BLUR_ITERATIONS) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
-                   shImageIsRenderTarget(d),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (shImageIsRenderTarget(s) || shImageIsRenderTarget(d)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  if (shImageFilterImagesOverlap(d, s)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
   if (!shImageFilterCreateAverageKernel(dimX,
                                         iterative,
@@ -4870,16 +5003,19 @@ VG_API_CALL void vgIterativeAverageBlurKHR(VGImage dst,
   free(kernelY);
   free(kernelX);
   shImageMarkGpuDataDirty(d);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN(VG_NO_RETVAL);
 
 average_out_of_memory:
   free(kernelY);
   free(kernelX);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 }
 
 static VGboolean shParametricFilterPaintInfo(VGContext *context,
                                              VGPaint paint,
+                                             SHPaintAccess *access,
                                              SHint *mode,
                                              SHPaint **paintOut,
                                              GLfloat color[4])
@@ -4893,15 +5029,16 @@ static VGboolean shParametricFilterPaintInfo(VGContext *context,
   color[2] = 0.0f;
   color[3] = 0.0f;
 
+  shPaintAccessInit(access);
   if (paint == VG_INVALID_HANDLE)
     return VG_TRUE;
 
-  p = shGetPaint(context, paint);
-  if (!p) {
+  if (!shAcquirePaint(context, paint, access)) {
     shSetError(context, VG_BAD_HANDLE_ERROR);
     return VG_FALSE;
   }
 
+  p = access->paint;
   if (p->type == VG_PAINT_TYPE_COLOR) {
     *mode = SH_PARAMETRIC_PAINT_COLOR;
     color[0] = p->color.r;
@@ -4940,41 +5077,57 @@ VG_API_CALL void vgParametricFilterKHR(VGImage dst,
   SHImage *s, *d, *b;
   SHint width, height;
   SHImageFilterPass pass;
+  SHImageFilterAccess imageAccess;
+  SHPaintAccess highlightAccess;
+  SHPaintAccess shadowAccess;
   VGbitfield validFlags = VG_PF_OBJECT_VISIBLE_FLAG_KHR |
                           VG_PF_KNOCKOUT_FLAG_KHR |
                           VG_PF_OUTER_FLAG_KHR |
                           VG_PF_INNER_FLAG_KHR;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  s = shGetImage(context, src);
-  d = shGetImage(context, dst);
-  b = shGetImage(context, blur);
-  VG_RETURN_ERR_IF(!s || !d || !b,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(SH_ISNAN(strength) ||
-                   SH_ISNAN(offsetX) ||
-                   SH_ISNAN(offsetY) ||
-                   (filterFlags & ~validFlags),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shImageFilterAccessInit(&imageAccess);
+  shPaintAccessInit(&highlightAccess);
+  shPaintAccessInit(&shadowAccess);
+  if (!shImageFilterAcquireThreeImages(context, dst, src, blur,
+                                       &imageAccess, &d, &s, &b))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (SH_ISNAN(strength) ||
+      SH_ISNAN(offsetX) ||
+      SH_ISNAN(offsetY) ||
+      (filterFlags & ~validFlags)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
-                   shImageIsRenderTarget(d) ||
-                   shImageIsRenderTarget(b),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s) ||
-                   shImageFilterImagesOverlap(d, b),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (shImageIsRenderTarget(s) ||
+      shImageIsRenderTarget(d) ||
+      shImageIsRenderTarget(b)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  if (shImageFilterImagesOverlap(d, s) ||
+      shImageFilterImagesOverlap(d, b)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
   shImageFilterInitPass(context, s, d, &pass);
   if (!shParametricFilterPaintInfo(context, highlightPaint,
+                                   &highlightAccess,
                                    &pass.highlightPaintMode,
                                    &pass.highlightPaint,
                                    pass.highlightColor) ||
       !shParametricFilterPaintInfo(context, shadowPaint,
+                                   &shadowAccess,
                                    &pass.shadowPaintMode,
                                    &pass.shadowPaint,
-                                   pass.shadowColor))
+                                   pass.shadowColor)) {
+    shPaintAccessCleanup(&shadowAccess);
+    shPaintAccessCleanup(&highlightAccess);
+    shImageFilterAccessCleanup(&imageAccess);
     VG_RETURN(VG_NO_RETVAL);
+  }
 
   width = SH_MIN(d->width, SH_MIN(s->width, b->width));
   height = SH_MIN(d->height, SH_MIN(s->height, b->height));
@@ -4994,18 +5147,25 @@ VG_API_CALL void vgParametricFilterKHR(VGImage dst,
   pass.unpremultiplyOutput = VG_TRUE;
   shImageFilterSetTargetRegion(&pass, width, height);
 
-  VG_RETURN_ERR_IF(!shImageFilterRunPass(context,
-                                         shImageRoot(d),
-                                         shImageTexture(d),
-                                         shImageRoot(d)->width,
-                                         shImageRoot(d)->height,
-                                         shImageTexture(s),
-                                         shImageTexture(b),
-                                         context->filterChannelMask,
-                                         &pass),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!shImageFilterRunPass(context,
+                            shImageRoot(d),
+                            shImageTexture(d),
+                            shImageRoot(d)->width,
+                            shImageRoot(d)->height,
+                            shImageTexture(s),
+                            shImageTexture(b),
+                            context->filterChannelMask,
+                            &pass)) {
+    shPaintAccessCleanup(&shadowAccess);
+    shPaintAccessCleanup(&highlightAccess);
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
 
   shImageMarkGpuDataDirty(d);
+  shPaintAccessCleanup(&shadowAccess);
+  shPaintAccessCleanup(&highlightAccess);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -5021,30 +5181,35 @@ VG_API_CALL void vgLookup(VGImage dst, VGImage src,
   SHint width, height;
   GLuint lookupTexture = 0;
   SHImageFilterPass pass;
+  SHImageFilterAccess imageAccess;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  s = shGetImage(context, src);
-  d = shGetImage(context, dst);
-  VG_RETURN_ERR_IF(!s || !d,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!redLUT ||
-                   !greenLUT ||
-                   !blueLUT ||
-                   !alphaLUT,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shImageFilterAccessInit(&imageAccess);
+  if (!shImageFilterAcquireTwoImages(context, dst, src,
+                                     &imageAccess, &d, &s))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!redLUT || !greenLUT || !blueLUT || !alphaLUT) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
-                   shImageIsRenderTarget(d),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (shImageIsRenderTarget(s) || shImageIsRenderTarget(d)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  if (shImageFilterImagesOverlap(d, s)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(!shImageFilterCreateLookupTexture(redLUT,
-                                                     greenLUT,
-                                                     blueLUT,
-                                                     alphaLUT,
-                                                     &lookupTexture),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!shImageFilterCreateLookupTexture(redLUT,
+                                        greenLUT,
+                                        blueLUT,
+                                        alphaLUT,
+                                        &lookupTexture)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
 
   width = SH_MIN(d->width, s->width);
   height = SH_MIN(d->height, s->height);
@@ -5063,11 +5228,13 @@ VG_API_CALL void vgLookup(VGImage dst, VGImage src,
                             context->filterChannelMask,
                             &pass)) {
     glDeleteTextures(1, &lookupTexture);
+    shImageFilterAccessCleanup(&imageAccess);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   }
 
   glDeleteTextures(1, &lookupTexture);
   shImageMarkGpuDataDirty(d);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -5081,30 +5248,39 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
   SHint width, height;
   GLuint lookupTexture = 0;
   SHImageFilterPass pass;
+  SHImageFilterAccess imageAccess;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  s = shGetImage(context, src);
-  d = shGetImage(context, dst);
-  VG_RETURN_ERR_IF(!s || !d,
-                   VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(!lookupTable ||
-                   !shIsAligned(lookupTable, sizeof(VGuint)),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(sourceChannel != VG_RED &&
-                   sourceChannel != VG_GREEN &&
-                   sourceChannel != VG_BLUE &&
-                   sourceChannel != VG_ALPHA,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shImageFilterAccessInit(&imageAccess);
+  if (!shImageFilterAcquireTwoImages(context, dst, src,
+                                     &imageAccess, &d, &s))
+    VG_RETURN_ERR(VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+  if (!lookupTable || !shIsAligned(lookupTable, sizeof(VGuint))) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
+  if (sourceChannel != VG_RED &&
+      sourceChannel != VG_GREEN &&
+      sourceChannel != VG_BLUE &&
+      sourceChannel != VG_ALPHA) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
-                   shImageIsRenderTarget(d),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageFilterImagesOverlap(d, s),
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (shImageIsRenderTarget(s) || shImageIsRenderTarget(d)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  if (shImageFilterImagesOverlap(d, s)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
-  VG_RETURN_ERR_IF(!shImageFilterCreateSingleLookupTexture(lookupTable,
-                                                           &lookupTexture),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!shImageFilterCreateSingleLookupTexture(lookupTable,
+                                              &lookupTexture)) {
+    shImageFilterAccessCleanup(&imageAccess);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
 
   if (shImageFilterIsLuminanceFormat(s->fd.vgformat))
     sourceChannel = VG_RED;
@@ -5144,11 +5320,13 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
                             context->filterChannelMask,
                             &pass)) {
     glDeleteTextures(1, &lookupTexture);
+    shImageFilterAccessCleanup(&imageAccess);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
   }
 
   glDeleteTextures(1, &lookupTexture);
   shImageMarkGpuDataDirty(d);
+  shImageFilterAccessCleanup(&imageAccess);
   VG_RETURN(VG_NO_RETVAL);
 }
 
