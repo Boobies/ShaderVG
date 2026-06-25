@@ -77,6 +77,7 @@ void SHColor_dtor(SHColor *c);
 struct SHImage
 {
   VGHandle handle;
+  SHRecursiveMutex mutex;
   SHuint8 *data;
   SHint width;
   SHint height;
@@ -102,10 +103,31 @@ struct SHImage
   
 };
 
+typedef struct
+{
+  SHImage *images[8];
+  SHint count;
+} SHImageLockSet;
+
+typedef struct
+{
+  SHImage *image;
+  VGboolean retained;
+} SHImageAccess;
+
 void SHImage_ctor(SHImage *i);
 void SHImage_dtor(SHImage *i);
+void shImageLock(SHImage *i);
+void shImageUnlock(SHImage *i);
 void shImageAddRef(SHImage *i);
 void shImageRelease(SHImage *i);
+void shImageAccessInit(SHImageAccess *access);
+void shImageAccessCleanup(SHImageAccess *access);
+void shImageAccessCleanupAll(SHImageAccess *accesses, SHint count);
+void shImageLockSetInit(SHImageLockSet *locks);
+void shImageLockSetAddImage(SHImageLockSet *locks, SHImage *image);
+void shImageLockSetLock(SHImageLockSet *locks);
+void shImageLockSetCleanup(SHImageLockSet *locks);
 void shImageAddEGLPbufferRef(SHImage *i);
 void shImageReleaseEGLPbufferRef(SHImage *i);
 void shImageAddPaintPatternRef(SHImage *i);

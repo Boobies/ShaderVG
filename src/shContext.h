@@ -333,6 +333,15 @@ VGboolean shAcquirePaint(VGContext *c,
                          VGPaint paint,
                          SHPaintAccess *access);
 SHImage* shGetImage(VGContext *c, VGImage image);
+VGboolean shAcquireImages(VGContext *c,
+                          const VGImage *images,
+                          SHImageAccess *accesses,
+                          SHint count,
+                          SHImageLockSet *locks);
+VGboolean shAcquireImage(VGContext *c,
+                         VGImage image,
+                         SHImageAccess *access,
+                         SHImageLockSet *locks);
 SHFont* shGetFont(VGContext *c, VGFont font);
 SHMaskLayer* shGetMaskLayer(VGContext *c, VGMaskLayer maskLayer);
 VGboolean shIsLiveImage(VGContext *c, const SHImage *image);

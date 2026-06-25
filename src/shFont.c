@@ -57,7 +57,12 @@ void shFontReleaseGlyph(SHGlyph *glyph)
   if (glyph->type == SH_GLYPH_PATH)
     shPathRelease(glyph->path);
   else if (glyph->type == SH_GLYPH_IMAGE) {
+    SHImageLockSet imageLocks;
+    shImageLockSetInit(&imageLocks);
+    shImageLockSetAddImage(&imageLocks, glyph->image);
+    shImageLockSetLock(&imageLocks);
     shImageReleaseGlyphRef(glyph->image);
+    shImageLockSetCleanup(&imageLocks);
     shImageRelease(glyph->image);
   }
 
@@ -222,6 +227,7 @@ VG_API_CALL void vgSetGlyphToImage(VGFont font,
   SHFont *f;
   SHGlyph *glyph;
   SHImage *newImage = NULL;
+  SHImageLockSet imageLocks;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
   f = shGetFont(context, font);
@@ -232,8 +238,14 @@ VG_API_CALL void vgSetGlyphToImage(VGFont font,
   if (image != VG_INVALID_HANDLE) {
     newImage = shGetImage(context, image);
     VG_RETURN_ERR_IF(!newImage, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-    VG_RETURN_ERR_IF(shImageIsRenderTarget(newImage),
-                     VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+    shImageLockSetInit(&imageLocks);
+    shImageLockSetAddImage(&imageLocks, newImage);
+    shImageLockSetLock(&imageLocks);
+    if (shImageIsRenderTarget(newImage)) {
+      shImageLockSetCleanup(&imageLocks);
+      VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+    }
+    shImageLockSetCleanup(&imageLocks);
   }
   VG_RETURN_ERR_IF(!shIsAligned(glyphOrigin, sizeof(VGfloat)) ||
                    !shIsAligned(escapement, sizeof(VGfloat)),
@@ -243,8 +255,12 @@ VG_API_CALL void vgSetGlyphToImage(VGFont font,
   VG_RETURN_ERR_IF(!glyph, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
 
   if (image != VG_INVALID_HANDLE) {
+    shImageLockSetInit(&imageLocks);
+    shImageLockSetAddImage(&imageLocks, newImage);
+    shImageLockSetLock(&imageLocks);
     shImageAddRef(newImage);
     shImageAddGlyphRef(newImage);
+    shImageLockSetCleanup(&imageLocks);
   }
 
   shFontReleaseGlyph(glyph);
@@ -282,6 +298,7 @@ static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
                               VGbitfield paintModes)
 {
   SHPaintLockSet paintLocks;
+  SHImageLockSet imageLocks;
   SHMatrix3x3 saved;
 
   if (paintModes == 0 || glyph->type == SH_GLYPH_EMPTY)
@@ -300,6 +317,9 @@ static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
     shPaintLockSetCleanup(&paintLocks);
     shPathUnlock(glyph->path);
   } else if (glyph->type == SH_GLYPH_IMAGE) {
+    shImageLockSetInit(&imageLocks);
+    shImageLockSetAddImage(&imageLocks, glyph->image);
+    shImageLockSetLock(&imageLocks);
     shPaintLockSelected(context, VG_FILL_PATH, &paintLocks);
     SETMATMAT(saved, context->imageTransform);
     SETMATMAT(context->imageTransform, context->glyphTransform);
@@ -309,6 +329,7 @@ static void shDrawGlyphObject(VGContext *context, SHGlyph *glyph,
     shDrawImage(context, glyph->image);
     SETMATMAT(context->imageTransform, saved);
     shPaintLockSetCleanup(&paintLocks);
+    shImageLockSetCleanup(&imageLocks);
   }
 }
 
@@ -329,13 +350,22 @@ static VGboolean shCanBatchImageGlyphs(VGContext *context)
 
 static SHImage* shImageGlyphBatchRoot(SHGlyph *glyph)
 {
+  SHImageLockSet imageLocks;
   SHImage *root;
 
   if (!glyph ||
       glyph->type != SH_GLYPH_IMAGE ||
-      !glyph->image ||
-      shImageIsRenderTarget(glyph->image))
+      !glyph->image)
     return NULL;
+
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, glyph->image);
+  shImageLockSetLock(&imageLocks);
+
+  if (shImageIsRenderTarget(glyph->image)) {
+    shImageLockSetCleanup(&imageLocks);
+    return NULL;
+  }
 
   root = shImageRoot(glyph->image);
   if (!root ||
@@ -343,9 +373,12 @@ static SHImage* shImageGlyphBatchRoot(SHGlyph *glyph)
       root->texwidth <= 0 ||
       root->texheight <= 0 ||
       glyph->image->width <= 0 ||
-      glyph->image->height <= 0)
+      glyph->image->height <= 0) {
+    shImageLockSetCleanup(&imageLocks);
     return NULL;
+  }
 
+  shImageLockSetCleanup(&imageLocks);
   return root;
 }
 
@@ -366,6 +399,7 @@ static void shBuildImageGlyphQuad(VGContext *context,
                                   SHImageQuad *quad)
 {
   SHImage *image = glyph->image;
+  SHImageLockSet imageLocks;
   SHMatrix3x3 transform;
   SHVector2 p0;
   SHVector2 p1;
@@ -375,6 +409,10 @@ static void shBuildImageGlyphQuad(VGContext *context,
   GLfloat u1;
   GLfloat v0;
   GLfloat v1;
+
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, image);
+  shImageLockSetLock(&imageLocks);
 
   SETMATMAT(transform, context->glyphTransform);
   TRANSLATEMATR(transform,
@@ -403,6 +441,7 @@ static void shBuildImageGlyphQuad(VGContext *context,
   shSetImageQuadVertex(&quad->vertices[3], p2, u0, v1);
   shSetImageQuadVertex(&quad->vertices[4], p1, u1, v0);
   shSetImageQuadVertex(&quad->vertices[5], p3, u1, v1);
+  shImageLockSetCleanup(&imageLocks);
 }
 
 static void shFlushImageGlyphBatch(VGContext *context,
@@ -412,10 +451,15 @@ static void shFlushImageGlyphBatch(VGContext *context,
 {
   if (*batchCount > 0 && *batchRoot) {
     SHPaintLockSet paintLocks;
+    SHImageLockSet imageLocks;
+    shImageLockSetInit(&imageLocks);
+    shImageLockSetAddImage(&imageLocks, *batchRoot);
+    shImageLockSetLock(&imageLocks);
     shPaintLockSelected(context, VG_FILL_PATH, &paintLocks);
     shDrawImageQuadBatch(context, (*batchRoot)->texture,
                          batchQuads, *batchCount);
     shPaintLockSetCleanup(&paintLocks);
+    shImageLockSetCleanup(&imageLocks);
   }
 
   *batchRoot = NULL;

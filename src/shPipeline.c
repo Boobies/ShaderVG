@@ -365,11 +365,17 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
     
   case VG_PAINT_TYPE_PATTERN:
     if (p->pattern) {
+      SHImageLockSet imageLocks;
+      shImageLockSetInit(&imageLocks);
+      shImageLockSetAddImage(&imageLocks, p->pattern);
+      shImageLockSetLock(&imageLocks);
       if (shImageIsRenderTarget(p->pattern)) {
+        shImageLockSetCleanup(&imageLocks);
         shSetError(c, VG_IMAGE_IN_USE_ERROR);
         return;
       }
       shLoadPatternMesh(p, mode, VG_MATRIX_PATH_USER_TO_SURFACE);
+      shImageLockSetCleanup(&imageLocks);
       break;
     }/* else behave as a color paint */
   
@@ -1909,8 +1915,26 @@ void shDrawImage(VGContext *context, SHImage *i)
               shLoadLinearGradientMesh(fill, VG_FILL_PATH, VG_MATRIX_IMAGE_USER_TO_SURFACE);
               break;
           case VG_PAINT_TYPE_PATTERN:
-              shLoadPatternMesh(fill, VG_FILL_PATH, VG_MATRIX_IMAGE_USER_TO_SURFACE);
-              break;
+              if (fill->pattern) {
+                  SHImageLockSet imageLocks;
+                  shImageLockSetInit(&imageLocks);
+                  shImageLockSetAddImage(&imageLocks, fill->pattern);
+                  shImageLockSetLock(&imageLocks);
+                  if (shImageIsRenderTarget(fill->pattern)) {
+                      shImageLockSetCleanup(&imageLocks);
+                      glDisableVertexAttribArray(context->locationDraw.textureUV);
+                      glDisable(GL_BLEND);
+                      if (context->scissoring == VG_TRUE)
+                        glDisable(GL_SCISSOR_TEST);
+                      shRestoreVertexState(&vertexState);
+                      shSetError(context, VG_IMAGE_IN_USE_ERROR);
+                      return;
+                  }
+                  shLoadPatternMesh(fill, VG_FILL_PATH, VG_MATRIX_IMAGE_USER_TO_SURFACE);
+                  shImageLockSetCleanup(&imageLocks);
+                  break;
+              }
+              /* fall through */
           default:
           case VG_PAINT_TYPE_COLOR:
               shLoadOneColorMesh(fill);
@@ -1944,6 +1968,7 @@ void shDrawImage(VGContext *context, SHImage *i)
 VG_API_CALL void vgDrawImage(VGImage image)
 {
   SHPaintLockSet paintLocks;
+  SHImageLockSet imageLocks;
   SHImage *i;
   VG_GETCONTEXT(VG_NO_RETVAL);
 
@@ -1951,9 +1976,13 @@ VG_API_CALL void vgDrawImage(VGImage image)
   VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, i);
+  shImageLockSetLock(&imageLocks);
   shPaintLockSelected(context, VG_FILL_PATH, &paintLocks);
   shDrawImage(context, i);
   shPaintLockSetCleanup(&paintLocks);
+  shImageLockSetCleanup(&imageLocks);
 
   VG_RETURN(VG_NO_RETVAL);
 }

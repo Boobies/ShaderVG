@@ -723,13 +723,23 @@ static EGLBoolean shNormalizeImageSurface(SHEGLSurface *surface)
   if (!surface || surface->type != SH_EGL_SURFACE_OPENVG_IMAGE)
     return EGL_TRUE;
 
-  if (!shImageNormalizeSurfaceData(surface->vgContext,
-                                   surface->vgImage)) {
+  {
+    SHImageLockSet imageLocks;
+    EGLBoolean result;
+
+    shImageLockSetInit(&imageLocks);
+    shImageLockSetAddImage(&imageLocks, surface->vgImage);
+    shImageLockSetLock(&imageLocks);
+    result = shImageNormalizeSurfaceData(surface->vgContext,
+                                         surface->vgImage);
+    shImageLockSetCleanup(&imageLocks);
+
+    if (result)
+      return EGL_TRUE;
+
     shSetEGLError(EGL_BAD_ALLOC);
     return EGL_FALSE;
   }
-
-  return EGL_TRUE;
 }
 
 static EGLint *shTranslateConfigAttribs(const EGLint *attribs,
@@ -1136,6 +1146,7 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
 
   {
     SHContextLock vgLock;
+    SHImageLockSet imageLocks;
     VGContext *vgContext = shAcquireCurrentContext(&vgLock);
 
     if (!vgContext || vgContext != t_currentContext->vgContext) {
@@ -1152,15 +1163,21 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
       SH_EGL_RETURN(EGL_NO_SURFACE);
     }
 
+    shImageLockSetInit(&imageLocks);
+    shImageLockSetAddImage(&imageLocks, image);
+    shImageLockSetLock(&imageLocks);
+
     if (shImageIsEGLPbufferBound(image) ||
         shImageIsRenderTarget(image)) {
       shSetEGLError(EGL_BAD_ACCESS);
+      shImageLockSetCleanup(&imageLocks);
       shContextLockCleanup(&vgLock);
       SH_EGL_RETURN(EGL_NO_SURFACE);
     }
 
     if (!shImageIsRenderTargetEligible(image)) {
       shSetEGLError(EGL_BAD_MATCH);
+      shImageLockSetCleanup(&imageLocks);
       shContextLockCleanup(&vgLock);
       SH_EGL_RETURN(EGL_NO_SURFACE);
     }
@@ -1170,12 +1187,14 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
                                      &textureTarget,
                                      &mipmapTexture))
     {
+      shImageLockSetCleanup(&imageLocks);
       shContextLockCleanup(&vgLock);
       SH_EGL_RETURN(EGL_NO_SURFACE);
     }
 
     if (!shConfigMatchesImage(display, config, image))
     {
+      shImageLockSetCleanup(&imageLocks);
       shContextLockCleanup(&vgLock);
       SH_EGL_RETURN(EGL_NO_SURFACE);
     }
@@ -1191,6 +1210,7 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
                                              hiddenAttribs);
     if (realSurface == EGL_NO_SURFACE)
     {
+      shImageLockSetCleanup(&imageLocks);
       shContextLockCleanup(&vgLock);
       SH_EGL_RETURN(EGL_NO_SURFACE);
     }
@@ -1198,6 +1218,7 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
     if (!shCreateImageFramebuffer(image, &framebuffer, &stencil)) {
       g_egl.DestroySurface(display->realDisplay, realSurface);
       shSetEGLError(EGL_BAD_ALLOC);
+      shImageLockSetCleanup(&imageLocks);
       shContextLockCleanup(&vgLock);
       SH_EGL_RETURN(EGL_NO_SURFACE);
     }
@@ -1210,6 +1231,7 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
         glDeleteRenderbuffers(1, &stencil);
       g_egl.DestroySurface(display->realDisplay, realSurface);
       shSetEGLError(EGL_BAD_ALLOC);
+      shImageLockSetCleanup(&imageLocks);
       shContextLockCleanup(&vgLock);
       SH_EGL_RETURN(EGL_NO_SURFACE);
     }
@@ -1233,6 +1255,7 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
     surface->mipmapTexture = mipmapTexture;
     surface->vgColorspace = shImageVGColorspace(image);
     surface->vgAlphaFormat = shImageVGAlphaFormat(image);
+    shImageLockSetCleanup(&imageLocks);
     shContextLockCleanup(&vgLock);
   }
 

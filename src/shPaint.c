@@ -162,7 +162,12 @@ void SHPaint_dtor(SHPaint *p)
   SH_DEINITOBJ(SHStopArray, p->stops);
   
   if (p->pattern) {
+    SHImageLockSet imageLocks;
+    shImageLockSetInit(&imageLocks);
+    shImageLockSetAddImage(&imageLocks, p->pattern);
+    shImageLockSetLock(&imageLocks);
     shImageReleasePaintPatternRef(p->pattern);
+    shImageLockSetCleanup(&imageLocks);
     shImageRelease(p->pattern);
     p->pattern = NULL;
   }
@@ -462,6 +467,8 @@ VG_API_CALL void vgPaintPattern(VGPaint paint, VGImage pattern)
 {
   SHPaint *p;
   SHImage *image;
+  SHImage *oldImage;
+  SHImageLockSet imageLocks;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if handle valid */
@@ -474,20 +481,32 @@ VG_API_CALL void vgPaintPattern(VGPaint paint, VGImage pattern)
   VG_RETURN_ERR_IF(!image,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(image),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, image);
+  shImageLockSetLock(&imageLocks);
+  if (shImageIsRenderTarget(image)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  shImageLockSetCleanup(&imageLocks);
   
   /* Set pattern image */
   shPaintLock(p);
-  if (p->pattern) {
-    shImageReleasePaintPatternRef(p->pattern);
-    shImageRelease(p->pattern);
-  }
+  oldImage = p->pattern;
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, oldImage);
+  shImageLockSetAddImage(&imageLocks, image);
+  shImageLockSetLock(&imageLocks);
+  if (oldImage)
+    shImageReleasePaintPatternRef(oldImage);
 
   shImageAddRef(image);
   shImageAddPaintPatternRef(image);
   p->pattern = image;
+  shImageLockSetCleanup(&imageLocks);
   shPaintUnlock(p);
+  if (oldImage)
+    shImageRelease(oldImage);
   
   VG_RETURN(VG_NO_RETVAL);
 }

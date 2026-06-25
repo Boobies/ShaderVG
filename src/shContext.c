@@ -964,8 +964,13 @@ void shResizeCurrentSurface(VGint width, VGint height)
 void shMarkRenderTargetDirty(VGContext *context)
 {
   if (context && context->renderTargetImage) {
+    SHImageLockSet imageLocks;
+    shImageLockSetInit(&imageLocks);
+    shImageLockSetAddImage(&imageLocks, context->renderTargetImage);
+    shImageLockSetLock(&imageLocks);
     shImageMarkGpuDataDirty(context->renderTargetImage);
     shImageMarkSurfaceDataPremultiplied(context->renderTargetImage);
+    shImageLockSetCleanup(&imageLocks);
   }
 }
 
@@ -1354,6 +1359,56 @@ VGboolean shAcquirePaint(VGContext *c,
 SHImage* shGetImage(VGContext *c, VGImage image)
 {
   return (SHImage*)shGetResource(c, (VGHandle)image, SH_RESOURCE_IMAGE);
+}
+
+VGboolean shAcquireImages(VGContext *c,
+                          const VGImage *images,
+                          SHImageAccess *accesses,
+                          SHint count,
+                          SHImageLockSet *locks)
+{
+  enum { SH_MAX_ACQUIRED_IMAGES = 3 };
+  SHint i;
+
+  if (!images || !accesses || !locks ||
+      count <= 0 || count > SH_MAX_ACQUIRED_IMAGES)
+    return VG_FALSE;
+
+  for (i=0; i<count; ++i)
+    shImageAccessInit(&accesses[i]);
+  shImageLockSetInit(locks);
+
+  if (!c || !c->resources)
+    return VG_FALSE;
+
+  shLockResourceGroup(c->resources);
+  for (i=0; i<count; ++i) {
+    accesses[i].image = shGetImage(c, images[i]);
+    if (!accesses[i].image)
+      break;
+
+    shImageAddRef(accesses[i].image);
+    accesses[i].retained = VG_TRUE;
+  }
+  shUnlockResourceGroup(c->resources);
+
+  if (i != count) {
+    shImageAccessCleanupAll(accesses, count);
+    return VG_FALSE;
+  }
+
+  for (i=0; i<count; ++i)
+    shImageLockSetAddImage(locks, accesses[i].image);
+  shImageLockSetLock(locks);
+  return VG_TRUE;
+}
+
+VGboolean shAcquireImage(VGContext *c,
+                         VGImage image,
+                         SHImageAccess *access,
+                         SHImageLockSet *locks)
+{
+  return shAcquireImages(c, &image, access, 1, locks);
 }
 
 SHFont* shGetFont(VGContext *c, VGFont font)

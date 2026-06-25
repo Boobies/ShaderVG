@@ -904,6 +904,138 @@ static int exercise_paint_object_churn(int workerId, int iterations)
   return status;
 }
 
+static void fill_image_churn_pixels(VGubyte *pixels,
+                                    int width,
+                                    int height,
+                                    int workerId,
+                                    int iteration)
+{
+  int x;
+  int y;
+
+  for (y = 0; y < height; ++y) {
+    for (x = 0; x < width; ++x) {
+      int offset = (y * width + x) * 4;
+      pixels[offset + 0] = (VGubyte)(20 + (workerId * 37 + iteration * 5 + x * 11) % 220);
+      pixels[offset + 1] = (VGubyte)(30 + (workerId * 19 + iteration * 7 + y * 13) % 210);
+      pixels[offset + 2] = (VGubyte)(40 + (workerId * 23 + iteration * 3 + x * y) % 200);
+      pixels[offset + 3] = 255;
+    }
+  }
+}
+
+static int exercise_image_object_churn(int workerId, int iterations)
+{
+  enum { CHILD_SIZE = 4 };
+  VGubyte pixels[CHILD_SIZE * CHILD_SIZE * 4];
+  VGubyte readback[CHILD_SIZE * CHILD_SIZE * 4];
+  VGImage parent = VG_INVALID_HANDLE;
+  VGImage child = VG_INVALID_HANDLE;
+  VGImage copy = VG_INVALID_HANDLE;
+  int i;
+  int status = 0;
+
+  parent = create_colored_image(workerId, 3000);
+  if (parent == VG_INVALID_HANDLE ||
+      expect_vg_no_error("thread test could not create image churn parent")) {
+    status = 1;
+  }
+
+  if (!status) {
+    child = vgChildImage(parent, 2, 2, CHILD_SIZE, CHILD_SIZE);
+    if (child == VG_INVALID_HANDLE ||
+        expect_vg_no_error("thread test could not create image churn child"))
+      status = 1;
+  }
+
+  if (!status) {
+    copy = vgCreateImage(VG_sRGBA_8888,
+                         THREAD_IMAGE_SIZE,
+                         THREAD_IMAGE_SIZE,
+                         VG_IMAGE_QUALITY_BETTER);
+    if (copy == VG_INVALID_HANDLE ||
+        expect_vg_no_error("thread test could not create image churn copy"))
+      status = 1;
+  }
+
+  if (!status) {
+    vgDestroyImage(parent);
+    if (expect_vg_no_error("thread test could not destroy image churn parent"))
+      status = 1;
+    else
+      parent = VG_INVALID_HANDLE;
+  }
+
+  if (!status && vgGetParent(child) != child) {
+    fprintf(stderr, "thread test child image kept a destroyed public parent\n");
+    status = 1;
+  } else if (!status &&
+             expect_vg_no_error("thread test could not query image churn parent")) {
+    status = 1;
+  }
+
+  for (i = 0; !status && i < iterations; ++i) {
+    fill_image_churn_pixels(pixels, CHILD_SIZE, CHILD_SIZE, workerId, i);
+
+    vgImageSubData(child,
+                   pixels,
+                   CHILD_SIZE * 4,
+                   VG_sRGBA_8888,
+                   0,
+                   0,
+                   CHILD_SIZE,
+                   CHILD_SIZE);
+    vgGetImageSubData(child,
+                      readback,
+                      CHILD_SIZE * 4,
+                      VG_sRGBA_8888,
+                      0,
+                      0,
+                      CHILD_SIZE,
+                      CHILD_SIZE);
+    vgCopyImage(copy, 1, 1, child, 0, 0,
+                CHILD_SIZE, CHILD_SIZE, VG_FALSE);
+    vgClearImage(copy, (i % 3), (i % 3), 2, 2);
+
+    if (reset_test_state()) {
+      status = 1;
+      break;
+    }
+
+    vgDrawImage(child);
+    vgSetPixels(0, 0, child, 0, 0, CHILD_SIZE, CHILD_SIZE);
+    vgGetPixels(copy, 0, 0, 0, 0, CHILD_SIZE, CHILD_SIZE);
+
+    if ((i & 15) == 0)
+      vgFinish();
+
+    if (expect_vg_no_error("thread test image churn failed")) {
+      status = 1;
+      break;
+    }
+  }
+
+  if (copy != VG_INVALID_HANDLE) {
+    vgDestroyImage(copy);
+    if (expect_vg_no_error("thread test could not destroy image churn copy"))
+      status = 1;
+  }
+
+  if (child != VG_INVALID_HANDLE) {
+    vgDestroyImage(child);
+    if (expect_vg_no_error("thread test could not destroy image churn child"))
+      status = 1;
+  }
+
+  if (parent != VG_INVALID_HANDLE) {
+    vgDestroyImage(parent);
+    if (expect_vg_no_error("thread test could not clean up image churn parent"))
+      status = 1;
+  }
+
+  return status;
+}
+
 static int exercise_resources(int iterations)
 {
   int i;
@@ -1139,6 +1271,32 @@ static void *paint_object_churn_worker(void *arg)
                                  args->context);
   if (!args->status)
     args->status = exercise_paint_object_churn(args->workerId,
+                                               args->iterations);
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
+static void *image_object_churn_worker(void *arg)
+{
+  ThreadArgs *args = (ThreadArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status)
+    args->status = exercise_image_object_churn(args->workerId,
                                                args->iterations);
 
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
@@ -1468,7 +1626,7 @@ static int run_shared_context_stress(void)
 
 static int run_shared_resource_churn(const ThreadTestOptions *options)
 {
-  int threadCount = options->sharedWorkers * 4;
+  int threadCount = options->sharedWorkers * 5;
   TestEGL base = {
     EGL_NO_DISPLAY,
     0,
@@ -1556,6 +1714,23 @@ static int run_shared_resource_churn(const ThreadTestOptions *options)
     args[created].config = base.config;
     args[created].context = base.context;
     args[created].workerId = options->sharedWorkers * 3 + i + 1;
+    args[created].iterations = options->sharedIterations;
+    if (pthread_create(&threads[created], NULL,
+                       image_object_churn_worker,
+                       &args[created]) != 0) {
+      fprintf(stderr, "thread test could not create image churn worker\n");
+      status = 1;
+      break;
+    }
+    ++created;
+  }
+
+  for (i = 0; !status && i < options->sharedWorkers; ++i) {
+    args[created].status = 1;
+    args[created].display = base.display;
+    args[created].config = base.config;
+    args[created].context = base.context;
+    args[created].workerId = options->sharedWorkers * 4 + i + 1;
     args[created].iterations = options->sharedIterations;
     if (pthread_create(&threads[created], NULL,
                        context_only_churn_worker,

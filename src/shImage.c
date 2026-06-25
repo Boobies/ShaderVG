@@ -596,6 +596,7 @@ void SHColor_dtor(SHColor *c) {
 void SHImage_ctor(SHImage *i)
 {
   i->handle = VG_INVALID_HANDLE;
+  shRecursiveMutexInit(&i->mutex);
   i->data = NULL;
   i->width = 0;
   i->height = 0;
@@ -634,6 +635,7 @@ void SHImage_dtor(SHImage *i)
   shAtomicIntDestroy(&i->renderTargetRefs);
   shAtomicIntDestroy(&i->eglPbufferRefs);
   shAtomicIntDestroy(&i->refCount);
+  shRecursiveMutexDestroy(&i->mutex);
 }
 
 SHImage *shImageRoot(SHImage *i)
@@ -675,6 +677,18 @@ VGboolean shImageOwnsStorage(const SHImage *i)
   return (i && i->ownsStorage) ? VG_TRUE : VG_FALSE;
 }
 
+void shImageLock(SHImage *i)
+{
+  if (i)
+    shRecursiveMutexLock(&i->mutex);
+}
+
+void shImageUnlock(SHImage *i)
+{
+  if (i)
+    shRecursiveMutexUnlock(&i->mutex);
+}
+
 void shImageAddRef(SHImage *i)
 {
   if (i)
@@ -690,25 +704,143 @@ void shImageRelease(SHImage *i)
     SH_DELETEOBJ(SHImage, i);
 }
 
+void shImageAccessInit(SHImageAccess *access)
+{
+  if (!access)
+    return;
+
+  access->image = NULL;
+  access->retained = VG_FALSE;
+}
+
+void shImageAccessCleanup(SHImageAccess *access)
+{
+  if (!access)
+    return;
+
+  if (access->retained) {
+    shImageRelease(access->image);
+    access->retained = VG_FALSE;
+  }
+
+  access->image = NULL;
+}
+
+void shImageAccessCleanupAll(SHImageAccess *accesses, SHint count)
+{
+  SHint i;
+
+  if (!accesses || count <= 0)
+    return;
+
+  for (i=0; i<count; ++i)
+    shImageAccessCleanup(&accesses[i]);
+}
+
+void shImageLockSetInit(SHImageLockSet *locks)
+{
+  SHint i;
+
+  if (!locks)
+    return;
+
+  for (i=0; i<(SHint)(sizeof(locks->images) / sizeof(locks->images[0])); ++i)
+    locks->images[i] = NULL;
+  locks->count = 0;
+}
+
+static void shImageLockSetAddRaw(SHImageLockSet *locks, SHImage *image)
+{
+  SHint i;
+
+  if (!locks || !image)
+    return;
+
+  for (i=0; i<locks->count; ++i)
+    if (locks->images[i] == image)
+      return;
+
+  if (locks->count < (SHint)(sizeof(locks->images) / sizeof(locks->images[0])))
+    locks->images[locks->count++] = image;
+}
+
+void shImageLockSetAddImage(SHImageLockSet *locks, SHImage *image)
+{
+  SHImage *root;
+
+  if (!locks || !image)
+    return;
+
+  root = shImageRoot(image);
+  shImageLockSetAddRaw(locks, image);
+  if (root != image)
+    shImageLockSetAddRaw(locks, root);
+}
+
+void shImageLockSetLock(SHImageLockSet *locks)
+{
+  SHImage *tmp;
+  SHint i;
+  SHint j;
+
+  if (!locks)
+    return;
+
+  for (i=1; i<locks->count; ++i) {
+    tmp = locks->images[i];
+    j = i - 1;
+    while (j >= 0 && (uintptr_t)locks->images[j] > (uintptr_t)tmp) {
+      locks->images[j + 1] = locks->images[j];
+      --j;
+    }
+    locks->images[j + 1] = tmp;
+  }
+
+  for (i=0; i<locks->count; ++i)
+    shImageLock(locks->images[i]);
+}
+
+void shImageLockSetCleanup(SHImageLockSet *locks)
+{
+  if (!locks)
+    return;
+
+  while (locks->count > 0) {
+    --locks->count;
+    shImageUnlock(locks->images[locks->count]);
+    locks->images[locks->count] = NULL;
+  }
+}
+
 void shImageAddEGLPbufferRef(SHImage *i)
 {
   SHImage *root = shImageRoot(i);
+  SHImageLockSet imageLocks;
 
   if (!root)
     return;
 
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, root);
+  shImageLockSetLock(&imageLocks);
   shAtomicIntIncrement(&root->eglPbufferRefs);
   shImageAddRef(root);
+  shImageLockSetCleanup(&imageLocks);
 }
 
 void shImageReleaseEGLPbufferRef(SHImage *i)
 {
   SHImage *root = shImageRoot(i);
+  SHImageLockSet imageLocks;
 
   if (!root)
     return;
 
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, root);
+  shImageLockSetLock(&imageLocks);
   shAtomicIntDecrementIfPositive(&root->eglPbufferRefs);
+  shImageLockSetCleanup(&imageLocks);
   shImageRelease(root);
 }
 
@@ -1058,6 +1190,7 @@ VG_API_CALL void vgDestroyImage(VGImage image)
 {
   SHint index;
   SHImage *i;
+  SHImageLockSet imageLocks;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   /* Check if valid resource */
@@ -1066,8 +1199,12 @@ VG_API_CALL void vgDestroyImage(VGImage image)
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
   
   /* Remove the public handle; retained font glyphs may keep the object alive. */
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, i);
+  shImageLockSetLock(&imageLocks);
   shUnregisterResource(context, image, SH_RESOURCE_IMAGE, i);
   shImageArrayRemoveAt(&context->resources->images, index);
+  shImageLockSetCleanup(&imageLocks);
   shImageRelease(i);
   
   VG_RETURN(VG_NO_RETVAL);
@@ -1107,20 +1244,32 @@ VG_API_CALL void vgClearImage(VGImage image,
 {
   SHImage *i;
   SHColor clear;
+  SHImageLockSet imageLocks;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   i = shGetImage(context, image);
   VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(width <= 0 || height <= 0,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, i);
+  shImageLockSetLock(&imageLocks);
+
+  if (shImageIsRenderTarget(i)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+  if (width <= 0 || height <= 0) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
   clear = context->clearColor;
-  VG_RETURN_ERR_IF(!shTryDirectClearImage(i, &clear, x, y, width, height),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!shTryDirectClearImage(i, &clear, x, y, width, height)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+  shImageLockSetCleanup(&imageLocks);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2626,13 +2775,12 @@ VG_API_CALL void vgImageSubData(VGImage image,
                                 VGint x, VGint y, VGint width, VGint height)
 {
   SHImage *i;
+  SHImageLockSet imageLocks;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   i = shGetImage(context, image);
   VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
   /* Reject invalid formats */
   VG_RETURN_ERR_IF(!shIsValidImageFormat(dataFormat),
@@ -2655,14 +2803,28 @@ VG_API_CALL void vgImageSubData(VGImage image,
                                                   NULL, NULL),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  if (shTryDirectImageSubData(i, data, dataStride, dataFormat,
-                              x, y, width, height))
-    VG_RETURN(VG_NO_RETVAL);
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, i);
+  shImageLockSetLock(&imageLocks);
 
-  VG_RETURN_ERR_IF(!shTryConvertedImageSubData(i, data, dataStride,
-                                               dataFormat,
-                                               x, y, width, height),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (shImageIsRenderTarget(i)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+
+  if (shTryDirectImageSubData(i, data, dataStride, dataFormat,
+                              x, y, width, height)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN(VG_NO_RETVAL);
+  }
+
+  if (!shTryConvertedImageSubData(i, data, dataStride,
+                                  dataFormat,
+                                  x, y, width, height)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+  shImageLockSetCleanup(&imageLocks);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2679,13 +2841,12 @@ VG_API_CALL void vgGetImageSubData(VGImage image,
                                    VGint width, VGint height)
 {
   SHImage *i;
+  SHImageLockSet imageLocks;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   i = shGetImage(context, image);
   VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   
   /* Reject invalid formats */
   VG_RETURN_ERR_IF(!shIsValidImageFormat(dataFormat),
@@ -2708,14 +2869,28 @@ VG_API_CALL void vgGetImageSubData(VGImage image,
                                                   NULL, NULL),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  if (shTryDirectGetImageSubData(i, data, dataStride, dataFormat,
-                                 x, y, width, height))
-    VG_RETURN(VG_NO_RETVAL);
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, i);
+  shImageLockSetLock(&imageLocks);
 
-  VG_RETURN_ERR_IF(!shTryConvertedGetImageSubData(i, data, dataStride,
-                                                  dataFormat,
-                                                  x, y, width, height),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (shImageIsRenderTarget(i)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+
+  if (shTryDirectGetImageSubData(i, data, dataStride, dataFormat,
+                                 x, y, width, height)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN(VG_NO_RETVAL);
+  }
+
+  if (!shTryConvertedGetImageSubData(i, data, dataStride,
+                                     dataFormat,
+                                     x, y, width, height)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+  shImageLockSetCleanup(&imageLocks);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2731,6 +2906,7 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
                              VGboolean dither)
 {
   SHImage *s, *d;
+  SHImageLockSet imageLocks;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   
@@ -2739,15 +2915,25 @@ VG_API_CALL void vgCopyImage(VGImage dst, VGint dx, VGint dy,
   VG_RETURN_ERR_IF(!s || !d,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(s) ||
-                   shImageIsRenderTarget(d),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shTryTransferCopyImage(context, d, dx, dy, s, sx, sy,
-                                           width, height),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, s);
+  shImageLockSetAddImage(&imageLocks, d);
+  shImageLockSetLock(&imageLocks);
+
+  if (shImageIsRenderTarget(s) || shImageIsRenderTarget(d)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+
+  if (!shTryTransferCopyImage(context, d, dx, dy, s, sx, sy,
+                              width, height)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+  shImageLockSetCleanup(&imageLocks);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2762,6 +2948,7 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
                              VGint width, VGint height)
 {
   SHImage *i;
+  SHImageLockSet imageLocks;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   
@@ -2769,14 +2956,24 @@ VG_API_CALL void vgSetPixels(VGint dx, VGint dy,
   VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shTryDirectSetPixels(context, i, dx, dy, sx, sy,
-                                         width, height),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, i);
+  shImageLockSetLock(&imageLocks);
+
+  if (shImageIsRenderTarget(i)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+
+  if (!shTryDirectSetPixels(context, i, dx, dy, sx, sy,
+                            width, height)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+  shImageLockSetCleanup(&imageLocks);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2835,20 +3032,31 @@ VG_API_CALL void vgGetPixels(VGImage dst, VGint dx, VGint dy,
                              VGint width, VGint height)
 {
   SHImage *i;
+  SHImageLockSet imageLocks;
   VG_GETCONTEXT(VG_NO_RETVAL);
   
   i = shGetImage(context, dst);
   VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF(!shTryTransferGetPixels(context, i, dx, dy, sx, sy,
-                                           width, height),
-                   VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, i);
+  shImageLockSetLock(&imageLocks);
+
+  if (shImageIsRenderTarget(i)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
+
+  if (!shTryTransferGetPixels(context, i, dx, dy, sx, sy,
+                              width, height)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
+  shImageLockSetCleanup(&imageLocks);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -2965,6 +3173,7 @@ VG_API_CALL VGImage vgChildImage(VGImage parent,
   SHImage *parentImage;
   SHImage *rootImage;
   SHImage *child = NULL;
+  SHImageLockSet imageLocks;
   long long right;
   long long top;
   VG_GETCONTEXT(VG_INVALID_HANDLE);
@@ -2973,21 +3182,32 @@ VG_API_CALL VGImage vgChildImage(VGImage parent,
   VG_RETURN_ERR_IF(!parentImage,
                    VG_BAD_HANDLE_ERROR, VG_INVALID_HANDLE);
 
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(parentImage),
-                   VG_IMAGE_IN_USE_ERROR, VG_INVALID_HANDLE);
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, parentImage);
+  shImageLockSetLock(&imageLocks);
+
+  if (shImageIsRenderTarget(parentImage)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_INVALID_HANDLE);
+  }
 
   right = (long long)x + (long long)width;
   top = (long long)y + (long long)height;
-  VG_RETURN_ERR_IF(x < 0 || y < 0 ||
-                   width <= 0 || height <= 0 ||
-                   right > parentImage->width ||
-                   top > parentImage->height,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
+  if (x < 0 || y < 0 ||
+      width <= 0 || height <= 0 ||
+      right > parentImage->width ||
+      top > parentImage->height) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_INVALID_HANDLE);
+  }
 
   rootImage = shImageRoot(parentImage);
 
   SH_NEWOBJ(SHImage, child);
-  VG_RETURN_ERR_IF(!child, VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  if (!child) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
+  }
 
   child->data = rootImage->data;
   child->width = width;
@@ -3006,6 +3226,7 @@ VG_API_CALL VGImage vgChildImage(VGImage parent,
   shImageAddRef(parentImage);
 
   if (!shImageArrayPushBack(&context->resources->images, child)) {
+    shImageLockSetCleanup(&imageLocks);
     SH_DELETEOBJ(SHImage, child);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
@@ -3013,10 +3234,12 @@ VG_API_CALL VGImage vgChildImage(VGImage parent,
   if (shRegisterResource(context, SH_RESOURCE_IMAGE, child) == VG_INVALID_HANDLE) {
     shImageArrayRemoveAt(&context->resources->images,
                          context->resources->images.size - 1);
+    shImageLockSetCleanup(&imageLocks);
     SH_DELETEOBJ(SHImage, child);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_INVALID_HANDLE);
   }
 
+  shImageLockSetCleanup(&imageLocks);
   VG_RETURN((VGImage)child->handle);
 }
 
@@ -3024,17 +3247,25 @@ VG_API_CALL VGImage vgGetParent(VGImage image)
 {
   SHImage *i;
   SHImage *parent;
+  VGImage result;
+  SHImageLockSet imageLocks;
   VG_GETCONTEXT(VG_INVALID_HANDLE);
 
   i = shGetImage(context, image);
   VG_RETURN_ERR_IF(!i,
                    VG_BAD_HANDLE_ERROR, VG_INVALID_HANDLE);
 
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, i);
+  shImageLockSetLock(&imageLocks);
+
   parent = i->parent;
   while (parent && !shIsLiveImage(context, parent))
     parent = parent->parent;
 
-  VG_RETURN((VGImage)(parent ? parent->handle : i->handle));
+  result = (VGImage)(parent ? parent->handle : i->handle);
+  shImageLockSetCleanup(&imageLocks);
+  VG_RETURN(result);
 }
 
 static VGboolean shImageFilterImagesOverlap(const SHImage *dst,
@@ -4923,6 +5154,7 @@ VG_API_CALL void vgLookupSingle(VGImage dst, VGImage src,
 
 VG_API_CALL void vgBindImageSH(VGImage image, VGImageUnitSH unit){
   SHImage *i;
+  SHImageLockSet imageLocks;
 
   VG_GETCONTEXT(VG_NO_RETVAL);
   VG_RETURN_ERR_IF(unit < VG_IMAGE_UNIT_OFFSET_SH,
@@ -4931,8 +5163,15 @@ VG_API_CALL void vgBindImageSH(VGImage image, VGImageUnitSH unit){
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
   i = shGetImage(context, image);
   VG_RETURN_ERR_IF(!i, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-  VG_RETURN_ERR_IF(shImageIsRenderTarget(i),
-                   VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+
+  shImageLockSetInit(&imageLocks);
+  shImageLockSetAddImage(&imageLocks, i);
+  shImageLockSetLock(&imageLocks);
+
+  if (shImageIsRenderTarget(i)) {
+    shImageLockSetCleanup(&imageLocks);
+    VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+  }
   
   glActiveTexture(GL_TEXTURE0 + unit);
 
@@ -4944,5 +5183,6 @@ VG_API_CALL void vgBindImageSH(VGImage image, VGImageUnitSH unit){
 
   glEnable(GL_TEXTURE_2D);
   GL_CHECK_ERROR;
+  shImageLockSetCleanup(&imageLocks);
   VG_RETURN(VG_NO_RETVAL);
 }
