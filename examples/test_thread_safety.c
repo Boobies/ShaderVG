@@ -16,6 +16,9 @@
 #include <unistd.h>
 #endif
 
+extern int shGetThreadDrawTrace(void);
+extern const char *shDrawTraceName(int phase);
+
 typedef struct
 {
   EGLDisplay display;
@@ -36,6 +39,8 @@ typedef struct
   int workerId;
   int iterations;
   int churnLane;
+  int paintProfile;
+  int paintDrawMode;
   int verbose;
   const char *workerName;
 } ThreadArgs;
@@ -84,6 +89,8 @@ typedef struct
   int testCase;
   int churnLane;
   int churnSchedule;
+  int paintProfile;
+  int paintDrawMode;
   int verbose;
 } ThreadTestOptions;
 
@@ -135,6 +142,93 @@ enum {
 enum {
   THREAD_CHURN_SCHEDULE_SEQUENTIAL,
   THREAD_CHURN_SCHEDULE_COMBINED
+};
+
+enum {
+  THREAD_PAINT_PROFILE_FULL,
+  THREAD_PAINT_PROFILE_COLOR_ONLY,
+  THREAD_PAINT_PROFILE_RAMP_THEN_COLOR,
+  THREAD_PAINT_PROFILE_RAMP_THEN_COLOR_NO_IMAGE,
+  THREAD_PAINT_PROFILE_IMAGE_THEN_COLOR
+};
+
+enum {
+  THREAD_PAINT_DRAW_FILL_STROKE,
+  THREAD_PAINT_DRAW_FILL,
+  THREAD_PAINT_DRAW_STROKE,
+  THREAD_PAINT_DRAW_SPLIT
+};
+
+enum {
+  THREAD_PHASE_NONE,
+  THREAD_PHASE_WORKER_START,
+  THREAD_PHASE_WORKER_END,
+  THREAD_PHASE_CHURN_EGL_INIT,
+  THREAD_PHASE_CHURN_BODY,
+  THREAD_PHASE_CHURN_EGL_CLEANUP,
+  THREAD_PHASE_SELECTED_PAINT_SELECT,
+  THREAD_PHASE_SELECTED_PAINT_DESTROY,
+  THREAD_PHASE_SELECTED_PAINT_QUERY,
+  THREAD_PHASE_SELECTED_PAINT_DRAW,
+  THREAD_PHASE_SELECTED_PAINT_FINISH,
+  THREAD_PHASE_SELECTED_PAINT_RELEASE,
+  THREAD_PHASE_PAINT_RESOURCE_CREATE,
+  THREAD_PHASE_PAINT_RESOURCE_VALIDATE,
+  THREAD_PHASE_PAINT_SELECT,
+  THREAD_PHASE_PAINT_RESET,
+  THREAD_PHASE_PAINT_COLOR_SET,
+  THREAD_PHASE_PAINT_COLOR_GET,
+  THREAD_PHASE_PAINT_COLOR_PARAMETER_SET,
+  THREAD_PHASE_PAINT_COLOR_PARAMETER_GET,
+  THREAD_PHASE_PAINT_RAMP_SPREAD_MODE,
+  THREAD_PHASE_PAINT_RAMP_PREMULTIPLIED,
+  THREAD_PHASE_PAINT_LINEAR_GRADIENT,
+  THREAD_PHASE_PAINT_RADIAL_GRADIENT,
+  THREAD_PHASE_PAINT_RAMP_STOPS,
+  THREAD_PHASE_PAINT_TYPE_SWITCH,
+  THREAD_PHASE_PAINT_PATTERN_ATTACH,
+  THREAD_PHASE_PAINT_TYPE_QUERY,
+  THREAD_PHASE_PAINT_RAMP_QUERY,
+  THREAD_PHASE_PAINT_DRAW_PATH,
+  THREAD_PHASE_PAINT_DRAW_PATH_FILL,
+  THREAD_PHASE_PAINT_DRAW_PATH_STROKE,
+  THREAD_PHASE_PAINT_FINISH,
+  THREAD_PHASE_PAINT_ERROR_CHECK,
+  THREAD_PHASE_PAINT_RETAINED_CREATE,
+  THREAD_PHASE_PAINT_RETAINED_COLOR,
+  THREAD_PHASE_PAINT_CLEAR_SELECTION,
+  THREAD_PHASE_PAINT_CLEANUP_RETAINED,
+  THREAD_PHASE_PAINT_CLEANUP_PAINT,
+  THREAD_PHASE_PAINT_CLEANUP_PATTERN,
+  THREAD_PHASE_PAINT_CLEANUP_PATH,
+  THREAD_PHASE_PAINT_DONE,
+  THREAD_PHASE_PAINT_EGL_INIT,
+  THREAD_PHASE_PAINT_CHURN,
+  THREAD_PHASE_PAINT_EGL_CLEANUP,
+  THREAD_PHASE_MASK_RESOURCE_CREATE,
+  THREAD_PHASE_MASK_RESOURCE_VALIDATE,
+  THREAD_PHASE_MASK_PAINT_INIT,
+  THREAD_PHASE_MASK_LAYER_CREATE,
+  THREAD_PHASE_MASK_RESET,
+  THREAD_PHASE_MASK_ENABLE,
+  THREAD_PHASE_MASK_FILL_SURFACE,
+  THREAD_PHASE_MASK_FILL_LAYER_CLEAR,
+  THREAD_PHASE_MASK_FILL_LAYER_STRIPE,
+  THREAD_PHASE_MASK_SET_FROM_LAYER,
+  THREAD_PHASE_MASK_COPY,
+  THREAD_PHASE_MASK_CLEAR_SURFACE,
+  THREAD_PHASE_MASK_UNION_COPY,
+  THREAD_PHASE_MASK_SELECT_PAINT,
+  THREAD_PHASE_MASK_DRAW_PATH,
+  THREAD_PHASE_MASK_FINISH,
+  THREAD_PHASE_MASK_ERROR_CHECK,
+  THREAD_PHASE_MASK_DISABLE,
+  THREAD_PHASE_MASK_CLEANUP_COPY,
+  THREAD_PHASE_MASK_CLEANUP_LAYER,
+  THREAD_PHASE_MASK_RESET_STATE,
+  THREAD_PHASE_MASK_CLEANUP_PAINT,
+  THREAD_PHASE_MASK_CLEANUP_PATH,
+  THREAD_PHASE_MASK_DONE
 };
 
 enum {
@@ -200,14 +294,49 @@ static const ThreadNamedValue threadChurnScheduleValues[] = {
   {NULL, 0}
 };
 
+static const ThreadNamedValue threadPaintProfileValues[] = {
+  {"full", THREAD_PAINT_PROFILE_FULL},
+  {"color-only", THREAD_PAINT_PROFILE_COLOR_ONLY},
+  {"ramp-then-color", THREAD_PAINT_PROFILE_RAMP_THEN_COLOR},
+  {"ramp-then-color-no-image", THREAD_PAINT_PROFILE_RAMP_THEN_COLOR_NO_IMAGE},
+  {"image-then-color", THREAD_PAINT_PROFILE_IMAGE_THEN_COLOR},
+  {NULL, 0}
+};
+
+static const ThreadNamedValue threadPaintDrawModeValues[] = {
+  {"fill-stroke", THREAD_PAINT_DRAW_FILL_STROKE},
+  {"fill", THREAD_PAINT_DRAW_FILL},
+  {"stroke", THREAD_PAINT_DRAW_STROKE},
+  {"split", THREAD_PAINT_DRAW_SPLIT},
+  {NULL, 0}
+};
+
 #if !defined(_WIN32)
 static volatile sig_atomic_t g_activeTestCase = THREAD_CASE_ALL;
 static volatile sig_atomic_t g_activeChurnLane = THREAD_CHURN_ALL;
+static volatile sig_atomic_t g_activePaintProfile = THREAD_PAINT_PROFILE_FULL;
+static volatile sig_atomic_t g_activePaintDrawMode =
+  THREAD_PAINT_DRAW_FILL_STROKE;
 #if defined(_MSC_VER)
 static __declspec(thread) volatile sig_atomic_t t_activeChurnLane =
   THREAD_CHURN_ALL;
+static __declspec(thread) volatile sig_atomic_t t_activeWorkerId = -1;
+static __declspec(thread) volatile sig_atomic_t t_activeIteration = -1;
+static __declspec(thread) volatile sig_atomic_t t_activePaintProfile =
+  THREAD_PAINT_PROFILE_FULL;
+static __declspec(thread) volatile sig_atomic_t t_activePaintDrawMode =
+  THREAD_PAINT_DRAW_FILL_STROKE;
+static __declspec(thread) volatile sig_atomic_t t_activePhase =
+  THREAD_PHASE_NONE;
 #else
 static __thread volatile sig_atomic_t t_activeChurnLane = THREAD_CHURN_ALL;
+static __thread volatile sig_atomic_t t_activeWorkerId = -1;
+static __thread volatile sig_atomic_t t_activeIteration = -1;
+static __thread volatile sig_atomic_t t_activePaintProfile =
+  THREAD_PAINT_PROFILE_FULL;
+static __thread volatile sig_atomic_t t_activePaintDrawMode =
+  THREAD_PAINT_DRAW_FILL_STROKE;
+static __thread volatile sig_atomic_t t_activePhase = THREAD_PHASE_NONE;
 #endif
 
 static const char *thread_signal_test_case_name(sig_atomic_t testCase)
@@ -272,6 +401,184 @@ static const char *thread_signal_churn_lane_name(sig_atomic_t lane)
   }
 }
 
+static const char *thread_signal_paint_profile_name(sig_atomic_t profile)
+{
+  switch (profile) {
+  case THREAD_PAINT_PROFILE_FULL:
+    return "full";
+  case THREAD_PAINT_PROFILE_COLOR_ONLY:
+    return "color-only";
+  case THREAD_PAINT_PROFILE_RAMP_THEN_COLOR:
+    return "ramp-then-color";
+  case THREAD_PAINT_PROFILE_RAMP_THEN_COLOR_NO_IMAGE:
+    return "ramp-then-color-no-image";
+  case THREAD_PAINT_PROFILE_IMAGE_THEN_COLOR:
+    return "image-then-color";
+  default:
+    return "unknown";
+  }
+}
+
+static const char *thread_signal_paint_draw_mode_name(sig_atomic_t drawMode)
+{
+  switch (drawMode) {
+  case THREAD_PAINT_DRAW_FILL_STROKE:
+    return "fill-stroke";
+  case THREAD_PAINT_DRAW_FILL:
+    return "fill";
+  case THREAD_PAINT_DRAW_STROKE:
+    return "stroke";
+  case THREAD_PAINT_DRAW_SPLIT:
+    return "split";
+  default:
+    return "unknown";
+  }
+}
+
+static const char *thread_signal_phase_name(sig_atomic_t phase)
+{
+  switch (phase) {
+  case THREAD_PHASE_WORKER_START:
+    return "worker-start";
+  case THREAD_PHASE_WORKER_END:
+    return "worker-end";
+  case THREAD_PHASE_CHURN_EGL_INIT:
+    return "churn-egl-init";
+  case THREAD_PHASE_CHURN_BODY:
+    return "churn-body";
+  case THREAD_PHASE_CHURN_EGL_CLEANUP:
+    return "churn-egl-cleanup";
+  case THREAD_PHASE_SELECTED_PAINT_SELECT:
+    return "selected-paint-select";
+  case THREAD_PHASE_SELECTED_PAINT_DESTROY:
+    return "selected-paint-destroy";
+  case THREAD_PHASE_SELECTED_PAINT_QUERY:
+    return "selected-paint-query";
+  case THREAD_PHASE_SELECTED_PAINT_DRAW:
+    return "selected-paint-draw";
+  case THREAD_PHASE_SELECTED_PAINT_FINISH:
+    return "selected-paint-finish";
+  case THREAD_PHASE_SELECTED_PAINT_RELEASE:
+    return "selected-paint-release";
+  case THREAD_PHASE_PAINT_RESOURCE_CREATE:
+    return "paint-resource-create";
+  case THREAD_PHASE_PAINT_RESOURCE_VALIDATE:
+    return "paint-resource-validate";
+  case THREAD_PHASE_PAINT_SELECT:
+    return "paint-select";
+  case THREAD_PHASE_PAINT_RESET:
+    return "paint-reset";
+  case THREAD_PHASE_PAINT_COLOR_SET:
+    return "paint-color-set";
+  case THREAD_PHASE_PAINT_COLOR_GET:
+    return "paint-color-get";
+  case THREAD_PHASE_PAINT_COLOR_PARAMETER_SET:
+    return "paint-color-parameter-set";
+  case THREAD_PHASE_PAINT_COLOR_PARAMETER_GET:
+    return "paint-color-parameter-get";
+  case THREAD_PHASE_PAINT_RAMP_SPREAD_MODE:
+    return "paint-ramp-spread-mode";
+  case THREAD_PHASE_PAINT_RAMP_PREMULTIPLIED:
+    return "paint-ramp-premultiplied";
+  case THREAD_PHASE_PAINT_LINEAR_GRADIENT:
+    return "paint-linear-gradient";
+  case THREAD_PHASE_PAINT_RADIAL_GRADIENT:
+    return "paint-radial-gradient";
+  case THREAD_PHASE_PAINT_RAMP_STOPS:
+    return "paint-ramp-stops";
+  case THREAD_PHASE_PAINT_TYPE_SWITCH:
+    return "paint-type-switch";
+  case THREAD_PHASE_PAINT_PATTERN_ATTACH:
+    return "paint-pattern-attach";
+  case THREAD_PHASE_PAINT_TYPE_QUERY:
+    return "paint-type-query";
+  case THREAD_PHASE_PAINT_RAMP_QUERY:
+    return "paint-ramp-query";
+  case THREAD_PHASE_PAINT_DRAW_PATH:
+    return "paint-draw-path";
+  case THREAD_PHASE_PAINT_DRAW_PATH_FILL:
+    return "paint-draw-path-fill";
+  case THREAD_PHASE_PAINT_DRAW_PATH_STROKE:
+    return "paint-draw-path-stroke";
+  case THREAD_PHASE_PAINT_FINISH:
+    return "paint-finish";
+  case THREAD_PHASE_PAINT_ERROR_CHECK:
+    return "paint-error-check";
+  case THREAD_PHASE_PAINT_RETAINED_CREATE:
+    return "paint-retained-create";
+  case THREAD_PHASE_PAINT_RETAINED_COLOR:
+    return "paint-retained-color";
+  case THREAD_PHASE_PAINT_CLEAR_SELECTION:
+    return "paint-clear-selection";
+  case THREAD_PHASE_PAINT_CLEANUP_RETAINED:
+    return "paint-cleanup-retained";
+  case THREAD_PHASE_PAINT_CLEANUP_PAINT:
+    return "paint-cleanup-paint";
+  case THREAD_PHASE_PAINT_CLEANUP_PATTERN:
+    return "paint-cleanup-pattern";
+  case THREAD_PHASE_PAINT_CLEANUP_PATH:
+    return "paint-cleanup-path";
+  case THREAD_PHASE_PAINT_DONE:
+    return "paint-done";
+  case THREAD_PHASE_PAINT_EGL_INIT:
+    return "paint-egl-init";
+  case THREAD_PHASE_PAINT_CHURN:
+    return "paint-churn";
+  case THREAD_PHASE_PAINT_EGL_CLEANUP:
+    return "paint-egl-cleanup";
+  case THREAD_PHASE_MASK_RESOURCE_CREATE:
+    return "mask-resource-create";
+  case THREAD_PHASE_MASK_RESOURCE_VALIDATE:
+    return "mask-resource-validate";
+  case THREAD_PHASE_MASK_PAINT_INIT:
+    return "mask-paint-init";
+  case THREAD_PHASE_MASK_LAYER_CREATE:
+    return "mask-layer-create";
+  case THREAD_PHASE_MASK_RESET:
+    return "mask-reset";
+  case THREAD_PHASE_MASK_ENABLE:
+    return "mask-enable";
+  case THREAD_PHASE_MASK_FILL_SURFACE:
+    return "mask-fill-surface";
+  case THREAD_PHASE_MASK_FILL_LAYER_CLEAR:
+    return "mask-fill-layer-clear";
+  case THREAD_PHASE_MASK_FILL_LAYER_STRIPE:
+    return "mask-fill-layer-stripe";
+  case THREAD_PHASE_MASK_SET_FROM_LAYER:
+    return "mask-set-from-layer";
+  case THREAD_PHASE_MASK_COPY:
+    return "mask-copy";
+  case THREAD_PHASE_MASK_CLEAR_SURFACE:
+    return "mask-clear-surface";
+  case THREAD_PHASE_MASK_UNION_COPY:
+    return "mask-union-copy";
+  case THREAD_PHASE_MASK_SELECT_PAINT:
+    return "mask-select-paint";
+  case THREAD_PHASE_MASK_DRAW_PATH:
+    return "mask-draw-path";
+  case THREAD_PHASE_MASK_FINISH:
+    return "mask-finish";
+  case THREAD_PHASE_MASK_ERROR_CHECK:
+    return "mask-error-check";
+  case THREAD_PHASE_MASK_DISABLE:
+    return "mask-disable";
+  case THREAD_PHASE_MASK_CLEANUP_COPY:
+    return "mask-cleanup-copy";
+  case THREAD_PHASE_MASK_CLEANUP_LAYER:
+    return "mask-cleanup-layer";
+  case THREAD_PHASE_MASK_RESET_STATE:
+    return "mask-reset-state";
+  case THREAD_PHASE_MASK_CLEANUP_PAINT:
+    return "mask-cleanup-paint";
+  case THREAD_PHASE_MASK_CLEANUP_PATH:
+    return "mask-cleanup-path";
+  case THREAD_PHASE_MASK_DONE:
+    return "mask-done";
+  default:
+    return "none";
+  }
+}
+
 static void thread_signal_write(const char *text)
 {
   size_t length = 0;
@@ -286,17 +593,64 @@ static void thread_signal_write(const char *text)
     (void)write(STDERR_FILENO, text, length);
 }
 
+static void thread_signal_write_int(sig_atomic_t value)
+{
+  char buffer[32];
+  size_t pos = sizeof(buffer);
+  sig_atomic_t digit;
+
+  if (value < 0) {
+    thread_signal_write("none");
+    return;
+  }
+
+  buffer[--pos] = '\0';
+  do {
+    digit = value % 10;
+    value /= 10;
+    buffer[--pos] = (char)('0' + digit);
+  } while (value > 0 && pos > 0);
+
+  (void)write(STDERR_FILENO, &buffer[pos],
+              sizeof(buffer) - pos - 1);
+}
+
 static void thread_test_crash_handler(int signo)
 {
   sig_atomic_t lane = t_activeChurnLane;
+  sig_atomic_t paintProfile = t_activePaintProfile;
+  sig_atomic_t paintDrawMode = t_activePaintDrawMode;
+  sig_atomic_t phase = t_activePhase;
+  int drawTrace = shGetThreadDrawTrace();
 
   if (lane == THREAD_CHURN_ALL)
     lane = g_activeChurnLane;
+
+  if (paintProfile == THREAD_PAINT_PROFILE_FULL)
+    paintProfile = g_activePaintProfile;
+  if (paintDrawMode == THREAD_PAINT_DRAW_FILL_STROKE)
+    paintDrawMode = g_activePaintDrawMode;
 
   thread_signal_write("\nthread test crashed while running case ");
   thread_signal_write(thread_signal_test_case_name(g_activeTestCase));
   thread_signal_write(", churn lane ");
   thread_signal_write(thread_signal_churn_lane_name(lane));
+  if (lane == THREAD_CHURN_PAINT) {
+    thread_signal_write(", paint profile ");
+    thread_signal_write(thread_signal_paint_profile_name(paintProfile));
+    thread_signal_write(", paint draw mode ");
+    thread_signal_write(thread_signal_paint_draw_mode_name(paintDrawMode));
+  }
+  thread_signal_write(", worker ");
+  thread_signal_write_int(t_activeWorkerId);
+  thread_signal_write(", iteration ");
+  thread_signal_write_int(t_activeIteration);
+  thread_signal_write(", phase ");
+  thread_signal_write(thread_signal_phase_name(phase));
+  if (drawTrace > 0) {
+    thread_signal_write(", draw trace ");
+    thread_signal_write(shDrawTraceName(drawTrace));
+  }
   thread_signal_write("\n");
 
   signal(signo, SIG_DFL);
@@ -329,6 +683,36 @@ static void thread_test_set_active_churn_lane(int lane)
   g_activeChurnLane = lane;
   t_activeChurnLane = lane;
 }
+
+static void thread_test_set_active_paint_options(int profile, int drawMode)
+{
+  g_activePaintProfile = profile;
+  g_activePaintDrawMode = drawMode;
+  t_activePaintProfile = profile;
+  t_activePaintDrawMode = drawMode;
+}
+
+static void thread_test_set_active_worker(int workerId)
+{
+  t_activeWorkerId = workerId;
+}
+
+static void thread_test_set_active_iteration(int iteration)
+{
+  t_activeIteration = iteration;
+}
+
+static void thread_test_set_active_phase(int phase)
+{
+  t_activePhase = phase;
+}
+
+static void thread_test_clear_active_detail(void)
+{
+  t_activeWorkerId = -1;
+  t_activeIteration = -1;
+  t_activePhase = THREAD_PHASE_NONE;
+}
 #else
 static void install_thread_test_crash_handler(void)
 {
@@ -342,6 +726,31 @@ static void thread_test_set_active_case(int testCase)
 static void thread_test_set_active_churn_lane(int lane)
 {
   (void)lane;
+}
+
+static void thread_test_set_active_paint_options(int profile, int drawMode)
+{
+  (void)profile;
+  (void)drawMode;
+}
+
+static void thread_test_set_active_worker(int workerId)
+{
+  (void)workerId;
+}
+
+static void thread_test_set_active_iteration(int iteration)
+{
+  (void)iteration;
+}
+
+static void thread_test_set_active_phase(int phase)
+{
+  (void)phase;
+}
+
+static void thread_test_clear_active_detail(void)
+{
 }
 #endif
 
@@ -505,10 +914,25 @@ static int parse_thread_test_options(ThreadTestOptions *options)
                       &options->churnSchedule))
     return 1;
 
+  if (parse_named_env("SHADERVG_THREAD_TEST_PAINT_PROFILE",
+                      threadPaintProfileValues,
+                      THREAD_PAINT_PROFILE_FULL,
+                      &options->paintProfile))
+    return 1;
+
+  if (parse_named_env("SHADERVG_THREAD_TEST_PAINT_DRAW_MODE",
+                      threadPaintDrawModeValues,
+                      THREAD_PAINT_DRAW_FILL_STROKE,
+                      &options->paintDrawMode))
+    return 1;
+
   if (parse_bool_env("SHADERVG_THREAD_TEST_VERBOSE",
                      0,
                      &options->verbose))
     return 1;
+
+  thread_test_set_active_paint_options(options->paintProfile,
+                                       options->paintDrawMode);
 
   return 0;
 }
@@ -1065,14 +1489,17 @@ static int verify_selected_paint_survives_destroy(VGPath path, VGPaint paint)
 {
   VGPaint selected;
 
+  thread_test_set_active_phase(THREAD_PHASE_SELECTED_PAINT_SELECT);
   vgSetPaint(paint, VG_FILL_PATH);
   if (expect_vg_no_error("thread test could not select retained paint"))
     return 1;
 
+  thread_test_set_active_phase(THREAD_PHASE_SELECTED_PAINT_DESTROY);
   vgDestroyPaint(paint);
   if (expect_vg_no_error("thread test could not destroy selected paint handle"))
     return 1;
 
+  thread_test_set_active_phase(THREAD_PHASE_SELECTED_PAINT_QUERY);
   selected = vgGetPaint(VG_FILL_PATH);
   if (expect_vg_no_error("thread test could not query destroyed selected paint"))
     return 1;
@@ -1081,16 +1508,68 @@ static int verify_selected_paint_survives_destroy(VGPath path, VGPaint paint)
     return 1;
   }
 
+  thread_test_set_active_phase(THREAD_PHASE_SELECTED_PAINT_DRAW);
   vgDrawPath(path, VG_FILL_PATH);
+  thread_test_set_active_phase(THREAD_PHASE_SELECTED_PAINT_FINISH);
   vgFinish();
   if (expect_vg_no_error("thread test could not draw with retained selected paint"))
     return 1;
 
+  thread_test_set_active_phase(THREAD_PHASE_SELECTED_PAINT_RELEASE);
   vgSetPaint(VG_INVALID_HANDLE, VG_FILL_PATH);
   return expect_vg_no_error("thread test could not release retained selected paint");
 }
 
-static int exercise_paint_object_churn(int workerId, int iterations)
+static void draw_paint_churn_path(VGPath path, int paintDrawMode)
+{
+  switch (paintDrawMode) {
+  case THREAD_PAINT_DRAW_FILL:
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_DRAW_PATH_FILL);
+    vgDrawPath(path, VG_FILL_PATH);
+    break;
+  case THREAD_PAINT_DRAW_STROKE:
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_DRAW_PATH_STROKE);
+    vgDrawPath(path, VG_STROKE_PATH);
+    break;
+  case THREAD_PAINT_DRAW_SPLIT:
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_DRAW_PATH_FILL);
+    vgDrawPath(path, VG_FILL_PATH);
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_DRAW_PATH_STROKE);
+    vgDrawPath(path, VG_STROKE_PATH);
+    break;
+  case THREAD_PAINT_DRAW_FILL_STROKE:
+  default:
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_DRAW_PATH);
+    vgDrawPath(path, VG_FILL_PATH | VG_STROKE_PATH);
+    break;
+  }
+}
+
+static int paint_profile_uses_pattern_resource(int paintProfile)
+{
+  return paintProfile == THREAD_PAINT_PROFILE_FULL ||
+         paintProfile == THREAD_PAINT_PROFILE_RAMP_THEN_COLOR ||
+         paintProfile == THREAD_PAINT_PROFILE_IMAGE_THEN_COLOR;
+}
+
+static int paint_profile_uploads_ramp(int paintProfile)
+{
+  return paintProfile == THREAD_PAINT_PROFILE_FULL ||
+         paintProfile == THREAD_PAINT_PROFILE_RAMP_THEN_COLOR ||
+         paintProfile == THREAD_PAINT_PROFILE_RAMP_THEN_COLOR_NO_IMAGE;
+}
+
+static int paint_profile_uses_iteration_zero(int paintProfile)
+{
+  return paintProfile == THREAD_PAINT_PROFILE_RAMP_THEN_COLOR ||
+         paintProfile == THREAD_PAINT_PROFILE_RAMP_THEN_COLOR_NO_IMAGE ||
+         paintProfile == THREAD_PAINT_PROFILE_IMAGE_THEN_COLOR;
+}
+
+static int exercise_paint_object_churn(int workerId,
+                                       int iterations,
+                                       int paintProfile,
+                                       int paintDrawMode)
 {
   VGPath path = VG_INVALID_HANDLE;
   VGImage pattern = VG_INVALID_HANDLE;
@@ -1099,11 +1578,16 @@ static int exercise_paint_object_churn(int workerId, int iterations)
   int i;
   int status = 0;
 
+  thread_test_set_active_iteration(-1);
+  thread_test_set_active_phase(THREAD_PHASE_PAINT_RESOURCE_CREATE);
   path = create_rect_path();
-  pattern = create_colored_image(workerId, 2000);
+  if (paint_profile_uses_pattern_resource(paintProfile))
+    pattern = create_colored_image(workerId, 2000);
   paint = vgCreatePaint();
+  thread_test_set_active_phase(THREAD_PHASE_PAINT_RESOURCE_VALIDATE);
   if (path == VG_INVALID_HANDLE ||
-      pattern == VG_INVALID_HANDLE ||
+      (paint_profile_uses_pattern_resource(paintProfile) &&
+       pattern == VG_INVALID_HANDLE) ||
       paint == VG_INVALID_HANDLE) {
     status = fail_vg("thread test could not create paint churn resources");
   } else if (expect_vg_no_error("thread test could not initialize paint churn resources")) {
@@ -1111,6 +1595,7 @@ static int exercise_paint_object_churn(int workerId, int iterations)
   }
 
   if (!status) {
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_SELECT);
     vgSetPaint(paint, VG_FILL_PATH | VG_STROKE_PATH);
     vgSetf(VG_STROKE_LINE_WIDTH, 1.0f);
     if (expect_vg_no_error("thread test could not select churn paint"))
@@ -1118,16 +1603,18 @@ static int exercise_paint_object_churn(int workerId, int iterations)
   }
 
   for (i = 0; !status && i < iterations; ++i) {
+    int paintVariant =
+      paint_profile_uses_iteration_zero(paintProfile) ? 0 : i;
     VGfloat color[4] = {
-      ((VGfloat)((workerId + i) % 7)) / 6.0f,
-      ((VGfloat)((workerId * 3 + i) % 11)) / 10.0f,
-      ((VGfloat)((workerId * 5 + i) % 13)) / 12.0f,
+      ((VGfloat)((workerId + paintVariant) % 7)) / 6.0f,
+      ((VGfloat)((workerId * 3 + paintVariant) % 11)) / 10.0f,
+      ((VGfloat)((workerId * 5 + paintVariant) % 13)) / 12.0f,
       1.0f
     };
     VGfloat linear[4] = {
       0.0f,
       0.0f,
-      24.0f + (VGfloat)(i % 5),
+      24.0f + (VGfloat)(paintVariant % 5),
       24.0f
     };
     VGfloat radial[5] = {
@@ -1135,7 +1622,7 @@ static int exercise_paint_object_churn(int workerId, int iterations)
       16.0f,
       8.0f,
       8.0f,
-      18.0f + (VGfloat)(i % 4)
+      18.0f + (VGfloat)(paintVariant % 4)
     };
     VGfloat stops[10] = {
       0.0f,
@@ -1151,76 +1638,106 @@ static int exercise_paint_object_churn(int workerId, int iterations)
     };
     VGfloat readColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     VGuint packed =
-      (((VGuint)((workerId * 41 + i * 3) & 0xff)) << 24) |
-      (((VGuint)((workerId * 17 + i * 5) & 0xff)) << 16) |
-      (((VGuint)((workerId * 29 + i * 7) & 0xff)) << 8) |
+      (((VGuint)((workerId * 41 + paintVariant * 3) & 0xff)) << 24) |
+      (((VGuint)((workerId * 17 + paintVariant * 5) & 0xff)) << 16) |
+      (((VGuint)((workerId * 29 + paintVariant * 7) & 0xff)) << 8) |
       0xffu;
 
+    thread_test_set_active_iteration(i);
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_RESET);
     if (reset_test_state()) {
       status = 1;
       break;
     }
 
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_COLOR_SET);
     vgSetColor(paint, packed);
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_COLOR_GET);
     (void)vgGetColor(paint);
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_COLOR_PARAMETER_SET);
     vgSetParameterfv(paint, VG_PAINT_COLOR, 4, color);
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_COLOR_PARAMETER_GET);
     vgGetParameterfv(paint, VG_PAINT_COLOR, 4, readColor);
-    vgSetParameteri(paint,
-                    VG_PAINT_COLOR_RAMP_SPREAD_MODE,
-                    (i & 1) ? VG_COLOR_RAMP_SPREAD_REPEAT :
-                              VG_COLOR_RAMP_SPREAD_PAD);
-    vgSetParameteri(paint,
-                    VG_PAINT_COLOR_RAMP_PREMULTIPLIED,
-                    (i & 1) ? VG_TRUE : VG_FALSE);
-    vgSetParameterfv(paint, VG_PAINT_LINEAR_GRADIENT, 4, linear);
-    vgSetParameterfv(paint, VG_PAINT_RADIAL_GRADIENT, 5, radial);
-    vgSetParameterfv(paint, VG_PAINT_COLOR_RAMP_STOPS, 10, stops);
 
-    switch (i & 3) {
-    case 0:
-      vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_COLOR);
-      break;
-    case 1:
-      vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_LINEAR_GRADIENT);
-      break;
-    case 2:
-      vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_RADIAL_GRADIENT);
-      break;
-    default:
-      vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_PATTERN);
-      vgSetParameteri(paint, VG_PAINT_PATTERN_TILING_MODE, VG_TILE_REPEAT);
-      vgPaintPattern(paint, pattern);
-      break;
+    if (paint_profile_uploads_ramp(paintProfile)) {
+      thread_test_set_active_phase(THREAD_PHASE_PAINT_RAMP_SPREAD_MODE);
+      vgSetParameteri(paint,
+                      VG_PAINT_COLOR_RAMP_SPREAD_MODE,
+                      (paintVariant & 1) ? VG_COLOR_RAMP_SPREAD_REPEAT :
+                                           VG_COLOR_RAMP_SPREAD_PAD);
+      thread_test_set_active_phase(THREAD_PHASE_PAINT_RAMP_PREMULTIPLIED);
+      vgSetParameteri(paint,
+                      VG_PAINT_COLOR_RAMP_PREMULTIPLIED,
+                      (paintVariant & 1) ? VG_TRUE : VG_FALSE);
+      thread_test_set_active_phase(THREAD_PHASE_PAINT_LINEAR_GRADIENT);
+      vgSetParameterfv(paint, VG_PAINT_LINEAR_GRADIENT, 4, linear);
+      thread_test_set_active_phase(THREAD_PHASE_PAINT_RADIAL_GRADIENT);
+      vgSetParameterfv(paint, VG_PAINT_RADIAL_GRADIENT, 5, radial);
+      thread_test_set_active_phase(THREAD_PHASE_PAINT_RAMP_STOPS);
+      vgSetParameterfv(paint, VG_PAINT_COLOR_RAMP_STOPS, 10, stops);
     }
 
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_TYPE_SWITCH);
+    if (paintProfile != THREAD_PAINT_PROFILE_FULL) {
+      vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_COLOR);
+    } else {
+      switch (i & 3) {
+      case 0:
+        vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_COLOR);
+        break;
+      case 1:
+        vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_LINEAR_GRADIENT);
+        break;
+      case 2:
+        vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_RADIAL_GRADIENT);
+        break;
+      default:
+        vgSetParameteri(paint, VG_PAINT_TYPE, VG_PAINT_TYPE_PATTERN);
+        vgSetParameteri(paint, VG_PAINT_PATTERN_TILING_MODE, VG_TILE_REPEAT);
+        thread_test_set_active_phase(THREAD_PHASE_PAINT_PATTERN_ATTACH);
+        vgPaintPattern(paint, pattern);
+        break;
+      }
+    }
+
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_TYPE_QUERY);
     if (vgGetParameteri(paint, VG_PAINT_TYPE) == 0) {
       fprintf(stderr, "thread test paint type query returned zero\n");
       status = 1;
       break;
     }
 
-    if (vgGetParameterVectorSize(paint, VG_PAINT_COLOR_RAMP_STOPS) < 10) {
-      fprintf(stderr, "thread test paint color-ramp vector size was too small\n");
-      status = 1;
-      break;
+    if (paint_profile_uploads_ramp(paintProfile)) {
+      thread_test_set_active_phase(THREAD_PHASE_PAINT_RAMP_QUERY);
+      if (vgGetParameterVectorSize(paint, VG_PAINT_COLOR_RAMP_STOPS) < 10) {
+        fprintf(stderr, "thread test paint color-ramp vector size was too small\n");
+        status = 1;
+        break;
+      }
     }
 
-    vgDrawPath(path, VG_FILL_PATH | VG_STROKE_PATH);
-    if ((i & 15) == 0)
+    draw_paint_churn_path(path, paintDrawMode);
+    if ((i & 15) == 0) {
+      thread_test_set_active_phase(THREAD_PHASE_PAINT_FINISH);
       vgFinish();
+    }
 
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_ERROR_CHECK);
     if (expect_vg_no_error("thread test paint churn failed")) {
       status = 1;
       break;
     }
   }
 
+  thread_test_set_active_iteration(-1);
   if (!status) {
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_RETAINED_CREATE);
     retained = vgCreatePaint();
     if (retained == VG_INVALID_HANDLE ||
         expect_vg_no_error("thread test could not create retained selected paint")) {
       status = 1;
     } else {
+      thread_test_set_active_phase(THREAD_PHASE_PAINT_RETAINED_COLOR);
       vgSetColor(retained, 0x4488ccffu);
       if (expect_vg_no_error("thread test could not color retained selected paint"))
         status = 1;
@@ -1230,34 +1747,40 @@ static int exercise_paint_object_churn(int workerId, int iterations)
     }
   }
 
+  thread_test_set_active_phase(THREAD_PHASE_PAINT_CLEAR_SELECTION);
   vgSetPaint(VG_INVALID_HANDLE, VG_FILL_PATH | VG_STROKE_PATH);
   if (expect_vg_no_error("thread test could not clear paint churn selection"))
     status = 1;
 
   if (retained != VG_INVALID_HANDLE) {
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_CLEANUP_RETAINED);
     vgDestroyPaint(retained);
     if (expect_vg_no_error("thread test could not clean up retained paint"))
       status = 1;
   }
 
   if (paint != VG_INVALID_HANDLE) {
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_CLEANUP_PAINT);
     vgDestroyPaint(paint);
     if (expect_vg_no_error("thread test could not destroy churn paint"))
       status = 1;
   }
 
   if (pattern != VG_INVALID_HANDLE) {
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_CLEANUP_PATTERN);
     vgDestroyImage(pattern);
     if (expect_vg_no_error("thread test could not destroy paint pattern image"))
       status = 1;
   }
 
   if (path != VG_INVALID_HANDLE) {
+    thread_test_set_active_phase(THREAD_PHASE_PAINT_CLEANUP_PATH);
     vgDestroyPath(path);
     if (expect_vg_no_error("thread test could not destroy paint churn path"))
       status = 1;
   }
 
+  thread_test_set_active_phase(THREAD_PHASE_PAINT_DONE);
   return status;
 }
 
@@ -1692,8 +2215,11 @@ static int exercise_mask_layer_object_churn(int workerId, int iterations)
   int i;
   int status = 0;
 
+  thread_test_set_active_iteration(-1);
+  thread_test_set_active_phase(THREAD_PHASE_MASK_RESOURCE_CREATE);
   path = create_rect_path();
   paint = vgCreatePaint();
+  thread_test_set_active_phase(THREAD_PHASE_MASK_RESOURCE_VALIDATE);
   if (path == VG_INVALID_HANDLE ||
       paint == VG_INVALID_HANDLE ||
       expect_vg_no_error("thread test could not create mask churn resources")) {
@@ -1701,6 +2227,7 @@ static int exercise_mask_layer_object_churn(int workerId, int iterations)
   }
 
   if (!status) {
+    thread_test_set_active_phase(THREAD_PHASE_MASK_PAINT_INIT);
     vgSetColor(paint, 0xaa6633ffu);
     vgSetPaint(paint, VG_FILL_PATH);
     if (expect_vg_no_error("thread test could not initialize mask churn paint"))
@@ -1712,6 +2239,8 @@ static int exercise_mask_layer_object_churn(int workerId, int iterations)
     VGMaskLayer copy = VG_INVALID_HANDLE;
     VGint stripe = 1 + ((workerId + i) % (MASK_SIZE - 1));
 
+    thread_test_set_active_iteration(i);
+    thread_test_set_active_phase(THREAD_PHASE_MASK_LAYER_CREATE);
     layer = vgCreateMaskLayer(MASK_SIZE, MASK_SIZE);
     copy = vgCreateMaskLayer(MASK_SIZE, MASK_SIZE);
     if (layer == VG_INVALID_HANDLE ||
@@ -1720,63 +2249,87 @@ static int exercise_mask_layer_object_churn(int workerId, int iterations)
       status = 1;
     }
 
-    if (!status && reset_test_state())
-      status = 1;
+    if (!status) {
+      thread_test_set_active_phase(THREAD_PHASE_MASK_RESET);
+      if (reset_test_state())
+        status = 1;
+    }
 
     if (!status) {
+      thread_test_set_active_phase(THREAD_PHASE_MASK_ENABLE);
       vgSeti(VG_MASKING, VG_TRUE);
+      thread_test_set_active_phase(THREAD_PHASE_MASK_FILL_SURFACE);
       vgMask(VG_INVALID_HANDLE, VG_FILL_MASK, 0, 0,
              MASK_SIZE, MASK_SIZE);
+      thread_test_set_active_phase(THREAD_PHASE_MASK_FILL_LAYER_CLEAR);
       vgFillMaskLayer(layer, 0, 0, MASK_SIZE, MASK_SIZE, 0.0f);
+      thread_test_set_active_phase(THREAD_PHASE_MASK_FILL_LAYER_STRIPE);
       vgFillMaskLayer(layer, 0, 0, stripe, MASK_SIZE, 1.0f);
+      thread_test_set_active_phase(THREAD_PHASE_MASK_SET_FROM_LAYER);
       vgMask(layer, VG_SET_MASK, 0, 0, MASK_SIZE, MASK_SIZE);
+      thread_test_set_active_phase(THREAD_PHASE_MASK_COPY);
       vgCopyMask(copy, 0, 0, 0, 0, MASK_SIZE, MASK_SIZE);
+      thread_test_set_active_phase(THREAD_PHASE_MASK_CLEAR_SURFACE);
       vgMask(VG_INVALID_HANDLE, VG_CLEAR_MASK, 0, 0,
              MASK_SIZE, MASK_SIZE);
+      thread_test_set_active_phase(THREAD_PHASE_MASK_UNION_COPY);
       vgMask(copy, VG_UNION_MASK, 0, 0, MASK_SIZE, MASK_SIZE);
+      thread_test_set_active_phase(THREAD_PHASE_MASK_SELECT_PAINT);
       vgSetPaint(paint, VG_FILL_PATH);
+      thread_test_set_active_phase(THREAD_PHASE_MASK_DRAW_PATH);
       vgDrawPath(path, VG_FILL_PATH);
 
-      if ((i & 15) == 0)
+      if ((i & 15) == 0) {
+        thread_test_set_active_phase(THREAD_PHASE_MASK_FINISH);
         vgFinish();
+      }
 
+      thread_test_set_active_phase(THREAD_PHASE_MASK_ERROR_CHECK);
       if (expect_vg_no_error("thread test mask-layer churn failed"))
         status = 1;
     }
 
+    thread_test_set_active_phase(THREAD_PHASE_MASK_DISABLE);
     vgSeti(VG_MASKING, VG_FALSE);
     if (expect_vg_no_error("thread test could not disable mask-layer churn masking"))
       status = 1;
 
     if (copy != VG_INVALID_HANDLE) {
+      thread_test_set_active_phase(THREAD_PHASE_MASK_CLEANUP_COPY);
       vgDestroyMaskLayer(copy);
       if (expect_vg_no_error("thread test could not destroy churn mask copy"))
         status = 1;
     }
 
     if (layer != VG_INVALID_HANDLE) {
+      thread_test_set_active_phase(THREAD_PHASE_MASK_CLEANUP_LAYER);
       vgDestroyMaskLayer(layer);
       if (expect_vg_no_error("thread test could not destroy churn mask layer"))
         status = 1;
     }
   }
 
+  thread_test_set_active_iteration(-1);
+  thread_test_set_active_phase(THREAD_PHASE_MASK_RESET_STATE);
   vgSeti(VG_MASKING, VG_FALSE);
   if (expect_vg_no_error("thread test could not reset mask-layer churn state"))
     status = 1;
 
   if (paint != VG_INVALID_HANDLE) {
+    thread_test_set_active_phase(THREAD_PHASE_MASK_CLEANUP_PAINT);
     vgDestroyPaint(paint);
     if (expect_vg_no_error("thread test could not destroy mask churn paint"))
       status = 1;
   }
 
   if (path != VG_INVALID_HANDLE) {
+    thread_test_set_active_phase(THREAD_PHASE_MASK_CLEANUP_PATH);
     vgDestroyPath(path);
     if (expect_vg_no_error("thread test could not destroy mask churn path"))
       status = 1;
   }
 
+  thread_test_set_active_phase(THREAD_PHASE_MASK_DONE);
   return status;
 }
 
@@ -1886,21 +2439,35 @@ static int exercise_context_only_state(int workerId, int iterations)
 static void thread_test_worker_begin(const ThreadArgs *args)
 {
   thread_test_set_active_churn_lane(args->churnLane);
+  thread_test_set_active_paint_options(args->paintProfile,
+                                       args->paintDrawMode);
+  thread_test_set_active_worker(args->workerId);
+  thread_test_set_active_iteration(-1);
+  thread_test_set_active_phase(THREAD_PHASE_WORKER_START);
   thread_test_log(args->verbose,
                   "thread test begin churn lane %s worker %d iterations %d\n",
                   args->workerName ? args->workerName : "unknown",
                   args->workerId,
                   args->iterations);
+  if (args->churnLane == THREAD_CHURN_PAINT)
+    thread_test_log(args->verbose,
+                    "thread test paint profile %s draw mode %s\n",
+                    thread_named_value_name(threadPaintProfileValues,
+                                            args->paintProfile),
+                    thread_named_value_name(threadPaintDrawModeValues,
+                                            args->paintDrawMode));
 }
 
 static void thread_test_worker_end(const ThreadArgs *args)
 {
+  thread_test_set_active_phase(THREAD_PHASE_WORKER_END);
   thread_test_log(args->verbose,
                   "thread test end churn lane %s worker %d status %d\n",
                   args->workerName ? args->workerName : "unknown",
                   args->workerId,
                   args->status);
   thread_test_set_active_churn_lane(THREAD_CHURN_ALL);
+  thread_test_clear_active_detail();
 }
 
 static void *first_egl_worker(void *arg)
@@ -1973,10 +2540,12 @@ static void *shared_resource_churn_worker(void *arg)
 
   thread_test_worker_begin(args);
   state.ownsDisplay = 0;
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_INIT);
   args->status = init_shared_egl(&state,
                                  args->display,
                                  args->config,
                                  args->context);
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_BODY);
   if (!args->status) {
     for (i = 0; i < args->iterations; ++i) {
       if (run_shared_resource_iteration(args->workerId, i)) {
@@ -1986,6 +2555,7 @@ static void *shared_resource_churn_worker(void *arg)
     }
   }
 
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_CLEANUP);
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
@@ -2006,14 +2576,17 @@ static void *path_object_churn_worker(void *arg)
 
   thread_test_worker_begin(args);
   state.ownsDisplay = 0;
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_INIT);
   args->status = init_shared_egl(&state,
                                  args->display,
                                  args->config,
                                  args->context);
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_BODY);
   if (!args->status)
     args->status = exercise_path_object_churn(args->workerId,
                                               args->iterations);
 
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_CLEANUP);
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
@@ -2034,14 +2607,19 @@ static void *paint_object_churn_worker(void *arg)
 
   thread_test_worker_begin(args);
   state.ownsDisplay = 0;
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_INIT);
   args->status = init_shared_egl(&state,
                                  args->display,
                                  args->config,
                                  args->context);
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_BODY);
   if (!args->status)
     args->status = exercise_paint_object_churn(args->workerId,
-                                               args->iterations);
+                                               args->iterations,
+                                               args->paintProfile,
+                                               args->paintDrawMode);
 
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_CLEANUP);
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
@@ -2062,14 +2640,17 @@ static void *image_object_churn_worker(void *arg)
 
   thread_test_worker_begin(args);
   state.ownsDisplay = 0;
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_INIT);
   args->status = init_shared_egl(&state,
                                  args->display,
                                  args->config,
                                  args->context);
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_BODY);
   if (!args->status)
     args->status = exercise_image_object_churn(args->workerId,
                                                args->iterations);
 
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_CLEANUP);
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
@@ -2090,14 +2671,17 @@ static void *font_object_churn_worker(void *arg)
 
   thread_test_worker_begin(args);
   state.ownsDisplay = 0;
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_INIT);
   args->status = init_shared_egl(&state,
                                  args->display,
                                  args->config,
                                  args->context);
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_BODY);
   if (!args->status)
     args->status = exercise_font_object_churn(args->workerId,
                                               args->iterations);
 
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_CLEANUP);
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
@@ -2118,14 +2702,17 @@ static void *mask_layer_object_churn_worker(void *arg)
 
   thread_test_worker_begin(args);
   state.ownsDisplay = 0;
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_INIT);
   args->status = init_shared_egl(&state,
                                  args->display,
                                  args->config,
                                  args->context);
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_BODY);
   if (!args->status)
     args->status = exercise_mask_layer_object_churn(args->workerId,
                                                     args->iterations);
 
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_CLEANUP);
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
@@ -2146,14 +2733,17 @@ static void *filter_object_churn_worker(void *arg)
 
   thread_test_worker_begin(args);
   state.ownsDisplay = 0;
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_INIT);
   args->status = init_shared_egl(&state,
                                  args->display,
                                  args->config,
                                  args->context);
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_BODY);
   if (!args->status)
     args->status = exercise_filter_object_churn(args->workerId,
                                                 args->iterations);
 
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_CLEANUP);
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
@@ -2174,14 +2764,17 @@ static void *context_only_churn_worker(void *arg)
 
   thread_test_worker_begin(args);
   state.ownsDisplay = 0;
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_INIT);
   args->status = init_shared_egl(&state,
                                  args->display,
                                  args->config,
                                  args->context);
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_BODY);
   if (!args->status)
     args->status = exercise_context_only_state(args->workerId,
                                                args->iterations);
 
+  thread_test_set_active_phase(THREAD_PHASE_CHURN_EGL_CLEANUP);
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
@@ -2550,6 +3143,8 @@ static int start_shared_churn_lane(const ThreadTestOptions *options,
       options->sharedWorkers * (lane->lane - 1) + i + 1;
     args[*created].iterations = options->sharedIterations;
     args[*created].churnLane = lane->lane;
+    args[*created].paintProfile = options->paintProfile;
+    args[*created].paintDrawMode = options->paintDrawMode;
     args[*created].verbose = options->verbose;
     args[*created].workerName = lane->name;
 
