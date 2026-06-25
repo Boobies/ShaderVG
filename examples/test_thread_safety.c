@@ -1172,6 +1172,102 @@ static int exercise_font_object_churn(int workerId, int iterations)
   return status;
 }
 
+static int exercise_mask_layer_object_churn(int workerId, int iterations)
+{
+  enum { MASK_SIZE = 16 };
+  VGPath path = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  int i;
+  int status = 0;
+
+  path = create_rect_path();
+  paint = vgCreatePaint();
+  if (path == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE ||
+      expect_vg_no_error("thread test could not create mask churn resources")) {
+    status = 1;
+  }
+
+  if (!status) {
+    vgSetColor(paint, 0xaa6633ffu);
+    vgSetPaint(paint, VG_FILL_PATH);
+    if (expect_vg_no_error("thread test could not initialize mask churn paint"))
+      status = 1;
+  }
+
+  for (i = 0; !status && i < iterations; ++i) {
+    VGMaskLayer layer = VG_INVALID_HANDLE;
+    VGMaskLayer copy = VG_INVALID_HANDLE;
+    VGint stripe = 1 + ((workerId + i) % (MASK_SIZE - 1));
+
+    layer = vgCreateMaskLayer(MASK_SIZE, MASK_SIZE);
+    copy = vgCreateMaskLayer(MASK_SIZE, MASK_SIZE);
+    if (layer == VG_INVALID_HANDLE ||
+        copy == VG_INVALID_HANDLE ||
+        expect_vg_no_error("thread test could not create churn mask layers")) {
+      status = 1;
+    }
+
+    if (!status && reset_test_state())
+      status = 1;
+
+    if (!status) {
+      vgSeti(VG_MASKING, VG_TRUE);
+      vgMask(VG_INVALID_HANDLE, VG_FILL_MASK, 0, 0,
+             MASK_SIZE, MASK_SIZE);
+      vgFillMaskLayer(layer, 0, 0, MASK_SIZE, MASK_SIZE, 0.0f);
+      vgFillMaskLayer(layer, 0, 0, stripe, MASK_SIZE, 1.0f);
+      vgMask(layer, VG_SET_MASK, 0, 0, MASK_SIZE, MASK_SIZE);
+      vgCopyMask(copy, 0, 0, 0, 0, MASK_SIZE, MASK_SIZE);
+      vgMask(VG_INVALID_HANDLE, VG_CLEAR_MASK, 0, 0,
+             MASK_SIZE, MASK_SIZE);
+      vgMask(copy, VG_UNION_MASK, 0, 0, MASK_SIZE, MASK_SIZE);
+      vgSetPaint(paint, VG_FILL_PATH);
+      vgDrawPath(path, VG_FILL_PATH);
+
+      if ((i & 15) == 0)
+        vgFinish();
+
+      if (expect_vg_no_error("thread test mask-layer churn failed"))
+        status = 1;
+    }
+
+    vgSeti(VG_MASKING, VG_FALSE);
+    if (expect_vg_no_error("thread test could not disable mask-layer churn masking"))
+      status = 1;
+
+    if (copy != VG_INVALID_HANDLE) {
+      vgDestroyMaskLayer(copy);
+      if (expect_vg_no_error("thread test could not destroy churn mask copy"))
+        status = 1;
+    }
+
+    if (layer != VG_INVALID_HANDLE) {
+      vgDestroyMaskLayer(layer);
+      if (expect_vg_no_error("thread test could not destroy churn mask layer"))
+        status = 1;
+    }
+  }
+
+  vgSeti(VG_MASKING, VG_FALSE);
+  if (expect_vg_no_error("thread test could not reset mask-layer churn state"))
+    status = 1;
+
+  if (paint != VG_INVALID_HANDLE) {
+    vgDestroyPaint(paint);
+    if (expect_vg_no_error("thread test could not destroy mask churn paint"))
+      status = 1;
+  }
+
+  if (path != VG_INVALID_HANDLE) {
+    vgDestroyPath(path);
+    if (expect_vg_no_error("thread test could not destroy mask churn path"))
+      status = 1;
+  }
+
+  return status;
+}
+
 static int exercise_resources(int iterations)
 {
   int i;
@@ -1460,6 +1556,32 @@ static void *font_object_churn_worker(void *arg)
   if (!args->status)
     args->status = exercise_font_object_churn(args->workerId,
                                               args->iterations);
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
+static void *mask_layer_object_churn_worker(void *arg)
+{
+  ThreadArgs *args = (ThreadArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status)
+    args->status = exercise_mask_layer_object_churn(args->workerId,
+                                                    args->iterations);
 
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
@@ -1788,7 +1910,7 @@ static int run_shared_context_stress(void)
 
 static int run_shared_resource_churn(const ThreadTestOptions *options)
 {
-  int threadCount = options->sharedWorkers * 6;
+  int threadCount = options->sharedWorkers * 7;
   TestEGL base = {
     EGL_NO_DISPLAY,
     0,
@@ -1910,6 +2032,23 @@ static int run_shared_resource_churn(const ThreadTestOptions *options)
     args[created].config = base.config;
     args[created].context = base.context;
     args[created].workerId = options->sharedWorkers * 5 + i + 1;
+    args[created].iterations = options->sharedIterations;
+    if (pthread_create(&threads[created], NULL,
+                       mask_layer_object_churn_worker,
+                       &args[created]) != 0) {
+      fprintf(stderr, "thread test could not create mask-layer churn worker\n");
+      status = 1;
+      break;
+    }
+    ++created;
+  }
+
+  for (i = 0; !status && i < options->sharedWorkers; ++i) {
+    args[created].status = 1;
+    args[created].display = base.display;
+    args[created].config = base.config;
+    args[created].context = base.context;
+    args[created].workerId = options->sharedWorkers * 6 + i + 1;
     args[created].iterations = options->sharedIterations;
     if (pthread_create(&threads[created], NULL,
                        context_only_churn_worker,

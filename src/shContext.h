@@ -34,14 +34,29 @@
 typedef struct
 {
   VGHandle handle;
+  SHRecursiveMutex mutex;
+  SHAtomicInt refCount;
   GLuint texture;
   GLuint framebuffer;
   SHint width;
   SHint height;
 } SHMaskLayer;
 
+typedef struct
+{
+  SHMaskLayer *maskLayer;
+  VGboolean locked;
+  VGboolean retained;
+} SHMaskLayerAccess;
+
 void SHMaskLayer_ctor(SHMaskLayer *m);
 void SHMaskLayer_dtor(SHMaskLayer *m);
+void shMaskLayerLock(SHMaskLayer *m);
+void shMaskLayerUnlock(SHMaskLayer *m);
+void shMaskLayerAddRef(SHMaskLayer *m);
+void shMaskLayerRelease(SHMaskLayer *m);
+void shMaskLayerAccessInit(SHMaskLayerAccess *access);
+void shMaskLayerAccessCleanup(SHMaskLayerAccess *access);
 
 #define _ITEM_T SHMaskLayer*
 #define _ARRAY_T SHMaskLayerArray
@@ -347,6 +362,9 @@ VGboolean shAcquireFont(VGContext *c,
                         VGFont font,
                         SHFontAccess *access);
 SHMaskLayer* shGetMaskLayer(VGContext *c, VGMaskLayer maskLayer);
+VGboolean shAcquireMaskLayer(VGContext *c,
+                             VGMaskLayer maskLayer,
+                             SHMaskLayerAccess *access);
 VGboolean shIsLiveImage(VGContext *c, const SHImage *image);
 VGContext* shGetContext();
 VGContext* shCreateContext(void);

@@ -228,7 +228,7 @@ static void SHResourceGroup_dtor(SHResourceGroup *resources)
   for (i=0; i<resources->maskLayers.size; ++i) {
     shReleaseHandle(resources, resources->maskLayers.items[i]->handle,
                     SH_RESOURCE_MASK_LAYER, resources->maskLayers.items[i]);
-    SH_DELETEOBJ(SHMaskLayer, resources->maskLayers.items[i]);
+    shMaskLayerRelease(resources->maskLayers.items[i]);
   }
 
   for (i=0; i<resources->paths.size; ++i) {
@@ -447,6 +447,8 @@ static const char* shMaskFragmentShaderSource =
 void SHMaskLayer_ctor(SHMaskLayer *m)
 {
   m->handle = VG_INVALID_HANDLE;
+  shRecursiveMutexInit(&m->mutex);
+  shAtomicIntInit(&m->refCount, 1);
   m->texture = 0;
   m->framebuffer = 0;
   m->width = 0;
@@ -465,6 +467,63 @@ void SHMaskLayer_dtor(SHMaskLayer *m)
   m->framebuffer = 0;
   m->width = 0;
   m->height = 0;
+  shAtomicIntDestroy(&m->refCount);
+  shRecursiveMutexDestroy(&m->mutex);
+}
+
+void shMaskLayerLock(SHMaskLayer *m)
+{
+  if (m)
+    shRecursiveMutexLock(&m->mutex);
+}
+
+void shMaskLayerUnlock(SHMaskLayer *m)
+{
+  if (m)
+    shRecursiveMutexUnlock(&m->mutex);
+}
+
+void shMaskLayerAddRef(SHMaskLayer *m)
+{
+  if (m)
+    shAtomicIntIncrement(&m->refCount);
+}
+
+void shMaskLayerRelease(SHMaskLayer *m)
+{
+  if (!m)
+    return;
+
+  if (shAtomicIntDecrement(&m->refCount) <= 0)
+    SH_DELETEOBJ(SHMaskLayer, m);
+}
+
+void shMaskLayerAccessInit(SHMaskLayerAccess *access)
+{
+  if (!access)
+    return;
+
+  access->maskLayer = NULL;
+  access->locked = VG_FALSE;
+  access->retained = VG_FALSE;
+}
+
+void shMaskLayerAccessCleanup(SHMaskLayerAccess *access)
+{
+  if (!access)
+    return;
+
+  if (access->locked) {
+    shMaskLayerUnlock(access->maskLayer);
+    access->locked = VG_FALSE;
+  }
+
+  if (access->retained) {
+    shMaskLayerRelease(access->maskLayer);
+    access->retained = VG_FALSE;
+  }
+
+  access->maskLayer = NULL;
 }
 
 static VGboolean shConfigureMaskTarget(GLuint *texture,
@@ -1450,6 +1509,34 @@ SHMaskLayer* shGetMaskLayer(VGContext *c, VGMaskLayer maskLayer)
                                      SH_RESOURCE_MASK_LAYER);
 }
 
+VGboolean shAcquireMaskLayer(VGContext *c,
+                             VGMaskLayer maskLayer,
+                             SHMaskLayerAccess *access)
+{
+  if (!access)
+    return VG_FALSE;
+
+  shMaskLayerAccessInit(access);
+
+  if (!c || !c->resources)
+    return VG_FALSE;
+
+  shLockResourceGroup(c->resources);
+  access->maskLayer = shGetMaskLayer(c, maskLayer);
+  if (access->maskLayer) {
+    shMaskLayerAddRef(access->maskLayer);
+    access->retained = VG_TRUE;
+  }
+  shUnlockResourceGroup(c->resources);
+
+  if (!access->maskLayer)
+    return VG_FALSE;
+
+  shMaskLayerLock(access->maskLayer);
+  access->locked = VG_TRUE;
+  return VG_TRUE;
+}
+
 VGboolean shIsLiveImage(VGContext *c, const SHImage *image)
 {
   return image && image->handle != VG_INVALID_HANDLE &&
@@ -1706,10 +1793,22 @@ VGboolean shApplyMaskValueToSurface(VGContext *context,
                               operation);
 }
 
+static void shCleanupMaskSourceLocks(SHImageLockSet *imageLocks,
+                                     VGboolean imageLocked,
+                                     SHMaskLayer *layer,
+                                     VGboolean layerLocked)
+{
+  if (layerLocked)
+    shMaskLayerUnlock(layer);
+  if (imageLocked)
+    shImageLockSetCleanup(imageLocks);
+}
+
 VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
                         VGint x, VGint y, VGint width, VGint height)
 {
   SHImage *image = NULL;
+  SHImageLockSet imageLocks;
   SHMaskLayer *layer = NULL;
   SHResourceType maskType = SH_RESOURCE_INVALID;
   SHMaskGLState state;
@@ -1725,7 +1824,11 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
   long long drawWidth, drawHeight;
   VGfloat maskValue = 1.0f;
   VGfloat s0 = 0.0f, t0 = 0.0f, s1 = 0.0f, t1 = 0.0f;
+  VGboolean imageLocked = VG_FALSE;
+  VGboolean layerLocked = VG_FALSE;
   VG_GETCONTEXT(VG_NO_RETVAL);
+
+  shImageLockSetInit(&imageLocks);
 
   VG_RETURN_ERR_IF(operation != VG_CLEAR_MASK &&
                    operation != VG_FILL_MASK &&
@@ -1747,8 +1850,15 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
     if (maskType == SH_RESOURCE_IMAGE) {
       image = shGetImage(context, (VGImage)mask);
       VG_RETURN_ERR_IF(!image, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
-      VG_RETURN_ERR_IF(shImageIsRenderTarget(image),
-                       VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+
+      shImageLockSetAddImage(&imageLocks, image);
+      shImageLockSetLock(&imageLocks);
+      imageLocked = VG_TRUE;
+      if (shImageIsRenderTarget(image)) {
+        shImageLockSetCleanup(&imageLocks);
+        VG_RETURN_ERR(VG_IMAGE_IN_USE_ERROR, VG_NO_RETVAL);
+      }
+
       sourceWidth = image->width;
       sourceHeight = image->height;
       sourceTextureWidth = shImageRoot(image)->width;
@@ -1758,6 +1868,8 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
     } else {
       layer = shGetMaskLayer(context, (VGMaskLayer)mask);
       VG_RETURN_ERR_IF(!layer, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
+      shMaskLayerLock(layer);
+      layerLocked = VG_TRUE;
       sourceWidth = layer->width;
       sourceHeight = layer->height;
       sourceTextureWidth = layer->width;
@@ -1769,14 +1881,18 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
     maskValue = 0.0f;
   }
 
-  if (!shResizeMaskSurface(context, context->surfaceWidth, context->surfaceHeight))
+  if (!shResizeMaskSurface(context, context->surfaceWidth, context->surfaceHeight)) {
+    shCleanupMaskSourceLocks(&imageLocks, imageLocked, layer, layerLocked);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
 
   if (context->maskTexture == 0 ||
       context->maskFramebuffer == 0 ||
       context->maskWidth <= 0 ||
-      context->maskHeight <= 0)
+      context->maskHeight <= 0) {
+    shCleanupMaskSourceLocks(&imageLocks, imageLocked, layer, layerLocked);
     VG_RETURN(VG_NO_RETVAL);
+  }
 
   rectX0 = x;
   rectY0 = y;
@@ -1795,8 +1911,10 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
   surfX1 = rectX1 > context->maskWidth ? context->maskWidth : rectX1;
   surfY1 = rectY1 > context->maskHeight ? context->maskHeight : rectY1;
 
-  if (surfX1 <= surfX0 || surfY1 <= surfY0)
+  if (surfX1 <= surfX0 || surfY1 <= surfY0) {
+    shCleanupMaskSourceLocks(&imageLocks, imageLocked, layer, layerLocked);
     VG_RETURN(VG_NO_RETVAL);
+  }
 
   drawWidth = surfX1 - surfX0;
   drawHeight = surfY1 - surfY0;
@@ -1824,6 +1942,7 @@ VG_API_CALL void vgMask(VGHandle mask, VGMaskOperation operation,
                  s0, t0, s1, t1,
                  operation);
   shRestoreMaskGLState(&state);
+  shCleanupMaskSourceLocks(&imageLocks, imageLocked, layer, layerLocked);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1881,9 +2000,11 @@ VG_API_CALL void vgDestroyMaskLayer(VGMaskLayer maskLayer)
     -1;
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
+  shMaskLayerLock(layer);
   shUnregisterResource(context, maskLayer, SH_RESOURCE_MASK_LAYER, layer);
   shMaskLayerArrayRemoveAt(&context->resources->maskLayers, index);
-  SH_DELETEOBJ(SHMaskLayer, layer);
+  shMaskLayerUnlock(layer);
+  shMaskLayerRelease(layer);
 
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -1905,9 +2026,12 @@ VG_API_CALL void vgFillMaskLayer(VGMaskLayer maskLayer,
                    SH_ISNAN(value) || value < 0.0f || value > 1.0f,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  VG_RETURN_ERR_IF((long long)x + (long long)width > layer->width ||
-                   (long long)y + (long long)height > layer->height,
-                   VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  shMaskLayerLock(layer);
+  if ((long long)x + (long long)width > layer->width ||
+      (long long)y + (long long)height > layer->height) {
+    shMaskLayerUnlock(layer);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
   shSaveMaskGLState(&state);
   shDrawMaskRect(context,
@@ -1919,6 +2043,7 @@ VG_API_CALL void vgFillMaskLayer(VGMaskLayer maskLayer,
                  VG_SET_MASK);
   shRestoreMaskGLState(&state);
 
+  shMaskLayerUnlock(layer);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1941,14 +2066,20 @@ VG_API_CALL void vgCopyMask(VGMaskLayer maskLayer,
   VG_RETURN_ERR_IF(width <= 0 || height <= 0,
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  if (!shResizeMaskSurface(context, context->surfaceWidth, context->surfaceHeight))
+  shMaskLayerLock(layer);
+
+  if (!shResizeMaskSurface(context, context->surfaceWidth, context->surfaceHeight)) {
+    shMaskLayerUnlock(layer);
     VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
 
   if (context->maskTexture == 0 ||
       context->maskFramebuffer == 0 ||
       context->maskWidth <= 0 ||
-      context->maskHeight <= 0)
+      context->maskHeight <= 0) {
+    shMaskLayerUnlock(layer);
     VG_RETURN(VG_NO_RETVAL);
+  }
 
   dstX0 = dx;
   dstY0 = dy;
@@ -1983,8 +2114,10 @@ VG_API_CALL void vgCopyMask(VGMaskLayer maskLayer,
 
   copyWidth = dstX1 - dstX0;
   copyHeight = dstY1 - dstY0;
-  if (copyWidth <= 0 || copyHeight <= 0)
+  if (copyWidth <= 0 || copyHeight <= 0) {
+    shMaskLayerUnlock(layer);
     VG_RETURN(VG_NO_RETVAL);
+  }
 
   s0 = (VGfloat)srcX0 / (VGfloat)context->maskWidth;
   t0 = (VGfloat)srcY0 / (VGfloat)context->maskHeight;
@@ -2002,6 +2135,7 @@ VG_API_CALL void vgCopyMask(VGMaskLayer maskLayer,
                  VG_SET_MASK);
   shRestoreMaskGLState(&state);
 
+  shMaskLayerUnlock(layer);
   VG_RETURN(VG_NO_RETVAL);
 }
 
