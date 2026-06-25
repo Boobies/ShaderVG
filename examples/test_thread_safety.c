@@ -91,6 +91,7 @@ typedef struct
   int churnSchedule;
   int paintProfile;
   int paintDrawMode;
+  int renderingQuality;
   int verbose;
 } ThreadTestOptions;
 
@@ -157,6 +158,13 @@ enum {
   THREAD_PAINT_DRAW_FILL,
   THREAD_PAINT_DRAW_STROKE,
   THREAD_PAINT_DRAW_SPLIT
+};
+
+enum {
+  THREAD_RENDERING_QUALITY_DEFAULT,
+  THREAD_RENDERING_QUALITY_NONANTIALIASED,
+  THREAD_RENDERING_QUALITY_FASTER,
+  THREAD_RENDERING_QUALITY_BETTER
 };
 
 enum {
@@ -310,6 +318,16 @@ static const ThreadNamedValue threadPaintDrawModeValues[] = {
   {"split", THREAD_PAINT_DRAW_SPLIT},
   {NULL, 0}
 };
+
+static const ThreadNamedValue threadRenderingQualityValues[] = {
+  {"default", THREAD_RENDERING_QUALITY_DEFAULT},
+  {"nonantialiased", THREAD_RENDERING_QUALITY_NONANTIALIASED},
+  {"faster", THREAD_RENDERING_QUALITY_FASTER},
+  {"better", THREAD_RENDERING_QUALITY_BETTER},
+  {NULL, 0}
+};
+
+static int g_threadTestRenderingQuality = THREAD_RENDERING_QUALITY_DEFAULT;
 
 #if !defined(_WIN32)
 static volatile sig_atomic_t g_activeTestCase = THREAD_CASE_ALL;
@@ -926,11 +944,18 @@ static int parse_thread_test_options(ThreadTestOptions *options)
                       &options->paintDrawMode))
     return 1;
 
+  if (parse_named_env("SHADERVG_THREAD_TEST_RENDERING_QUALITY",
+                      threadRenderingQualityValues,
+                      THREAD_RENDERING_QUALITY_DEFAULT,
+                      &options->renderingQuality))
+    return 1;
+
   if (parse_bool_env("SHADERVG_THREAD_TEST_VERBOSE",
                      0,
                      &options->verbose))
     return 1;
 
+  g_threadTestRenderingQuality = options->renderingQuality;
   thread_test_set_active_paint_options(options->paintProfile,
                                        options->paintDrawMode);
 
@@ -1212,6 +1237,20 @@ static int reset_churn_path(VGPath path, int workerId, int iteration)
 static int reset_test_state(void)
 {
   VGfloat origin[2] = { 0.0f, 0.0f };
+
+  switch (g_threadTestRenderingQuality) {
+  case THREAD_RENDERING_QUALITY_NONANTIALIASED:
+    vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_NONANTIALIASED);
+    break;
+  case THREAD_RENDERING_QUALITY_FASTER:
+    vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_FASTER);
+    break;
+  case THREAD_RENDERING_QUALITY_BETTER:
+    vgSeti(VG_RENDERING_QUALITY, VG_RENDERING_QUALITY_BETTER);
+    break;
+  default:
+    break;
+  }
 
   vgSeti(VG_MATRIX_MODE, VG_MATRIX_PATH_USER_TO_SURFACE);
   vgLoadIdentity();
