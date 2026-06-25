@@ -5,10 +5,16 @@
 #include <X11/Xlib.h>
 
 #include <errno.h>
+#include <stdarg.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 typedef struct
 {
@@ -29,6 +35,9 @@ typedef struct
   int operation;
   int workerId;
   int iterations;
+  int churnLane;
+  int verbose;
+  const char *workerName;
 } ThreadArgs;
 
 typedef struct
@@ -72,12 +81,60 @@ typedef struct
   int repeat;
   int sharedWorkers;
   int sharedIterations;
+  int testCase;
+  int churnLane;
+  int churnSchedule;
+  int verbose;
 } ThreadTestOptions;
+
+typedef struct
+{
+  const char *name;
+  int value;
+} ThreadNamedValue;
+
+typedef void *(*ThreadWorkerFunc)(void *arg);
 
 enum {
   THREAD_TEARDOWN_DESTROY_CONTEXT,
   THREAD_TEARDOWN_DESTROY_SURFACE,
   THREAD_TEARDOWN_TERMINATE_DISPLAY
+};
+
+enum {
+  THREAD_CASE_ALL,
+  THREAD_CASE_CONCURRENT_FIRST_EGL,
+  THREAD_CASE_DISPLAY_CANONICALIZATION,
+  THREAD_CASE_DISPLAY_STALE_GENERATION,
+  THREAD_CASE_SAME_THREAD_DEFERRED_DESTROY,
+  THREAD_CASE_RELEASE_THREAD_CLEARS_CURRENT,
+  THREAD_CASE_RELEASE_THREAD_FINALIZES_DEFERRED_DESTROY,
+  THREAD_CASE_CROSS_THREAD_TEARDOWN_CONFLICTS,
+  THREAD_CASE_WARM_UP_EGL,
+  THREAD_CASE_INDEPENDENT_CONTEXTS,
+  THREAD_CASE_SHARED_CONTEXT_STRESS,
+  THREAD_CASE_SHARED_RESOURCE_CHURN,
+  THREAD_CASE_RETAINED_RESOURCE_LIFETIME,
+  THREAD_CASE_SELECTED_PAINT_LIFETIME,
+  THREAD_CASE_IMAGE_PBUFFER_REF_RACE,
+  THREAD_CASE_MAKE_CURRENT_CONFLICT
+};
+
+enum {
+  THREAD_CHURN_ALL,
+  THREAD_CHURN_SHARED_RESOURCE,
+  THREAD_CHURN_PATH,
+  THREAD_CHURN_PAINT,
+  THREAD_CHURN_IMAGE,
+  THREAD_CHURN_FONT,
+  THREAD_CHURN_MASK_LAYER,
+  THREAD_CHURN_FILTER,
+  THREAD_CHURN_CONTEXT_ONLY
+};
+
+enum {
+  THREAD_CHURN_SCHEDULE_SEQUENTIAL,
+  THREAD_CHURN_SCHEDULE_COMBINED
 };
 
 enum {
@@ -101,6 +158,282 @@ enum {
   THREAD_MAX_SHARED_WORKERS = 16,
   THREAD_MAX_SHARED_ITERATIONS = 100000
 };
+
+static const ThreadNamedValue threadTestCaseValues[] = {
+  {"all", THREAD_CASE_ALL},
+  {"concurrent-first-egl", THREAD_CASE_CONCURRENT_FIRST_EGL},
+  {"display-canonicalization", THREAD_CASE_DISPLAY_CANONICALIZATION},
+  {"display-stale-generation", THREAD_CASE_DISPLAY_STALE_GENERATION},
+  {"same-thread-deferred-destroy", THREAD_CASE_SAME_THREAD_DEFERRED_DESTROY},
+  {"release-thread-clears-current", THREAD_CASE_RELEASE_THREAD_CLEARS_CURRENT},
+  {"release-thread-finalizes-deferred-destroy",
+   THREAD_CASE_RELEASE_THREAD_FINALIZES_DEFERRED_DESTROY},
+  {"cross-thread-teardown-conflicts",
+   THREAD_CASE_CROSS_THREAD_TEARDOWN_CONFLICTS},
+  {"warm-up-egl", THREAD_CASE_WARM_UP_EGL},
+  {"independent-contexts", THREAD_CASE_INDEPENDENT_CONTEXTS},
+  {"shared-context-stress", THREAD_CASE_SHARED_CONTEXT_STRESS},
+  {"shared-resource-churn", THREAD_CASE_SHARED_RESOURCE_CHURN},
+  {"retained-resource-lifetime", THREAD_CASE_RETAINED_RESOURCE_LIFETIME},
+  {"selected-paint-lifetime", THREAD_CASE_SELECTED_PAINT_LIFETIME},
+  {"image-pbuffer-ref-race", THREAD_CASE_IMAGE_PBUFFER_REF_RACE},
+  {"make-current-conflict", THREAD_CASE_MAKE_CURRENT_CONFLICT},
+  {NULL, 0}
+};
+
+static const ThreadNamedValue threadChurnLaneValues[] = {
+  {"all", THREAD_CHURN_ALL},
+  {"shared-resource", THREAD_CHURN_SHARED_RESOURCE},
+  {"path", THREAD_CHURN_PATH},
+  {"paint", THREAD_CHURN_PAINT},
+  {"image", THREAD_CHURN_IMAGE},
+  {"font", THREAD_CHURN_FONT},
+  {"mask-layer", THREAD_CHURN_MASK_LAYER},
+  {"filter", THREAD_CHURN_FILTER},
+  {"context-only", THREAD_CHURN_CONTEXT_ONLY},
+  {NULL, 0}
+};
+
+static const ThreadNamedValue threadChurnScheduleValues[] = {
+  {"sequential", THREAD_CHURN_SCHEDULE_SEQUENTIAL},
+  {"combined", THREAD_CHURN_SCHEDULE_COMBINED},
+  {NULL, 0}
+};
+
+#if !defined(_WIN32)
+static volatile sig_atomic_t g_activeTestCase = THREAD_CASE_ALL;
+static volatile sig_atomic_t g_activeChurnLane = THREAD_CHURN_ALL;
+#if defined(_MSC_VER)
+static __declspec(thread) volatile sig_atomic_t t_activeChurnLane =
+  THREAD_CHURN_ALL;
+#else
+static __thread volatile sig_atomic_t t_activeChurnLane = THREAD_CHURN_ALL;
+#endif
+
+static const char *thread_signal_test_case_name(sig_atomic_t testCase)
+{
+  switch (testCase) {
+  case THREAD_CASE_CONCURRENT_FIRST_EGL:
+    return "concurrent-first-egl";
+  case THREAD_CASE_DISPLAY_CANONICALIZATION:
+    return "display-canonicalization";
+  case THREAD_CASE_DISPLAY_STALE_GENERATION:
+    return "display-stale-generation";
+  case THREAD_CASE_SAME_THREAD_DEFERRED_DESTROY:
+    return "same-thread-deferred-destroy";
+  case THREAD_CASE_RELEASE_THREAD_CLEARS_CURRENT:
+    return "release-thread-clears-current";
+  case THREAD_CASE_RELEASE_THREAD_FINALIZES_DEFERRED_DESTROY:
+    return "release-thread-finalizes-deferred-destroy";
+  case THREAD_CASE_CROSS_THREAD_TEARDOWN_CONFLICTS:
+    return "cross-thread-teardown-conflicts";
+  case THREAD_CASE_WARM_UP_EGL:
+    return "warm-up-egl";
+  case THREAD_CASE_INDEPENDENT_CONTEXTS:
+    return "independent-contexts";
+  case THREAD_CASE_SHARED_CONTEXT_STRESS:
+    return "shared-context-stress";
+  case THREAD_CASE_SHARED_RESOURCE_CHURN:
+    return "shared-resource-churn";
+  case THREAD_CASE_RETAINED_RESOURCE_LIFETIME:
+    return "retained-resource-lifetime";
+  case THREAD_CASE_SELECTED_PAINT_LIFETIME:
+    return "selected-paint-lifetime";
+  case THREAD_CASE_IMAGE_PBUFFER_REF_RACE:
+    return "image-pbuffer-ref-race";
+  case THREAD_CASE_MAKE_CURRENT_CONFLICT:
+    return "make-current-conflict";
+  default:
+    return "none";
+  }
+}
+
+static const char *thread_signal_churn_lane_name(sig_atomic_t lane)
+{
+  switch (lane) {
+  case THREAD_CHURN_SHARED_RESOURCE:
+    return "shared-resource";
+  case THREAD_CHURN_PATH:
+    return "path";
+  case THREAD_CHURN_PAINT:
+    return "paint";
+  case THREAD_CHURN_IMAGE:
+    return "image";
+  case THREAD_CHURN_FONT:
+    return "font";
+  case THREAD_CHURN_MASK_LAYER:
+    return "mask-layer";
+  case THREAD_CHURN_FILTER:
+    return "filter";
+  case THREAD_CHURN_CONTEXT_ONLY:
+    return "context-only";
+  default:
+    return "none";
+  }
+}
+
+static void thread_signal_write(const char *text)
+{
+  size_t length = 0;
+
+  if (!text)
+    return;
+
+  while (text[length] != '\0')
+    ++length;
+
+  if (length > 0)
+    (void)write(STDERR_FILENO, text, length);
+}
+
+static void thread_test_crash_handler(int signo)
+{
+  sig_atomic_t lane = t_activeChurnLane;
+
+  if (lane == THREAD_CHURN_ALL)
+    lane = g_activeChurnLane;
+
+  thread_signal_write("\nthread test crashed while running case ");
+  thread_signal_write(thread_signal_test_case_name(g_activeTestCase));
+  thread_signal_write(", churn lane ");
+  thread_signal_write(thread_signal_churn_lane_name(lane));
+  thread_signal_write("\n");
+
+  signal(signo, SIG_DFL);
+  raise(signo);
+}
+
+static void install_thread_test_crash_handler(void)
+{
+  struct sigaction action;
+
+  memset(&action, 0, sizeof(action));
+  action.sa_handler = thread_test_crash_handler;
+  sigemptyset(&action.sa_mask);
+  action.sa_flags = SA_RESETHAND;
+
+  sigaction(SIGSEGV, &action, NULL);
+  sigaction(SIGABRT, &action, NULL);
+#ifdef SIGBUS
+  sigaction(SIGBUS, &action, NULL);
+#endif
+}
+
+static void thread_test_set_active_case(int testCase)
+{
+  g_activeTestCase = testCase;
+}
+
+static void thread_test_set_active_churn_lane(int lane)
+{
+  g_activeChurnLane = lane;
+  t_activeChurnLane = lane;
+}
+#else
+static void install_thread_test_crash_handler(void)
+{
+}
+
+static void thread_test_set_active_case(int testCase)
+{
+  (void)testCase;
+}
+
+static void thread_test_set_active_churn_lane(int lane)
+{
+  (void)lane;
+}
+#endif
+
+static void thread_test_log(int verbose, const char *format, ...)
+{
+  va_list args;
+
+  if (!verbose)
+    return;
+
+  va_start(args, format);
+  vfprintf(stderr, format, args);
+  va_end(args);
+  fflush(stderr);
+}
+
+static const char *thread_named_value_name(const ThreadNamedValue *values,
+                                           int value)
+{
+  int i;
+
+  for (i = 0; values[i].name; ++i)
+    if (values[i].value == value)
+      return values[i].name;
+
+  return "unknown";
+}
+
+static void print_named_values(const ThreadNamedValue *values)
+{
+  int i;
+
+  for (i = 0; values[i].name; ++i)
+    fprintf(stderr, "%s%s", i == 0 ? "" : ", ", values[i].name);
+}
+
+static int parse_named_env(const char *name,
+                           const ThreadNamedValue *values,
+                           int defaultValue,
+                           int *out)
+{
+  const char *value = getenv(name);
+  int i;
+
+  if (!value || !*value) {
+    *out = defaultValue;
+    return 0;
+  }
+
+  for (i = 0; values[i].name; ++i) {
+    if (strcmp(value, values[i].name) == 0) {
+      *out = values[i].value;
+      return 0;
+    }
+  }
+
+  fprintf(stderr, "%s must be one of: ", name);
+  print_named_values(values);
+  fprintf(stderr, "\n");
+  return 1;
+}
+
+static int parse_bool_env(const char *name, int defaultValue, int *out)
+{
+  const char *value = getenv(name);
+
+  if (!value || !*value) {
+    *out = defaultValue;
+    return 0;
+  }
+
+  if (strcmp(value, "1") == 0 ||
+      strcmp(value, "true") == 0 ||
+      strcmp(value, "yes") == 0 ||
+      strcmp(value, "on") == 0) {
+    *out = 1;
+    return 0;
+  }
+
+  if (strcmp(value, "0") == 0 ||
+      strcmp(value, "false") == 0 ||
+      strcmp(value, "no") == 0 ||
+      strcmp(value, "off") == 0) {
+    *out = 0;
+    return 0;
+  }
+
+  fprintf(stderr,
+          "%s must be 1/0, true/false, yes/no, or on/off\n",
+          name);
+  return 1;
+}
 
 static int parse_positive_env(const char *name,
                               int defaultValue,
@@ -152,6 +485,29 @@ static int parse_thread_test_options(ThreadTestOptions *options)
                          THREAD_DEFAULT_SHARED_ITERATIONS,
                          THREAD_MAX_SHARED_ITERATIONS,
                          &options->sharedIterations))
+    return 1;
+
+  if (parse_named_env("SHADERVG_THREAD_TEST_CASE",
+                      threadTestCaseValues,
+                      THREAD_CASE_ALL,
+                      &options->testCase))
+    return 1;
+
+  if (parse_named_env("SHADERVG_THREAD_TEST_CHURN_LANE",
+                      threadChurnLaneValues,
+                      THREAD_CHURN_ALL,
+                      &options->churnLane))
+    return 1;
+
+  if (parse_named_env("SHADERVG_THREAD_TEST_CHURN_SCHEDULE",
+                      threadChurnScheduleValues,
+                      THREAD_CHURN_SCHEDULE_SEQUENTIAL,
+                      &options->churnSchedule))
+    return 1;
+
+  if (parse_bool_env("SHADERVG_THREAD_TEST_VERBOSE",
+                     0,
+                     &options->verbose))
     return 1;
 
   return 0;
@@ -1527,6 +1883,26 @@ static int exercise_context_only_state(int workerId, int iterations)
   return expect_vg_no_error("thread test context-only finish failed");
 }
 
+static void thread_test_worker_begin(const ThreadArgs *args)
+{
+  thread_test_set_active_churn_lane(args->churnLane);
+  thread_test_log(args->verbose,
+                  "thread test begin churn lane %s worker %d iterations %d\n",
+                  args->workerName ? args->workerName : "unknown",
+                  args->workerId,
+                  args->iterations);
+}
+
+static void thread_test_worker_end(const ThreadArgs *args)
+{
+  thread_test_log(args->verbose,
+                  "thread test end churn lane %s worker %d status %d\n",
+                  args->workerName ? args->workerName : "unknown",
+                  args->workerId,
+                  args->status);
+  thread_test_set_active_churn_lane(THREAD_CHURN_ALL);
+}
+
 static void *first_egl_worker(void *arg)
 {
   ThreadArgs *args = (ThreadArgs*)arg;
@@ -1595,6 +1971,7 @@ static void *shared_resource_churn_worker(void *arg)
   };
   int i;
 
+  thread_test_worker_begin(args);
   state.ownsDisplay = 0;
   args->status = init_shared_egl(&state,
                                  args->display,
@@ -1612,6 +1989,7 @@ static void *shared_resource_churn_worker(void *arg)
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
+  thread_test_worker_end(args);
   return NULL;
 }
 
@@ -1626,6 +2004,7 @@ static void *path_object_churn_worker(void *arg)
     0
   };
 
+  thread_test_worker_begin(args);
   state.ownsDisplay = 0;
   args->status = init_shared_egl(&state,
                                  args->display,
@@ -1638,6 +2017,7 @@ static void *path_object_churn_worker(void *arg)
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
+  thread_test_worker_end(args);
   return NULL;
 }
 
@@ -1652,6 +2032,7 @@ static void *paint_object_churn_worker(void *arg)
     0
   };
 
+  thread_test_worker_begin(args);
   state.ownsDisplay = 0;
   args->status = init_shared_egl(&state,
                                  args->display,
@@ -1664,6 +2045,7 @@ static void *paint_object_churn_worker(void *arg)
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
+  thread_test_worker_end(args);
   return NULL;
 }
 
@@ -1678,6 +2060,7 @@ static void *image_object_churn_worker(void *arg)
     0
   };
 
+  thread_test_worker_begin(args);
   state.ownsDisplay = 0;
   args->status = init_shared_egl(&state,
                                  args->display,
@@ -1690,6 +2073,7 @@ static void *image_object_churn_worker(void *arg)
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
+  thread_test_worker_end(args);
   return NULL;
 }
 
@@ -1704,6 +2088,7 @@ static void *font_object_churn_worker(void *arg)
     0
   };
 
+  thread_test_worker_begin(args);
   state.ownsDisplay = 0;
   args->status = init_shared_egl(&state,
                                  args->display,
@@ -1716,6 +2101,7 @@ static void *font_object_churn_worker(void *arg)
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
+  thread_test_worker_end(args);
   return NULL;
 }
 
@@ -1730,6 +2116,7 @@ static void *mask_layer_object_churn_worker(void *arg)
     0
   };
 
+  thread_test_worker_begin(args);
   state.ownsDisplay = 0;
   args->status = init_shared_egl(&state,
                                  args->display,
@@ -1742,6 +2129,7 @@ static void *mask_layer_object_churn_worker(void *arg)
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
+  thread_test_worker_end(args);
   return NULL;
 }
 
@@ -1756,6 +2144,7 @@ static void *filter_object_churn_worker(void *arg)
     0
   };
 
+  thread_test_worker_begin(args);
   state.ownsDisplay = 0;
   args->status = init_shared_egl(&state,
                                  args->display,
@@ -1768,6 +2157,7 @@ static void *filter_object_churn_worker(void *arg)
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
+  thread_test_worker_end(args);
   return NULL;
 }
 
@@ -1782,6 +2172,7 @@ static void *context_only_churn_worker(void *arg)
     0
   };
 
+  thread_test_worker_begin(args);
   state.ownsDisplay = 0;
   args->status = init_shared_egl(&state,
                                  args->display,
@@ -1794,6 +2185,7 @@ static void *context_only_churn_worker(void *arg)
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
 
+  thread_test_worker_end(args);
   return NULL;
 }
 
@@ -2090,16 +2482,165 @@ static int run_shared_context_stress(void)
   return status;
 }
 
-static int run_shared_resource_churn(const ThreadTestOptions *options)
+typedef struct
 {
-  int threadCount = options->sharedWorkers * 8;
-  TestEGL base = {
-    EGL_NO_DISPLAY,
-    0,
-    EGL_NO_SURFACE,
-    EGL_NO_CONTEXT,
-    0
-  };
+  int lane;
+  const char *name;
+  ThreadWorkerFunc worker;
+} ThreadChurnLane;
+
+static const ThreadChurnLane threadChurnLanes[] = {
+  {THREAD_CHURN_SHARED_RESOURCE,
+   "shared-resource",
+   shared_resource_churn_worker},
+  {THREAD_CHURN_PATH, "path", path_object_churn_worker},
+  {THREAD_CHURN_PAINT, "paint", paint_object_churn_worker},
+  {THREAD_CHURN_IMAGE, "image", image_object_churn_worker},
+  {THREAD_CHURN_FONT, "font", font_object_churn_worker},
+  {THREAD_CHURN_MASK_LAYER, "mask-layer", mask_layer_object_churn_worker},
+  {THREAD_CHURN_FILTER, "filter", filter_object_churn_worker},
+  {THREAD_CHURN_CONTEXT_ONLY, "context-only", context_only_churn_worker},
+  {0, NULL, NULL}
+};
+
+static int thread_churn_lane_enabled(const ThreadTestOptions *options,
+                                     int lane)
+{
+  return (options->churnLane == THREAD_CHURN_ALL ||
+          options->churnLane == lane) ? 1 : 0;
+}
+
+static int thread_churn_enabled_lane_count(const ThreadTestOptions *options)
+{
+  int count = 0;
+  int i;
+
+  for (i = 0; threadChurnLanes[i].name; ++i)
+    if (thread_churn_lane_enabled(options, threadChurnLanes[i].lane))
+      ++count;
+
+  return count;
+}
+
+static int start_shared_churn_lane(const ThreadTestOptions *options,
+                                   const ThreadChurnLane *lane,
+                                   TestEGL *base,
+                                   pthread_t *threads,
+                                   ThreadArgs *args,
+                                   int *created)
+{
+  int i;
+
+  if (!thread_churn_lane_enabled(options, lane->lane))
+    return 0;
+
+  thread_test_set_active_churn_lane(lane->lane);
+  thread_test_log(options->verbose,
+                  "thread test schedule churn lane %s workers %d iterations %d\n",
+                  lane->name,
+                  options->sharedWorkers,
+                  options->sharedIterations);
+
+  for (i = 0; i < options->sharedWorkers; ++i) {
+    args[*created].status = 1;
+    args[*created].display = base->display;
+    args[*created].config = base->config;
+    args[*created].context = base->context;
+    args[*created].workerId =
+      options->sharedWorkers * (lane->lane - 1) + i + 1;
+    args[*created].iterations = options->sharedIterations;
+    args[*created].churnLane = lane->lane;
+    args[*created].verbose = options->verbose;
+    args[*created].workerName = lane->name;
+
+    if (pthread_create(&threads[*created], NULL,
+                       lane->worker,
+                       &args[*created]) != 0) {
+      fprintf(stderr, "thread test could not create %s churn worker\n",
+              lane->name);
+      return 1;
+    }
+
+    ++(*created);
+  }
+
+  return 0;
+}
+
+static int join_shared_churn_threads(pthread_t *threads,
+                                     ThreadArgs *args,
+                                     int created)
+{
+  int i;
+  int status = 0;
+
+  for (i = 0; i < created; ++i) {
+    pthread_join(threads[i], NULL);
+    if (args[i].status)
+      status = 1;
+  }
+
+  return status;
+}
+
+static int run_shared_churn_lane_threads(const ThreadTestOptions *options,
+                                         const ThreadChurnLane *lane,
+                                         TestEGL *base)
+{
+  pthread_t *threads = NULL;
+  ThreadArgs *args = NULL;
+  int created = 0;
+  int status = 0;
+
+  threads = (pthread_t*)calloc((size_t)options->sharedWorkers,
+                               sizeof(pthread_t));
+  args = (ThreadArgs*)calloc((size_t)options->sharedWorkers,
+                             sizeof(ThreadArgs));
+  if (!threads || !args) {
+    fprintf(stderr, "thread test could not allocate shared churn workers\n");
+    free(threads);
+    free(args);
+    return 1;
+  }
+
+  if (start_shared_churn_lane(options,
+                              lane,
+                              base,
+                              threads,
+                              args,
+                              &created))
+    status = 1;
+
+  if (join_shared_churn_threads(threads, args, created))
+    status = 1;
+
+  free(threads);
+  free(args);
+  thread_test_set_active_churn_lane(THREAD_CHURN_ALL);
+  return status;
+}
+
+static int run_shared_churn_sequential(const ThreadTestOptions *options,
+                                       TestEGL *base)
+{
+  int i;
+
+  for (i = 0; threadChurnLanes[i].name; ++i) {
+    if (!thread_churn_lane_enabled(options, threadChurnLanes[i].lane))
+      continue;
+
+    if (run_shared_churn_lane_threads(options, &threadChurnLanes[i], base))
+      return 1;
+  }
+
+  return 0;
+}
+
+static int run_shared_churn_combined(const ThreadTestOptions *options,
+                                     TestEGL *base)
+{
+  int threadCount = options->sharedWorkers *
+                    thread_churn_enabled_lane_count(options);
   pthread_t *threads = NULL;
   ThreadArgs *args = NULL;
   int created = 0;
@@ -2117,159 +2658,50 @@ static int run_shared_resource_churn(const ThreadTestOptions *options)
     return 1;
   }
 
-  if (init_egl(&base, EGL_NO_CONTEXT)) {
-    free(threads);
-    free(args);
+  for (i = 0; threadChurnLanes[i].name; ++i) {
+    if (start_shared_churn_lane(options,
+                                &threadChurnLanes[i],
+                                base,
+                                threads,
+                                args,
+                                &created)) {
+      status = 1;
+      break;
+    }
+  }
+
+  if (join_shared_churn_threads(threads, args, created))
+    status = 1;
+
+  thread_test_set_active_churn_lane(THREAD_CHURN_ALL);
+
+  free(threads);
+  free(args);
+  return status;
+}
+
+static int run_shared_resource_churn(const ThreadTestOptions *options)
+{
+  TestEGL base = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+  int status;
+
+  if (init_egl(&base, EGL_NO_CONTEXT))
     return 1;
-  }
 
-  for (i = 0; !status && i < options->sharedWorkers; ++i) {
-    args[created].status = 1;
-    args[created].display = base.display;
-    args[created].config = base.config;
-    args[created].context = base.context;
-    args[created].workerId = i + 1;
-    args[created].iterations = options->sharedIterations;
-    if (pthread_create(&threads[created], NULL,
-                       shared_resource_churn_worker,
-                       &args[created]) != 0) {
-      fprintf(stderr, "thread test could not create shared resource worker\n");
-      status = 1;
-      break;
-    }
-    ++created;
-  }
-
-  for (i = 0; !status && i < options->sharedWorkers; ++i) {
-    args[created].status = 1;
-    args[created].display = base.display;
-    args[created].config = base.config;
-    args[created].context = base.context;
-    args[created].workerId = options->sharedWorkers + i + 1;
-    args[created].iterations = options->sharedIterations;
-    if (pthread_create(&threads[created], NULL,
-                       path_object_churn_worker,
-                       &args[created]) != 0) {
-      fprintf(stderr, "thread test could not create path churn worker\n");
-      status = 1;
-      break;
-    }
-    ++created;
-  }
-
-  for (i = 0; !status && i < options->sharedWorkers; ++i) {
-    args[created].status = 1;
-    args[created].display = base.display;
-    args[created].config = base.config;
-    args[created].context = base.context;
-    args[created].workerId = options->sharedWorkers * 2 + i + 1;
-    args[created].iterations = options->sharedIterations;
-    if (pthread_create(&threads[created], NULL,
-                       paint_object_churn_worker,
-                       &args[created]) != 0) {
-      fprintf(stderr, "thread test could not create paint churn worker\n");
-      status = 1;
-      break;
-    }
-    ++created;
-  }
-
-  for (i = 0; !status && i < options->sharedWorkers; ++i) {
-    args[created].status = 1;
-    args[created].display = base.display;
-    args[created].config = base.config;
-    args[created].context = base.context;
-    args[created].workerId = options->sharedWorkers * 3 + i + 1;
-    args[created].iterations = options->sharedIterations;
-    if (pthread_create(&threads[created], NULL,
-                       image_object_churn_worker,
-                       &args[created]) != 0) {
-      fprintf(stderr, "thread test could not create image churn worker\n");
-      status = 1;
-      break;
-    }
-    ++created;
-  }
-
-  for (i = 0; !status && i < options->sharedWorkers; ++i) {
-    args[created].status = 1;
-    args[created].display = base.display;
-    args[created].config = base.config;
-    args[created].context = base.context;
-    args[created].workerId = options->sharedWorkers * 4 + i + 1;
-    args[created].iterations = options->sharedIterations;
-    if (pthread_create(&threads[created], NULL,
-                       font_object_churn_worker,
-                       &args[created]) != 0) {
-      fprintf(stderr, "thread test could not create font churn worker\n");
-      status = 1;
-      break;
-    }
-    ++created;
-  }
-
-  for (i = 0; !status && i < options->sharedWorkers; ++i) {
-    args[created].status = 1;
-    args[created].display = base.display;
-    args[created].config = base.config;
-    args[created].context = base.context;
-    args[created].workerId = options->sharedWorkers * 5 + i + 1;
-    args[created].iterations = options->sharedIterations;
-    if (pthread_create(&threads[created], NULL,
-                       mask_layer_object_churn_worker,
-                       &args[created]) != 0) {
-      fprintf(stderr, "thread test could not create mask-layer churn worker\n");
-      status = 1;
-      break;
-    }
-    ++created;
-  }
-
-  for (i = 0; !status && i < options->sharedWorkers; ++i) {
-    args[created].status = 1;
-    args[created].display = base.display;
-    args[created].config = base.config;
-    args[created].context = base.context;
-    args[created].workerId = options->sharedWorkers * 6 + i + 1;
-    args[created].iterations = options->sharedIterations;
-    if (pthread_create(&threads[created], NULL,
-                       filter_object_churn_worker,
-                       &args[created]) != 0) {
-      fprintf(stderr, "thread test could not create filter churn worker\n");
-      status = 1;
-      break;
-    }
-    ++created;
-  }
-
-  for (i = 0; !status && i < options->sharedWorkers; ++i) {
-    args[created].status = 1;
-    args[created].display = base.display;
-    args[created].config = base.config;
-    args[created].context = base.context;
-    args[created].workerId = options->sharedWorkers * 7 + i + 1;
-    args[created].iterations = options->sharedIterations;
-    if (pthread_create(&threads[created], NULL,
-                       context_only_churn_worker,
-                       &args[created]) != 0) {
-      fprintf(stderr, "thread test could not create context-only worker\n");
-      status = 1;
-      break;
-    }
-    ++created;
-  }
-
-  for (i = 0; i < created; ++i) {
-    pthread_join(threads[i], NULL);
-    if (args[i].status)
-      status = 1;
-  }
+  if (options->churnSchedule == THREAD_CHURN_SCHEDULE_COMBINED)
+    status = run_shared_churn_combined(options, &base);
+  else
+    status = run_shared_churn_sequential(options, &base);
 
   if (cleanup_egl(&base))
     status = 1;
 
-  free(threads);
-  free(args);
   return status;
 }
 
@@ -2973,37 +3405,172 @@ static int run_display_stale_generation(void)
   return status;
 }
 
+typedef int (*ThreadTestCaseFunc)(const ThreadTestOptions *options);
+
+static int run_case_concurrent_first_egl(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_concurrent_first_egl();
+}
+
+static int run_case_display_canonicalization(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_display_canonicalization();
+}
+
+static int run_case_display_stale_generation(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_display_stale_generation();
+}
+
+static int run_case_same_thread_deferred_destroy(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_same_thread_deferred_destroy();
+}
+
+static int run_case_release_thread_clears_current(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_release_thread_clears_current();
+}
+
+static int run_case_release_thread_finalizes_deferred_destroy(
+  const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_release_thread_finalizes_deferred_destroy();
+}
+
+static int run_case_cross_thread_teardown_conflicts(
+  const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_cross_thread_teardown_conflicts();
+}
+
+static int run_case_warm_up_egl(const ThreadTestOptions *options)
+{
+  (void)options;
+  return warm_up_egl();
+}
+
+static int run_case_independent_contexts(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_independent_contexts();
+}
+
+static int run_case_shared_context_stress(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_shared_context_stress();
+}
+
+static int run_case_shared_resource_churn(const ThreadTestOptions *options)
+{
+  return run_shared_resource_churn(options);
+}
+
+static int run_case_retained_resource_lifetime(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_cross_thread_retained_resource_lifetime();
+}
+
+static int run_case_selected_paint_lifetime(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_cross_thread_selected_paint_lifetime();
+}
+
+static int run_case_image_pbuffer_ref_race(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_image_pbuffer_ref_race();
+}
+
+static int run_case_make_current_conflict(const ThreadTestOptions *options)
+{
+  (void)options;
+  return run_make_current_conflict();
+}
+
+static int run_thread_test_case(const ThreadTestOptions *options,
+                                int testCase,
+                                ThreadTestCaseFunc func)
+{
+  const char *name;
+  int status;
+
+  if (options->testCase != THREAD_CASE_ALL &&
+      options->testCase != testCase)
+    return 0;
+
+  name = thread_named_value_name(threadTestCaseValues, testCase);
+  thread_test_set_active_case(testCase);
+  thread_test_set_active_churn_lane(THREAD_CHURN_ALL);
+  thread_test_log(options->verbose, "thread test begin case %s\n", name);
+  status = func(options);
+  thread_test_log(options->verbose,
+                  "thread test end case %s status %d\n",
+                  name,
+                  status);
+  thread_test_set_active_churn_lane(THREAD_CHURN_ALL);
+  thread_test_set_active_case(THREAD_CASE_ALL);
+
+  return status;
+}
+
 static int run_thread_safety_suite(const ThreadTestOptions *options)
 {
-  if (run_concurrent_first_egl())
+  if (run_thread_test_case(options, THREAD_CASE_CONCURRENT_FIRST_EGL,
+                           run_case_concurrent_first_egl))
     return 1;
-  if (run_display_canonicalization())
+  if (run_thread_test_case(options, THREAD_CASE_DISPLAY_CANONICALIZATION,
+                           run_case_display_canonicalization))
     return 1;
-  if (run_display_stale_generation())
+  if (run_thread_test_case(options, THREAD_CASE_DISPLAY_STALE_GENERATION,
+                           run_case_display_stale_generation))
     return 1;
-  if (run_same_thread_deferred_destroy())
+  if (run_thread_test_case(options, THREAD_CASE_SAME_THREAD_DEFERRED_DESTROY,
+                           run_case_same_thread_deferred_destroy))
     return 1;
-  if (run_release_thread_clears_current())
+  if (run_thread_test_case(options, THREAD_CASE_RELEASE_THREAD_CLEARS_CURRENT,
+                           run_case_release_thread_clears_current))
     return 1;
-  if (run_release_thread_finalizes_deferred_destroy())
+  if (run_thread_test_case(
+        options, THREAD_CASE_RELEASE_THREAD_FINALIZES_DEFERRED_DESTROY,
+        run_case_release_thread_finalizes_deferred_destroy))
     return 1;
-  if (run_cross_thread_teardown_conflicts())
+  if (run_thread_test_case(options, THREAD_CASE_CROSS_THREAD_TEARDOWN_CONFLICTS,
+                           run_case_cross_thread_teardown_conflicts))
     return 1;
-  if (warm_up_egl())
+  if (run_thread_test_case(options, THREAD_CASE_WARM_UP_EGL,
+                           run_case_warm_up_egl))
     return 1;
-  if (run_independent_contexts())
+  if (run_thread_test_case(options, THREAD_CASE_INDEPENDENT_CONTEXTS,
+                           run_case_independent_contexts))
     return 1;
-  if (run_shared_context_stress())
+  if (run_thread_test_case(options, THREAD_CASE_SHARED_CONTEXT_STRESS,
+                           run_case_shared_context_stress))
     return 1;
-  if (run_shared_resource_churn(options))
+  if (run_thread_test_case(options, THREAD_CASE_SHARED_RESOURCE_CHURN,
+                           run_case_shared_resource_churn))
     return 1;
-  if (run_cross_thread_retained_resource_lifetime())
+  if (run_thread_test_case(options, THREAD_CASE_RETAINED_RESOURCE_LIFETIME,
+                           run_case_retained_resource_lifetime))
     return 1;
-  if (run_cross_thread_selected_paint_lifetime())
+  if (run_thread_test_case(options, THREAD_CASE_SELECTED_PAINT_LIFETIME,
+                           run_case_selected_paint_lifetime))
     return 1;
-  if (run_image_pbuffer_ref_race())
+  if (run_thread_test_case(options, THREAD_CASE_IMAGE_PBUFFER_REF_RACE,
+                           run_case_image_pbuffer_ref_race))
     return 1;
-  if (run_make_current_conflict())
+  if (run_thread_test_case(options, THREAD_CASE_MAKE_CURRENT_CONFLICT,
+                           run_case_make_current_conflict))
     return 1;
 
   return 0;
@@ -3014,6 +3581,7 @@ int main(void)
   ThreadTestOptions options;
   int i;
 
+  install_thread_test_crash_handler();
   XInitThreads();
   select_test_platform();
 
@@ -3021,10 +3589,19 @@ int main(void)
     return EXIT_FAILURE;
 
   for (i = 0; i < options.repeat; ++i) {
-    if (options.repeat > 1)
-      printf("EGL/OpenVG thread safety iteration %d/%d\n",
-             i + 1,
-             options.repeat);
+    if (options.repeat > 1) {
+      if (options.verbose) {
+        fprintf(stderr, "EGL/OpenVG thread safety iteration %d/%d\n",
+                i + 1,
+                options.repeat);
+        fflush(stderr);
+      } else {
+        printf("EGL/OpenVG thread safety iteration %d/%d\n",
+               i + 1,
+               options.repeat);
+        fflush(stdout);
+      }
+    }
 
     if (run_thread_safety_suite(&options))
       return EXIT_FAILURE;
