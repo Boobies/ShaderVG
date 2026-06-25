@@ -74,6 +74,8 @@ void shFontReleaseGlyph(SHGlyph *glyph)
 void SHFont_ctor(SHFont *f)
 {
   f->handle = VG_INVALID_HANDLE;
+  shRecursiveMutexInit(&f->mutex);
+  shAtomicIntInit(&f->refCount, 1);
   f->glyphCapacityHint = 0;
   SH_INITOBJ(SHGlyphArray, f->glyphs);
 }
@@ -86,6 +88,63 @@ void SHFont_dtor(SHFont *f)
     shFontReleaseGlyph(&f->glyphs.items[i]);
 
   SH_DEINITOBJ(SHGlyphArray, f->glyphs);
+  shAtomicIntDestroy(&f->refCount);
+  shRecursiveMutexDestroy(&f->mutex);
+}
+
+void shFontLock(SHFont *f)
+{
+  if (f)
+    shRecursiveMutexLock(&f->mutex);
+}
+
+void shFontUnlock(SHFont *f)
+{
+  if (f)
+    shRecursiveMutexUnlock(&f->mutex);
+}
+
+void shFontAddRef(SHFont *f)
+{
+  if (f)
+    shAtomicIntIncrement(&f->refCount);
+}
+
+void shFontRelease(SHFont *f)
+{
+  if (!f)
+    return;
+
+  if (shAtomicIntDecrement(&f->refCount) <= 0)
+    SH_DELETEOBJ(SHFont, f);
+}
+
+void shFontAccessInit(SHFontAccess *access)
+{
+  if (!access)
+    return;
+
+  access->font = NULL;
+  access->locked = VG_FALSE;
+  access->retained = VG_FALSE;
+}
+
+void shFontAccessCleanup(SHFontAccess *access)
+{
+  if (!access)
+    return;
+
+  if (access->locked) {
+    shFontUnlock(access->font);
+    access->locked = VG_FALSE;
+  }
+
+  if (access->retained) {
+    shFontRelease(access->font);
+    access->retained = VG_FALSE;
+  }
+
+  access->font = NULL;
 }
 
 SHGlyph* shFontFindGlyph(SHFont *f, VGuint glyphIndex)
@@ -167,9 +226,11 @@ VG_API_CALL void vgDestroyFont(VGFont font)
   index = f ? shFontArrayFind(&context->resources->fonts, f) : -1;
   VG_RETURN_ERR_IF(index == -1, VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
+  shFontLock(f);
   shUnregisterResource(context, font, SH_RESOURCE_FONT, f);
-  SH_DELETEOBJ(SHFont, f);
   shFontArrayRemoveAt(&context->resources->fonts, index);
+  shFontUnlock(f);
+  shFontRelease(f);
 
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -199,8 +260,12 @@ VG_API_CALL void vgSetGlyphToPath(VGFont font,
                    !shIsAligned(escapement, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
+  shFontLock(f);
   glyph = shFontEnsureGlyph(f, glyphIndex);
-  VG_RETURN_ERR_IF(!glyph, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!glyph) {
+    shFontUnlock(f);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
 
   if (path != VG_INVALID_HANDLE) {
     shPathAddRef(newPath);
@@ -215,6 +280,7 @@ VG_API_CALL void vgSetGlyphToPath(VGFont font,
   SET2(glyph->origin, glyphOrigin[0], glyphOrigin[1]);
   SET2(glyph->escapement, escapement[0], escapement[1]);
 
+  shFontUnlock(f);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -251,8 +317,12 @@ VG_API_CALL void vgSetGlyphToImage(VGFont font,
                    !shIsAligned(escapement, sizeof(VGfloat)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
+  shFontLock(f);
   glyph = shFontEnsureGlyph(f, glyphIndex);
-  VG_RETURN_ERR_IF(!glyph, VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  if (!glyph) {
+    shFontUnlock(f);
+    VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+  }
 
   if (image != VG_INVALID_HANDLE) {
     shImageLockSetInit(&imageLocks);
@@ -272,6 +342,7 @@ VG_API_CALL void vgSetGlyphToImage(VGFont font,
   SET2(glyph->origin, glyphOrigin[0], glyphOrigin[1]);
   SET2(glyph->escapement, escapement[0], escapement[1]);
 
+  shFontUnlock(f);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -285,12 +356,17 @@ VG_API_CALL void vgClearGlyph(VGFont font, VGuint glyphIndex)
   VG_RETURN_ERR_IF(!f,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
 
+  shFontLock(f);
   index = shFontFindGlyphIndex(f, glyphIndex);
-  VG_RETURN_ERR_IF(index == -1, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (index == -1) {
+    shFontUnlock(f);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
   shFontReleaseGlyph(&f->glyphs.items[index]);
   shGlyphArrayRemoveAt(&f->glyphs, index);
 
+  shFontUnlock(f);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -600,12 +676,17 @@ VG_API_CALL void vgDrawGlyph(VGFont font,
   VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
+  shFontLock(f);
   glyph = shFontFindGlyph(f, glyphIndex);
-  VG_RETURN_ERR_IF(!glyph, VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  if (!glyph) {
+    shFontUnlock(f);
+    VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+  }
 
   shDrawGlyphObject(context, glyph, paintModes);
   ADD2(context->glyphOrigin, glyph->escapement.x, glyph->escapement.y);
 
+  shFontUnlock(f);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -644,9 +725,12 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
                     !shIsAligned(adjustments_y, sizeof(VGfloat))),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
+  shFontLock(f);
   for (i=0; i<glyphCount; ++i) {
-    VG_RETURN_ERR_IF(!shFontFindGlyph(f, glyphIndices[i]),
-                     VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+    if (!shFontFindGlyph(f, glyphIndices[i])) {
+      shFontUnlock(f);
+      VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
+    }
   }
 
   if (paintModes == 0) {
@@ -655,6 +739,7 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
       shAdvanceGlyphOrigin(context, glyph,
                            adjustments_x, adjustments_y, i);
     }
+    shFontUnlock(f);
     VG_RETURN(VG_NO_RETVAL);
   }
 
@@ -665,10 +750,14 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
                                               glyphIndices,
                                               adjustments_x,
                                               adjustments_y);
-    if (pathBatchResult == SH_PATH_GLYPH_BATCH_DRAWN)
+    if (pathBatchResult == SH_PATH_GLYPH_BATCH_DRAWN) {
+      shFontUnlock(f);
       VG_RETURN(VG_NO_RETVAL);
-    if (pathBatchResult == SH_PATH_GLYPH_BATCH_ERROR)
+    }
+    if (pathBatchResult == SH_PATH_GLYPH_BATCH_ERROR) {
+      shFontUnlock(f);
       VG_RETURN(VG_NO_RETVAL);
+    }
   }
 
   canBatchImages = shCanBatchImageGlyphs(context);
@@ -683,13 +772,16 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
   }
 
   if (hasBatchCandidate) {
-    VG_RETURN_ERR_IF((size_t)glyphCount >
-                     ((size_t)-1) / sizeof(SHImageQuad),
-                     VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+    if ((size_t)glyphCount > ((size_t)-1) / sizeof(SHImageQuad)) {
+      shFontUnlock(f);
+      VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+    }
     batchQuads = (SHImageQuad*)malloc((size_t)glyphCount *
                                       sizeof(SHImageQuad));
-    VG_RETURN_ERR_IF(!batchQuads,
-                     VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+    if (!batchQuads) {
+      shFontUnlock(f);
+      VG_RETURN_ERR(VG_OUT_OF_MEMORY_ERROR, VG_NO_RETVAL);
+    }
   }
 
   for (i=0; i<glyphCount; ++i) {
@@ -715,5 +807,6 @@ VG_API_CALL void vgDrawGlyphs(VGFont font,
   shFlushImageGlyphBatch(context, &batchRoot, batchQuads, &batchCount);
   free(batchQuads);
 
+  shFontUnlock(f);
   VG_RETURN(VG_NO_RETVAL);
 }

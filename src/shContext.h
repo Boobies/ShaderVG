@@ -343,6 +343,9 @@ VGboolean shAcquireImage(VGContext *c,
                          SHImageAccess *access,
                          SHImageLockSet *locks);
 SHFont* shGetFont(VGContext *c, VGFont font);
+VGboolean shAcquireFont(VGContext *c,
+                        VGFont font,
+                        SHFontAccess *access);
 SHMaskLayer* shGetMaskLayer(VGContext *c, VGMaskLayer maskLayer);
 VGboolean shIsLiveImage(VGContext *c, const SHImage *image);
 VGContext* shGetContext();

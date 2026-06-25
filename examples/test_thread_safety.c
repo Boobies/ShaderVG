@@ -1036,6 +1036,142 @@ static int exercise_image_object_churn(int workerId, int iterations)
   return status;
 }
 
+static int exercise_font_object_churn(int workerId, int iterations)
+{
+  VGFont font = VG_INVALID_HANDLE;
+  VGPaint paint = VG_INVALID_HANDLE;
+  int i;
+  int status = 0;
+
+  font = vgCreateFont(4);
+  paint = vgCreatePaint();
+  if (font == VG_INVALID_HANDLE ||
+      paint == VG_INVALID_HANDLE ||
+      expect_vg_no_error("thread test could not create font churn resources")) {
+    status = 1;
+  }
+
+  if (!status) {
+    vgSetColor(paint, 0x66cc88ffu);
+    vgSetPaint(paint, VG_FILL_PATH);
+    if (expect_vg_no_error("thread test could not initialize font churn paint"))
+      status = 1;
+  }
+
+  for (i = 0; !status && i < iterations; ++i) {
+    VGPath path = VG_INVALID_HANDLE;
+    VGImage image = VG_INVALID_HANDLE;
+    VGfloat pathOrigin[2] = { 0.0f, 0.0f };
+    VGfloat imageOrigin[2] = { 1.0f, 1.0f };
+    VGfloat pathEscapement[2] = { 9.0f + (VGfloat)(i % 3), 0.0f };
+    VGfloat imageEscapement[2] = { 7.0f, 0.0f };
+    VGuint glyphs[2] = { 101u, 102u };
+    VGfloat adjustments[2] = { 0.25f * (VGfloat)(i % 4), 0.0f };
+    VGint glyphCount;
+
+    path = create_churn_path(workerId, i);
+    image = create_colored_image(workerId, 4000 + i);
+    if (path == VG_INVALID_HANDLE ||
+        image == VG_INVALID_HANDLE ||
+        expect_vg_no_error("thread test could not create font churn glyph resources")) {
+      status = 1;
+    }
+
+    if (!status) {
+      vgSetGlyphToPath(font, glyphs[0], path, VG_FALSE,
+                       pathOrigin, pathEscapement);
+      vgSetGlyphToImage(font, glyphs[1], image,
+                        imageOrigin, imageEscapement);
+      if (expect_vg_no_error("thread test could not set font churn glyphs"))
+        status = 1;
+    }
+
+    if (path != VG_INVALID_HANDLE) {
+      vgDestroyPath(path);
+      if (expect_vg_no_error("thread test could not destroy font glyph path handle"))
+        status = 1;
+      path = VG_INVALID_HANDLE;
+    }
+
+    if (image != VG_INVALID_HANDLE) {
+      vgDestroyImage(image);
+      if (expect_vg_no_error("thread test could not destroy font glyph image handle"))
+        status = 1;
+      image = VG_INVALID_HANDLE;
+    }
+
+    if (!status) {
+      glyphCount = vgGetParameteri(font, VG_FONT_NUM_GLYPHS);
+      if (glyphCount < 2) {
+        fprintf(stderr, "thread test font glyph count was too small\n");
+        status = 1;
+      } else if (vgGetParameterVectorSize(font, VG_FONT_NUM_GLYPHS) != 1) {
+        fprintf(stderr, "thread test font vector size was wrong\n");
+        status = 1;
+      } else if (expect_vg_no_error("thread test could not query font glyph count")) {
+        status = 1;
+      }
+    }
+
+    if (!status && reset_test_state())
+      status = 1;
+
+    if (!status) {
+      vgSetPaint(paint, VG_FILL_PATH);
+      vgDrawGlyph(font, glyphs[0], VG_FILL_PATH, VG_FALSE);
+      vgDrawGlyph(font, glyphs[1], VG_FILL_PATH, VG_FALSE);
+      if (expect_vg_no_error("thread test could not draw font churn glyphs"))
+        status = 1;
+    }
+
+    if (!status && reset_test_state())
+      status = 1;
+
+    if (!status) {
+      vgSetPaint(paint, VG_FILL_PATH);
+      vgDrawGlyphs(font, 2, glyphs, adjustments, NULL,
+                   VG_FILL_PATH, VG_FALSE);
+      if ((i & 15) == 0)
+        vgFinish();
+      if (expect_vg_no_error("thread test could not draw font churn glyph run"))
+        status = 1;
+    }
+
+    if (!status) {
+      vgClearGlyph(font, glyphs[0]);
+      vgClearGlyph(font, glyphs[1]);
+      if (expect_vg_no_error("thread test could not clear font churn glyphs"))
+        status = 1;
+    }
+
+    if (!status && vgGetParameteri(font, VG_FONT_NUM_GLYPHS) != 0) {
+      fprintf(stderr, "thread test font glyph count did not return to zero\n");
+      status = 1;
+    } else if (!status &&
+               expect_vg_no_error("thread test could not query cleared font")) {
+      status = 1;
+    }
+  }
+
+  vgSetPaint(VG_INVALID_HANDLE, VG_FILL_PATH);
+  if (expect_vg_no_error("thread test could not clear font churn paint selection"))
+    status = 1;
+
+  if (font != VG_INVALID_HANDLE) {
+    vgDestroyFont(font);
+    if (expect_vg_no_error("thread test could not destroy churn font"))
+      status = 1;
+  }
+
+  if (paint != VG_INVALID_HANDLE) {
+    vgDestroyPaint(paint);
+    if (expect_vg_no_error("thread test could not destroy font churn paint"))
+      status = 1;
+  }
+
+  return status;
+}
+
 static int exercise_resources(int iterations)
 {
   int i;
@@ -1298,6 +1434,32 @@ static void *image_object_churn_worker(void *arg)
   if (!args->status)
     args->status = exercise_image_object_churn(args->workerId,
                                                args->iterations);
+
+  if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
+    args->status = 1;
+
+  return NULL;
+}
+
+static void *font_object_churn_worker(void *arg)
+{
+  ThreadArgs *args = (ThreadArgs*)arg;
+  TestEGL state = {
+    EGL_NO_DISPLAY,
+    0,
+    EGL_NO_SURFACE,
+    EGL_NO_CONTEXT,
+    0
+  };
+
+  state.ownsDisplay = 0;
+  args->status = init_shared_egl(&state,
+                                 args->display,
+                                 args->config,
+                                 args->context);
+  if (!args->status)
+    args->status = exercise_font_object_churn(args->workerId,
+                                              args->iterations);
 
   if (state.display != EGL_NO_DISPLAY && cleanup_egl(&state))
     args->status = 1;
@@ -1626,7 +1788,7 @@ static int run_shared_context_stress(void)
 
 static int run_shared_resource_churn(const ThreadTestOptions *options)
 {
-  int threadCount = options->sharedWorkers * 5;
+  int threadCount = options->sharedWorkers * 6;
   TestEGL base = {
     EGL_NO_DISPLAY,
     0,
@@ -1731,6 +1893,23 @@ static int run_shared_resource_churn(const ThreadTestOptions *options)
     args[created].config = base.config;
     args[created].context = base.context;
     args[created].workerId = options->sharedWorkers * 4 + i + 1;
+    args[created].iterations = options->sharedIterations;
+    if (pthread_create(&threads[created], NULL,
+                       font_object_churn_worker,
+                       &args[created]) != 0) {
+      fprintf(stderr, "thread test could not create font churn worker\n");
+      status = 1;
+      break;
+    }
+    ++created;
+  }
+
+  for (i = 0; !status && i < options->sharedWorkers; ++i) {
+    args[created].status = 1;
+    args[created].display = base.display;
+    args[created].config = base.config;
+    args[created].context = base.context;
+    args[created].workerId = options->sharedWorkers * 5 + i + 1;
     args[created].iterations = options->sharedIterations;
     if (pthread_create(&threads[created], NULL,
                        context_only_churn_worker,

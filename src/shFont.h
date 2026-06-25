@@ -23,6 +23,7 @@
 
 #include "shPath.h"
 #include "shImage.h"
+#include "shThread.h"
 
 typedef enum
 {
@@ -51,12 +52,27 @@ typedef struct
 typedef struct
 {
   VGHandle handle;
+  SHRecursiveMutex mutex;
+  SHAtomicInt refCount;
   SHint glyphCapacityHint;
   SHGlyphArray glyphs;
 } SHFont;
 
+typedef struct
+{
+  SHFont *font;
+  VGboolean locked;
+  VGboolean retained;
+} SHFontAccess;
+
 void SHFont_ctor(SHFont *f);
 void SHFont_dtor(SHFont *f);
+void shFontLock(SHFont *f);
+void shFontUnlock(SHFont *f);
+void shFontAddRef(SHFont *f);
+void shFontRelease(SHFont *f);
+void shFontAccessInit(SHFontAccess *access);
+void shFontAccessCleanup(SHFontAccess *access);
 SHGlyph* shFontFindGlyph(SHFont *f, VGuint glyphIndex);
 SHGlyph* shFontEnsureGlyph(SHFont *f, VGuint glyphIndex);
 void shFontReleaseGlyph(SHGlyph *glyph);

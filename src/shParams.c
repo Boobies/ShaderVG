@@ -1106,12 +1106,16 @@ static void shLockParameterResource(SHResourceType resType, void *resource)
 {
   if (resType == SH_RESOURCE_PAINT)
     shPaintLock((SHPaint*)resource);
+  else if (resType == SH_RESOURCE_FONT)
+    shFontLock((SHFont*)resource);
 }
 
 static void shUnlockParameterResource(SHResourceType resType, void *resource)
 {
   if (resType == SH_RESOURCE_PAINT)
     shPaintUnlock((SHPaint*)resource);
+  else if (resType == SH_RESOURCE_FONT)
+    shFontUnlock((SHFont*)resource);
 }
 
 VG_API_CALL void vgSetParameterf(VGHandle object, VGint paramType, VGfloat value)
@@ -1579,16 +1583,21 @@ VG_API_CALL VGint vgGetParameterVectorSize(VGHandle object, VGint ptype)
       VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, retval);
       
     } break;
-  case SH_RESOURCE_FONT: switch (ptype) { /* Font parameters */
+  case SH_RESOURCE_FONT:
+    shFontLock((SHFont*)resource);
+    switch (ptype) { /* Font parameters */
 
     case VG_FONT_NUM_GLYPHS:
       retval = 1; break;
 
     default:
       /* Invalid VGParamType */
+      shFontUnlock((SHFont*)resource);
       VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, retval);
 
-    } break;
+    }
+    shFontUnlock((SHFont*)resource);
+    break;
 
   case SH_RESOURCE_MASK_LAYER:
     VG_RETURN_ERR(VG_ILLEGAL_ARGUMENT_ERROR, retval);

@@ -222,7 +222,7 @@ static void SHResourceGroup_dtor(SHResourceGroup *resources)
   for (i=0; i<resources->fonts.size; ++i) {
     shReleaseHandle(resources, resources->fonts.items[i]->handle,
                     SH_RESOURCE_FONT, resources->fonts.items[i]);
-    SH_DELETEOBJ(SHFont, resources->fonts.items[i]);
+    shFontRelease(resources->fonts.items[i]);
   }
 
   for (i=0; i<resources->maskLayers.size; ++i) {
@@ -1414,6 +1414,34 @@ VGboolean shAcquireImage(VGContext *c,
 SHFont* shGetFont(VGContext *c, VGFont font)
 {
   return (SHFont*)shGetResource(c, (VGHandle)font, SH_RESOURCE_FONT);
+}
+
+VGboolean shAcquireFont(VGContext *c,
+                        VGFont font,
+                        SHFontAccess *access)
+{
+  if (!access)
+    return VG_FALSE;
+
+  shFontAccessInit(access);
+
+  if (!c || !c->resources)
+    return VG_FALSE;
+
+  shLockResourceGroup(c->resources);
+  access->font = shGetFont(c, font);
+  if (access->font) {
+    shFontAddRef(access->font);
+    access->retained = VG_TRUE;
+  }
+  shUnlockResourceGroup(c->resources);
+
+  if (!access->font)
+    return VG_FALSE;
+
+  shFontLock(access->font);
+  access->locked = VG_TRUE;
+  return VG_TRUE;
 }
 
 SHMaskLayer* shGetMaskLayer(VGContext *c, VGMaskLayer maskLayer)
