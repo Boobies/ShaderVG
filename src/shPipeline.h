@@ -58,7 +58,5 @@ void shDrawImageQuadBatch(VGContext *context,
 SHPathGlyphBatchResult shDrawPathGlyphBatch(VGContext *context,
                                             const SHPathGlyph *glyphs,
                                             SHint glyphCount);
-SHint shGetThreadDrawTrace(void);
-const char *shDrawTraceName(SHint phase);
 
 #endif /* __SHPIPELINE_H */

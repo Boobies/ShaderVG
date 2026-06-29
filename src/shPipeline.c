@@ -30,250 +30,6 @@
 #include "shGeometry.h"
 #include "shPaint.h"
 
-typedef enum
-{
-  SH_DRAW_TRACE_NONE = 0,
-  SH_DRAW_TRACE_VG_DRAW_PATH_ENTER,
-  SH_DRAW_TRACE_VG_DRAW_PATH_LOOKUP,
-  SH_DRAW_TRACE_VG_DRAW_PATH_LOCK_PATH,
-  SH_DRAW_TRACE_VG_DRAW_PATH_LOCK_PAINTS,
-  SH_DRAW_TRACE_VG_DRAW_PATH_BODY,
-  SH_DRAW_TRACE_VG_DRAW_PATH_UNLOCK_PAINTS,
-  SH_DRAW_TRACE_VG_DRAW_PATH_UNLOCK_PATH,
-  SH_DRAW_TRACE_DRAW_PATH_ENTER,
-  SH_DRAW_TRACE_DRAW_PATH_TESS_CHECK,
-  SH_DRAW_TRACE_DRAW_PATH_FLATTEN,
-  SH_DRAW_TRACE_DRAW_PATH_BOUNDS,
-  SH_DRAW_TRACE_DRAW_PATH_SETUP_PROGRAM,
-  SH_DRAW_TRACE_DRAW_PATH_FILL_COVERAGE,
-  SH_DRAW_TRACE_DRAW_PATH_FILL_STENCIL,
-  SH_DRAW_TRACE_DRAW_PATH_FILL_BLEND,
-  SH_DRAW_TRACE_DRAW_PATH_FILL_MESH,
-  SH_DRAW_TRACE_DRAW_PATH_STROKE_COVERAGE,
-  SH_DRAW_TRACE_DRAW_PATH_STROKE_CACHE,
-  SH_DRAW_TRACE_DRAW_PATH_STROKE_STENCIL,
-  SH_DRAW_TRACE_DRAW_PATH_STROKE_BLEND,
-  SH_DRAW_TRACE_DRAW_PATH_STROKE_MESH,
-  SH_DRAW_TRACE_DRAW_PATH_CLEANUP,
-  SH_DRAW_TRACE_DRAW_PATH_MARK_DIRTY,
-  SH_DRAW_TRACE_FILL_PAINT_SELECT,
-  SH_DRAW_TRACE_FILL_PAINT_LOAD_LINEAR,
-  SH_DRAW_TRACE_FILL_PAINT_LOAD_RADIAL,
-  SH_DRAW_TRACE_FILL_PAINT_LOAD_PATTERN,
-  SH_DRAW_TRACE_FILL_PAINT_LOAD_COLOR,
-  SH_DRAW_TRACE_FILL_PAINT_BIND_VERTEX,
-  SH_DRAW_TRACE_FILL_PAINT_UPLOAD_VERTEX,
-  SH_DRAW_TRACE_FILL_PAINT_DRAW_ARRAYS,
-  SH_DRAW_TRACE_FILL_PAINT_RESTORE_VERTEX,
-  SH_DRAW_TRACE_STROKE_PAINT_SELECT,
-  SH_DRAW_TRACE_STROKE_PAINT_LOAD_LINEAR,
-  SH_DRAW_TRACE_STROKE_PAINT_LOAD_RADIAL,
-  SH_DRAW_TRACE_STROKE_PAINT_LOAD_PATTERN,
-  SH_DRAW_TRACE_STROKE_PAINT_LOAD_COLOR,
-  SH_DRAW_TRACE_STROKE_PAINT_BIND_VERTEX,
-  SH_DRAW_TRACE_STROKE_PAINT_UPLOAD_VERTEX,
-  SH_DRAW_TRACE_STROKE_PAINT_DRAW_ARRAYS,
-  SH_DRAW_TRACE_STROKE_PAINT_RESTORE_VERTEX,
-  SH_DRAW_TRACE_COVERAGE_SCALE,
-  SH_DRAW_TRACE_COVERAGE_LIMITS,
-  SH_DRAW_TRACE_COVERAGE_TRY_SCALE,
-  SH_DRAW_TRACE_COVERAGE_TARGET_ALLOC,
-  SH_DRAW_TRACE_COVERAGE_TARGET_REUSE,
-  SH_DRAW_TRACE_COVERAGE_TARGET_OBJECTS,
-  SH_DRAW_TRACE_COVERAGE_TARGET_SUPERSAMPLE_TEXTURE,
-  SH_DRAW_TRACE_COVERAGE_TARGET_SUPERSAMPLE_STENCIL,
-  SH_DRAW_TRACE_COVERAGE_TARGET_SUPERSAMPLE_FRAMEBUFFER,
-  SH_DRAW_TRACE_COVERAGE_TARGET_TEXTURE,
-  SH_DRAW_TRACE_COVERAGE_TARGET_FRAMEBUFFER,
-  SH_DRAW_TRACE_COVERAGE_TARGET_READY,
-  SH_DRAW_TRACE_COVERAGE_BIND_SUPERSAMPLE,
-  SH_DRAW_TRACE_COVERAGE_CLEAR_SUPERSAMPLE,
-  SH_DRAW_TRACE_COVERAGE_SCISSOR,
-  SH_DRAW_TRACE_COVERAGE_SHADER_SETUP,
-  SH_DRAW_TRACE_COVERAGE_RENDER_FILL,
-  SH_DRAW_TRACE_COVERAGE_RENDER_STROKE,
-  SH_DRAW_TRACE_COVERAGE_STROKE_CACHE_CHECK,
-  SH_DRAW_TRACE_COVERAGE_STROKE_TESSELLATE,
-  SH_DRAW_TRACE_COVERAGE_STROKE_STENCIL,
-  SH_DRAW_TRACE_COVERAGE_STROKE_MESH,
-  SH_DRAW_TRACE_COVERAGE_RESOLVE_BIND,
-  SH_DRAW_TRACE_COVERAGE_RESOLVE_SHADER,
-  SH_DRAW_TRACE_COVERAGE_RESOLVE_UPLOAD_VERTEX,
-  SH_DRAW_TRACE_COVERAGE_RESOLVE_DRAW_ARRAYS,
-  SH_DRAW_TRACE_COVERAGE_RESOLVE_RESTORE,
-  SH_DRAW_TRACE_COVERAGE_RESTORE
-} SHDrawTracePhase;
-
-#if defined(_MSC_VER)
-static __declspec(thread) volatile SHint shThreadDrawTrace =
-  SH_DRAW_TRACE_NONE;
-#else
-static __thread volatile SHint shThreadDrawTrace = SH_DRAW_TRACE_NONE;
-#endif
-
-static void shSetThreadDrawTrace(SHDrawTracePhase phase)
-{
-  shThreadDrawTrace = (SHint)phase;
-}
-
-SHint shGetThreadDrawTrace(void)
-{
-  return shThreadDrawTrace;
-}
-
-const char *shDrawTraceName(SHint phase)
-{
-  switch (phase) {
-  case SH_DRAW_TRACE_VG_DRAW_PATH_ENTER:
-    return "vg-draw-path-enter";
-  case SH_DRAW_TRACE_VG_DRAW_PATH_LOOKUP:
-    return "vg-draw-path-lookup";
-  case SH_DRAW_TRACE_VG_DRAW_PATH_LOCK_PATH:
-    return "vg-draw-path-lock-path";
-  case SH_DRAW_TRACE_VG_DRAW_PATH_LOCK_PAINTS:
-    return "vg-draw-path-lock-paints";
-  case SH_DRAW_TRACE_VG_DRAW_PATH_BODY:
-    return "vg-draw-path-body";
-  case SH_DRAW_TRACE_VG_DRAW_PATH_UNLOCK_PAINTS:
-    return "vg-draw-path-unlock-paints";
-  case SH_DRAW_TRACE_VG_DRAW_PATH_UNLOCK_PATH:
-    return "vg-draw-path-unlock-path";
-  case SH_DRAW_TRACE_DRAW_PATH_ENTER:
-    return "draw-path-enter";
-  case SH_DRAW_TRACE_DRAW_PATH_TESS_CHECK:
-    return "draw-path-tess-check";
-  case SH_DRAW_TRACE_DRAW_PATH_FLATTEN:
-    return "draw-path-flatten";
-  case SH_DRAW_TRACE_DRAW_PATH_BOUNDS:
-    return "draw-path-bounds";
-  case SH_DRAW_TRACE_DRAW_PATH_SETUP_PROGRAM:
-    return "draw-path-setup-program";
-  case SH_DRAW_TRACE_DRAW_PATH_FILL_COVERAGE:
-    return "draw-path-fill-coverage";
-  case SH_DRAW_TRACE_DRAW_PATH_FILL_STENCIL:
-    return "draw-path-fill-stencil";
-  case SH_DRAW_TRACE_DRAW_PATH_FILL_BLEND:
-    return "draw-path-fill-blend";
-  case SH_DRAW_TRACE_DRAW_PATH_FILL_MESH:
-    return "draw-path-fill-mesh";
-  case SH_DRAW_TRACE_DRAW_PATH_STROKE_COVERAGE:
-    return "draw-path-stroke-coverage";
-  case SH_DRAW_TRACE_DRAW_PATH_STROKE_CACHE:
-    return "draw-path-stroke-cache";
-  case SH_DRAW_TRACE_DRAW_PATH_STROKE_STENCIL:
-    return "draw-path-stroke-stencil";
-  case SH_DRAW_TRACE_DRAW_PATH_STROKE_BLEND:
-    return "draw-path-stroke-blend";
-  case SH_DRAW_TRACE_DRAW_PATH_STROKE_MESH:
-    return "draw-path-stroke-mesh";
-  case SH_DRAW_TRACE_DRAW_PATH_CLEANUP:
-    return "draw-path-cleanup";
-  case SH_DRAW_TRACE_DRAW_PATH_MARK_DIRTY:
-    return "draw-path-mark-dirty";
-  case SH_DRAW_TRACE_FILL_PAINT_SELECT:
-    return "fill-paint-select";
-  case SH_DRAW_TRACE_FILL_PAINT_LOAD_LINEAR:
-    return "fill-paint-load-linear";
-  case SH_DRAW_TRACE_FILL_PAINT_LOAD_RADIAL:
-    return "fill-paint-load-radial";
-  case SH_DRAW_TRACE_FILL_PAINT_LOAD_PATTERN:
-    return "fill-paint-load-pattern";
-  case SH_DRAW_TRACE_FILL_PAINT_LOAD_COLOR:
-    return "fill-paint-load-color";
-  case SH_DRAW_TRACE_FILL_PAINT_BIND_VERTEX:
-    return "fill-paint-bind-vertex";
-  case SH_DRAW_TRACE_FILL_PAINT_UPLOAD_VERTEX:
-    return "fill-paint-upload-vertex";
-  case SH_DRAW_TRACE_FILL_PAINT_DRAW_ARRAYS:
-    return "fill-paint-draw-arrays";
-  case SH_DRAW_TRACE_FILL_PAINT_RESTORE_VERTEX:
-    return "fill-paint-restore-vertex";
-  case SH_DRAW_TRACE_STROKE_PAINT_SELECT:
-    return "stroke-paint-select";
-  case SH_DRAW_TRACE_STROKE_PAINT_LOAD_LINEAR:
-    return "stroke-paint-load-linear";
-  case SH_DRAW_TRACE_STROKE_PAINT_LOAD_RADIAL:
-    return "stroke-paint-load-radial";
-  case SH_DRAW_TRACE_STROKE_PAINT_LOAD_PATTERN:
-    return "stroke-paint-load-pattern";
-  case SH_DRAW_TRACE_STROKE_PAINT_LOAD_COLOR:
-    return "stroke-paint-load-color";
-  case SH_DRAW_TRACE_STROKE_PAINT_BIND_VERTEX:
-    return "stroke-paint-bind-vertex";
-  case SH_DRAW_TRACE_STROKE_PAINT_UPLOAD_VERTEX:
-    return "stroke-paint-upload-vertex";
-  case SH_DRAW_TRACE_STROKE_PAINT_DRAW_ARRAYS:
-    return "stroke-paint-draw-arrays";
-  case SH_DRAW_TRACE_STROKE_PAINT_RESTORE_VERTEX:
-    return "stroke-paint-restore-vertex";
-  case SH_DRAW_TRACE_COVERAGE_SCALE:
-    return "coverage-scale";
-  case SH_DRAW_TRACE_COVERAGE_LIMITS:
-    return "coverage-limits";
-  case SH_DRAW_TRACE_COVERAGE_TRY_SCALE:
-    return "coverage-try-scale";
-  case SH_DRAW_TRACE_COVERAGE_TARGET_ALLOC:
-    return "coverage-target-alloc";
-  case SH_DRAW_TRACE_COVERAGE_TARGET_REUSE:
-    return "coverage-target-reuse";
-  case SH_DRAW_TRACE_COVERAGE_TARGET_OBJECTS:
-    return "coverage-target-objects";
-  case SH_DRAW_TRACE_COVERAGE_TARGET_SUPERSAMPLE_TEXTURE:
-    return "coverage-target-supersample-texture";
-  case SH_DRAW_TRACE_COVERAGE_TARGET_SUPERSAMPLE_STENCIL:
-    return "coverage-target-supersample-stencil";
-  case SH_DRAW_TRACE_COVERAGE_TARGET_SUPERSAMPLE_FRAMEBUFFER:
-    return "coverage-target-supersample-framebuffer";
-  case SH_DRAW_TRACE_COVERAGE_TARGET_TEXTURE:
-    return "coverage-target-texture";
-  case SH_DRAW_TRACE_COVERAGE_TARGET_FRAMEBUFFER:
-    return "coverage-target-framebuffer";
-  case SH_DRAW_TRACE_COVERAGE_TARGET_READY:
-    return "coverage-target-ready";
-  case SH_DRAW_TRACE_COVERAGE_BIND_SUPERSAMPLE:
-    return "coverage-bind-supersample";
-  case SH_DRAW_TRACE_COVERAGE_CLEAR_SUPERSAMPLE:
-    return "coverage-clear-supersample";
-  case SH_DRAW_TRACE_COVERAGE_SCISSOR:
-    return "coverage-scissor";
-  case SH_DRAW_TRACE_COVERAGE_SHADER_SETUP:
-    return "coverage-shader-setup";
-  case SH_DRAW_TRACE_COVERAGE_RENDER_FILL:
-    return "coverage-render-fill";
-  case SH_DRAW_TRACE_COVERAGE_RENDER_STROKE:
-    return "coverage-render-stroke";
-  case SH_DRAW_TRACE_COVERAGE_STROKE_CACHE_CHECK:
-    return "coverage-stroke-cache-check";
-  case SH_DRAW_TRACE_COVERAGE_STROKE_TESSELLATE:
-    return "coverage-stroke-tessellate";
-  case SH_DRAW_TRACE_COVERAGE_STROKE_STENCIL:
-    return "coverage-stroke-stencil";
-  case SH_DRAW_TRACE_COVERAGE_STROKE_MESH:
-    return "coverage-stroke-mesh";
-  case SH_DRAW_TRACE_COVERAGE_RESOLVE_BIND:
-    return "coverage-resolve-bind";
-  case SH_DRAW_TRACE_COVERAGE_RESOLVE_SHADER:
-    return "coverage-resolve-shader";
-  case SH_DRAW_TRACE_COVERAGE_RESOLVE_UPLOAD_VERTEX:
-    return "coverage-resolve-upload-vertex";
-  case SH_DRAW_TRACE_COVERAGE_RESOLVE_DRAW_ARRAYS:
-    return "coverage-resolve-draw-arrays";
-  case SH_DRAW_TRACE_COVERAGE_RESOLVE_RESTORE:
-    return "coverage-resolve-restore";
-  case SH_DRAW_TRACE_COVERAGE_RESTORE:
-    return "coverage-restore";
-  default:
-    return "none";
-  }
-}
-
-static SHDrawTracePhase shPaintMeshTracePhase(VGPaintMode mode,
-                                              SHDrawTracePhase fillPhase,
-                                              SHDrawTracePhase strokePhase)
-{
-  return mode == VG_STROKE_PATH ? strokePhase : fillPhase;
-}
-
 void shPremultiplyFramebuffer()
 {
   /* Multiply target color with its own alpha */
@@ -589,10 +345,6 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
     p = (c->strokePaint ? c->strokePaint : &c->defaultPaint);
     K = SH_CEIL(c->strokeMiterLimit * c->strokeLineWidth) + 1.0f;
   }
-  shSetThreadDrawTrace(shPaintMeshTracePhase(
-    mode,
-    SH_DRAW_TRACE_FILL_PAINT_SELECT,
-    SH_DRAW_TRACE_STROKE_PAINT_SELECT));
   
   /* We want to be sure to cover every pixel of this path so better
      take a pixel more than leave some out (multisampling is tricky). */
@@ -604,18 +356,10 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
 
   switch (p->type) {
   case VG_PAINT_TYPE_LINEAR_GRADIENT:
-    shSetThreadDrawTrace(shPaintMeshTracePhase(
-      mode,
-      SH_DRAW_TRACE_FILL_PAINT_LOAD_LINEAR,
-      SH_DRAW_TRACE_STROKE_PAINT_LOAD_LINEAR));
     shLoadLinearGradientMesh(p, mode, VG_MATRIX_PATH_USER_TO_SURFACE);
     break; 
 
   case VG_PAINT_TYPE_RADIAL_GRADIENT:
-    shSetThreadDrawTrace(shPaintMeshTracePhase(
-      mode,
-      SH_DRAW_TRACE_FILL_PAINT_LOAD_RADIAL,
-      SH_DRAW_TRACE_STROKE_PAINT_LOAD_RADIAL));
     shLoadRadialGradientMesh(p, mode, VG_MATRIX_PATH_USER_TO_SURFACE);
     break; 
     
@@ -630,20 +374,12 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
         shSetError(c, VG_IMAGE_IN_USE_ERROR);
         return;
       }
-      shSetThreadDrawTrace(shPaintMeshTracePhase(
-        mode,
-        SH_DRAW_TRACE_FILL_PAINT_LOAD_PATTERN,
-        SH_DRAW_TRACE_STROKE_PAINT_LOAD_PATTERN));
       shLoadPatternMesh(p, mode, VG_MATRIX_PATH_USER_TO_SURFACE);
       shImageLockSetCleanup(&imageLocks);
       break;
     }/* else behave as a color paint */
   
   case VG_PAINT_TYPE_COLOR:
-    shSetThreadDrawTrace(shPaintMeshTracePhase(
-      mode,
-      SH_DRAW_TRACE_FILL_PAINT_LOAD_COLOR,
-      SH_DRAW_TRACE_STROKE_PAINT_LOAD_COLOR));
     shLoadOneColorMesh(p);
     break;  
   }
@@ -652,32 +388,16 @@ static void shDrawPaintMesh(VGContext *c, SHVector2 *min, SHVector2 *max,
                   pmax.x, pmin.y,
                   pmin.x, pmax.y,
                   pmax.x, pmax.y };
-  shSetThreadDrawTrace(shPaintMeshTracePhase(
-    mode,
-    SH_DRAW_TRACE_FILL_PAINT_BIND_VERTEX,
-    SH_DRAW_TRACE_STROKE_PAINT_BIND_VERTEX));
   shBindContextVertexState(c, &vertexState);
-  shSetThreadDrawTrace(shPaintMeshTracePhase(
-    mode,
-    SH_DRAW_TRACE_FILL_PAINT_UPLOAD_VERTEX,
-    SH_DRAW_TRACE_STROKE_PAINT_UPLOAD_VERTEX));
   glBufferData(GL_ARRAY_BUFFER, sizeof(v), v, GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(c->locationDraw.pos);
   glVertexAttribPointer(c->locationDraw.pos, 2, GL_FLOAT, GL_FALSE,
                         0, (const GLvoid*)0);
   shApplyMaskState(c);
   shApplyCoverageState(c, coverageEnabled);
-  shSetThreadDrawTrace(shPaintMeshTracePhase(
-    mode,
-    SH_DRAW_TRACE_FILL_PAINT_DRAW_ARRAYS,
-    SH_DRAW_TRACE_STROKE_PAINT_DRAW_ARRAYS));
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   shApplyCoverageState(c, VG_FALSE);
   glDisableVertexAttribArray(c->locationDraw.pos);
-  shSetThreadDrawTrace(shPaintMeshTracePhase(
-    mode,
-    SH_DRAW_TRACE_FILL_PAINT_RESTORE_VERTEX,
-    SH_DRAW_TRACE_STROKE_PAINT_RESTORE_VERTEX));
   shRestoreVertexState(&vertexState);
   GL_CHECK_ERROR;
 }
@@ -893,21 +613,17 @@ static SHint shCoverageScaleForSurface(VGContext *context)
   GLint maxTextureSize = 0;
   GLint maxRenderbufferSize = 0;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_SCALE);
-
   if (scale <= 1 ||
       context->surfaceWidth <= 0 ||
       context->surfaceHeight <= 0)
     return 1;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_LIMITS);
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
   glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbufferSize);
   if (maxTextureSize <= 0 || maxRenderbufferSize <= 0)
     return 1;
 
   while (scale > 1) {
-    shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TRY_SCALE);
     if ((long long)context->surfaceWidth * scale <= maxTextureSize &&
         (long long)context->surfaceHeight * scale <= maxTextureSize &&
         (long long)context->surfaceWidth * scale <= maxRenderbufferSize &&
@@ -924,8 +640,6 @@ static VGboolean shEnsureCoverageTarget(VGContext *context, SHint scale)
   SHint highWidth;
   SHint highHeight;
   GLenum status;
-
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TARGET_ALLOC);
 
   if (scale <= 1 ||
       context->surfaceWidth <= 0 ||
@@ -944,12 +658,9 @@ static VGboolean shEnsureCoverageTarget(VGContext *context, SHint scale)
       context->coverageHeight == context->surfaceHeight &&
       context->coverageSupersampleWidth == highWidth &&
       context->coverageSupersampleHeight == highHeight &&
-      context->coverageSupersampleScale == scale) {
-    shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TARGET_REUSE);
+      context->coverageSupersampleScale == scale)
     return VG_TRUE;
-  }
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TARGET_OBJECTS);
   if (context->coverageTexture == 0)
     glGenTextures(1, &context->coverageTexture);
   if (context->coverageFramebuffer == 0)
@@ -968,7 +679,6 @@ static VGboolean shEnsureCoverageTarget(VGContext *context, SHint scale)
       context->coverageSupersampleStencil == 0)
     return VG_FALSE;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TARGET_SUPERSAMPLE_TEXTURE);
   glActiveTexture(SH_TEXTURE_COVERAGE);
   glBindTexture(GL_TEXTURE_2D, context->coverageSupersampleTexture);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -981,14 +691,12 @@ static VGboolean shEnsureCoverageTarget(VGContext *context, SHint scale)
   if (glGetError() != GL_NO_ERROR)
     return VG_FALSE;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TARGET_SUPERSAMPLE_STENCIL);
   glBindRenderbuffer(GL_RENDERBUFFER, context->coverageSupersampleStencil);
   glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8,
                         highWidth, highHeight);
   if (glGetError() != GL_NO_ERROR)
     return VG_FALSE;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TARGET_SUPERSAMPLE_FRAMEBUFFER);
   glBindFramebuffer(GL_FRAMEBUFFER, context->coverageSupersampleFramebuffer);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                          GL_TEXTURE_2D,
@@ -1002,7 +710,6 @@ static VGboolean shEnsureCoverageTarget(VGContext *context, SHint scale)
   if (status != GL_FRAMEBUFFER_COMPLETE)
     return VG_FALSE;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TARGET_TEXTURE);
   glBindTexture(GL_TEXTURE_2D, context->coverageTexture);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -1015,7 +722,6 @@ static VGboolean shEnsureCoverageTarget(VGContext *context, SHint scale)
   if (glGetError() != GL_NO_ERROR)
     return VG_FALSE;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TARGET_FRAMEBUFFER);
   glBindFramebuffer(GL_FRAMEBUFFER, context->coverageFramebuffer);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                          GL_TEXTURE_2D, context->coverageTexture, 0);
@@ -1030,7 +736,6 @@ static VGboolean shEnsureCoverageTarget(VGContext *context, SHint scale)
   context->coverageSupersampleWidth = highWidth;
   context->coverageSupersampleHeight = highHeight;
   context->coverageSupersampleScale = scale;
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TARGET_READY);
   GL_CHECK_ERROR;
 
   return VG_TRUE;
@@ -1041,7 +746,6 @@ static void shResolveCoverageTarget(VGContext *context)
   GLfloat v[8];
   SHVertexState vertexState;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_RESOLVE_BIND);
   glBindFramebuffer(GL_FRAMEBUFFER, context->coverageFramebuffer);
   glDrawBuffer(GL_COLOR_ATTACHMENT0);
   glReadBuffer(GL_COLOR_ATTACHMENT0);
@@ -1052,7 +756,6 @@ static void shResolveCoverageTarget(VGContext *context)
   glDisable(GL_STENCIL_TEST);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_RESOLVE_SHADER);
   glUseProgram(context->progCoverage);
   glUniform2f(context->locationCoverage.targetSize,
               (GLfloat)context->surfaceWidth,
@@ -1074,16 +777,13 @@ static void shResolveCoverageTarget(VGContext *context)
   v[6] = (GLfloat)context->surfaceWidth;
   v[7] = (GLfloat)context->surfaceHeight;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_RESOLVE_UPLOAD_VERTEX);
   shBindContextVertexState(context, &vertexState);
   glBufferData(GL_ARRAY_BUFFER, sizeof(v), v, GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(context->locationCoverage.pos);
   glVertexAttribPointer(context->locationCoverage.pos, 2, GL_FLOAT, GL_FALSE,
                         0, (const GLvoid*)0);
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_RESOLVE_DRAW_ARRAYS);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glDisableVertexAttribArray(context->locationCoverage.pos);
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_RESOLVE_RESTORE);
   shRestoreVertexState(&vertexState);
   GL_CHECK_ERROR;
 }
@@ -1212,17 +912,14 @@ static void shRenderStrokeToMaskTarget(VGContext *context, SHPath *p)
   if (context->strokeLineWidth <= 0.0f || p->vertices.size <= 0)
     return;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_STROKE_CACHE_CHECK);
   if (shIsStrokeCacheValid(context, p) == VG_FALSE) {
     shVector2ArrayClear(&p->stroke);
-    shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_STROKE_TESSELLATE);
     shStrokePath(context, p);
   }
 
   if (p->stroke.size <= 0)
     return;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_STROKE_STENCIL);
   glEnable(GL_STENCIL_TEST);
   glStencilMask(0xff);
   glStencilFunc(GL_NOTEQUAL, 1, 1);
@@ -1234,7 +931,6 @@ static void shRenderStrokeToMaskTarget(VGContext *context, SHPath *p)
   glStencilFunc(GL_EQUAL, 1, 1);
   glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_STROKE_MESH);
   shDrawCoverageMesh(context, &p->min, &p->max, VG_STROKE_PATH);
 
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -1259,12 +955,10 @@ static VGboolean shRenderPathCoverage(VGContext *context,
   shSaveRenderToMaskGLState(&state);
 
   if (!shEnsureCoverageTarget(context, scale)) {
-    shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_RESTORE);
     shRestoreRenderToMaskGLState(&state);
     return VG_FALSE;
   }
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_BIND_SUPERSAMPLE);
   glBindFramebuffer(GL_FRAMEBUFFER, context->coverageSupersampleFramebuffer);
   glDrawBuffer(GL_COLOR_ATTACHMENT0);
   glReadBuffer(GL_COLOR_ATTACHMENT0);
@@ -1278,10 +972,8 @@ static VGboolean shRenderPathCoverage(VGContext *context,
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
   glClearStencil(0);
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_CLEAR_SUPERSAMPLE);
   glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_SCISSOR);
   if (context->scissoring == VG_TRUE) {
     if (context->scissor.size == 0) {
       drawCoverage = VG_FALSE;
@@ -1299,7 +991,6 @@ static VGboolean shRenderPathCoverage(VGContext *context,
     }
   }
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_SHADER_SETUP);
   glUseProgram(context->progDraw);
   shApplyColorTransform(context);
   shMatrixToGL(&context->pathTransform, mgl);
@@ -1319,19 +1010,15 @@ static VGboolean shRenderPathCoverage(VGContext *context,
   GL_CHECK_ERROR;
 
   if (drawCoverage == VG_TRUE) {
-    if (mode == VG_FILL_PATH) {
-      shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_RENDER_FILL);
+    if (mode == VG_FILL_PATH)
       shRenderFillToMaskTarget(context, p);
-    } else {
-      shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_RENDER_STROKE);
+    else
       shRenderStrokeToMaskTarget(context, p);
-    }
   }
 
   glUniform1i(context->locationDraw.coveragePass, 0);
   GL_CHECK_ERROR;
   shResolveCoverageTarget(context);
-  shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_RESTORE);
   shRestoreRenderToMaskGLState(&state);
 
   return VG_TRUE;
@@ -1347,7 +1034,6 @@ static VGboolean shRenderBestPathCoverage(VGContext *context,
   *coverageEnabled = VG_FALSE;
 
   while (scale > 1) {
-    shSetThreadDrawTrace(SH_DRAW_TRACE_COVERAGE_TRY_SCALE);
     if (shRenderPathCoverage(context, p, mode, scale)) {
       *coverageEnabled = VG_TRUE;
       return VG_TRUE;
@@ -1696,8 +1382,6 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   SHRectangle *rect;
   VGboolean coverageEnabled;
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_ENTER);
-
   if (context->surfaceWidth <= 0 || context->surfaceHeight <= 0)
     return;
 
@@ -1713,15 +1397,12 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   
   /* If user-to-surface matrix invertible tessellate in
      surface space for better path resolution */
-  shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_TESS_CHECK);
   if (shIsTessCacheValid( context, p ) == VG_FALSE)
   {
-    shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_FLATTEN);
     if (shInvertMatrix(&context->pathTransform, &mi)) {
       shFlattenPath(context, p, 1);
       shTransformVertices(&mi, p);
     }else shFlattenPath(context, p, 0);
-    shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_BOUNDS);
     shFindBoundbox(p);
   }
   
@@ -1730,7 +1411,6 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   stroke = (context->strokePaint ? context->strokePaint : &context->defaultPaint);
   
   /* Apply transformation */
-  shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_SETUP_PROGRAM);
   shMatrixToGL(&context->pathTransform, mgl);
   glUseProgram(context->progDraw);
   shApplyColorTransform(context);
@@ -1740,7 +1420,6 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   GL_CHECK_ERROR;
   
   if (paintModes & VG_FILL_PATH) {
-    shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_FILL_COVERAGE);
     if (!shRenderBestPathCoverage(context, p, VG_FILL_PATH,
                                   &coverageEnabled)) {
       glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -1753,7 +1432,6 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
     }
 
     if (coverageEnabled == VG_TRUE) {
-      shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_FILL_BLEND);
       if (!updateBlendingStateGL(context,
                                  fill->type == VG_PAINT_TYPE_COLOR &&
                                  fill->color.a == 1.0f,
@@ -1769,18 +1447,15 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
 
       glDisable(GL_STENCIL_TEST);
       glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-      shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_FILL_MESH);
       shDrawPaintMesh(context, &p->min, &p->max, VG_FILL_PATH, GL_TEXTURE0,
                       VG_TRUE);
       glDisable(GL_BLEND);
     } else {
 
       /* Tesselate into stencil */
-      shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_FILL_STENCIL);
       shDrawFillStencil(context, p);
 
       /* Setup blending */
-      shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_FILL_BLEND);
       if (!updateBlendingStateGL(context,
                                  fill->type == VG_PAINT_TYPE_COLOR &&
                                  fill->color.a == 1.0f,
@@ -1797,7 +1472,6 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
       /* Draw paint where the selected fill rule left stencil coverage. */
       shSetFillStencilPaintTest(context);
       glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-      shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_FILL_MESH);
       shDrawPaintMesh(context, &p->min, &p->max, VG_FILL_PATH, GL_TEXTURE0,
                       VG_FALSE);
     }
@@ -1812,7 +1486,6 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
       context->strokeLineWidth > 0.0f) {
 
     if (1) {/*context->strokeLineWidth > 1.0f) {*/
-      shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_STROKE_COVERAGE);
       if (!shRenderBestPathCoverage(context, p, VG_STROKE_PATH,
                                     &coverageEnabled)) {
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -1825,7 +1498,6 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
       }
 
       if (coverageEnabled == VG_TRUE) {
-        shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_STROKE_BLEND);
         if (!updateBlendingStateGL(context,
                                    stroke->type == VG_PAINT_TYPE_COLOR &&
                                    stroke->color.a == 1.0f,
@@ -1841,20 +1513,17 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
 
         glDisable(GL_STENCIL_TEST);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_STROKE_MESH);
         shDrawPaintMesh(context, &p->min, &p->max, VG_STROKE_PATH,
                         GL_TEXTURE0, VG_TRUE);
       } else {
         if (shIsStrokeCacheValid( context, p ) == VG_FALSE)
         {
           /* Generate stroke triangles in user space */
-          shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_STROKE_CACHE);
           shVector2ArrayClear(&p->stroke);
           shStrokePath(context, p);
         }
 
         /* Stroke into stencil */
-        shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_STROKE_STENCIL);
         glEnable(GL_STENCIL_TEST);
         glStencilFunc(GL_NOTEQUAL, 1, 1);
         glStencilOp(GL_KEEP, GL_INCR, GL_INCR);
@@ -1862,7 +1531,6 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
         shDrawStroke(context, p);
 
         /* Setup blending */
-        shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_STROKE_BLEND);
         if (!updateBlendingStateGL(context,
                                    stroke->type == VG_PAINT_TYPE_COLOR &&
                                    stroke->color.a == 1.0f,
@@ -1880,7 +1548,6 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
         glStencilFunc(GL_EQUAL, 1, 1);
         glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_STROKE_MESH);
         shDrawPaintMesh(context, &p->min, &p->max, VG_STROKE_PATH,
                         GL_TEXTURE0, VG_FALSE);
       }
@@ -1908,11 +1575,9 @@ void shDrawPath(VGContext *context, SHPath *p, VGbitfield paintModes)
   if (context->scissoring == VG_TRUE)
     glDisable( GL_SCISSOR_TEST );
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_MARK_DIRTY);
   if (paintModes & (VG_FILL_PATH | VG_STROKE_PATH))
     shMarkRenderTargetDirty(context);
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_DRAW_PATH_CLEANUP);
   return;
 }
 
@@ -1920,10 +1585,8 @@ VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
 {
   SHPaintLockSet paintLocks;
   SHPath *p;
-  shSetThreadDrawTrace(SH_DRAW_TRACE_VG_DRAW_PATH_ENTER);
   VG_GETCONTEXT(VG_NO_RETVAL);
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_VG_DRAW_PATH_LOOKUP);
   p = shGetPath(context, path);
   VG_RETURN_ERR_IF(!p,
                    VG_BAD_HANDLE_ERROR, VG_NO_RETVAL);
@@ -1931,18 +1594,12 @@ VG_API_CALL void vgDrawPath(VGPath path, VGbitfield paintModes)
   VG_RETURN_ERR_IF(paintModes & (~(VG_STROKE_PATH | VG_FILL_PATH)),
                    VG_ILLEGAL_ARGUMENT_ERROR, VG_NO_RETVAL);
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_VG_DRAW_PATH_LOCK_PATH);
   shPathLock(p);
-  shSetThreadDrawTrace(SH_DRAW_TRACE_VG_DRAW_PATH_LOCK_PAINTS);
   shPaintLockSelected(context, paintModes, &paintLocks);
-  shSetThreadDrawTrace(SH_DRAW_TRACE_VG_DRAW_PATH_BODY);
   shDrawPath(context, p, paintModes);
-  shSetThreadDrawTrace(SH_DRAW_TRACE_VG_DRAW_PATH_UNLOCK_PAINTS);
   shPaintLockSetCleanup(&paintLocks);
-  shSetThreadDrawTrace(SH_DRAW_TRACE_VG_DRAW_PATH_UNLOCK_PATH);
   shPathUnlock(p);
 
-  shSetThreadDrawTrace(SH_DRAW_TRACE_NONE);
   VG_RETURN(VG_NO_RETVAL);
 }
 
@@ -1973,6 +1630,8 @@ VG_API_CALL void vgRenderToMask(VGPath path,
     error = VG_ILLEGAL_ARGUMENT_ERROR;
     goto cleanup;
   }
+
+  shContextLockBackend(&shContextLock);
 
   if (operation == VG_CLEAR_MASK) {
     shPathAccessCleanup(&pathAccess);

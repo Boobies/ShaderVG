@@ -315,6 +315,7 @@ typedef struct
   SHResourceGroup *resources;
   VGboolean contextLocked;
   VGboolean resourcesLocked;
+  VGboolean backendLocked;
 } SHContextLock;
 
 void VGContext_ctor(VGContext *c);
@@ -322,11 +323,15 @@ void VGContext_dtor(VGContext *c);
 void shSetError(VGContext *c, VGErrorCode e);
 VGContext* shAcquireCurrentContext(SHContextLock *lock);
 VGContext* shAcquireCurrentContextOnly(SHContextLock *lock);
+void shAcquireContextForBackend(VGContext *context, SHContextLock *lock);
 void shContextLockCleanup(SHContextLock *lock);
 void shLockContext(VGContext *c);
 void shUnlockContext(VGContext *c);
 void shLockResourceGroup(SHResourceGroup *resources);
 void shUnlockResourceGroup(SHResourceGroup *resources);
+void shLockGLBackend(void);
+void shUnlockGLBackend(void);
+void shContextLockBackend(SHContextLock *lock);
 SHint shIsValidPath(VGContext *c, VGHandle h);
 SHint shIsValidPaint(VGContext *c, VGHandle h);
 SHint shIsValidImage(VGContext *c, VGHandle h);

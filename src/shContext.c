@@ -293,6 +293,13 @@ static void shResourceGroupRelease(SHResourceGroup *resources)
 
 static SH_TLS VGContext *g_current_context = NULL;
 static SH_TLS VGboolean g_can_delete_resource_gl = VG_TRUE;
+static SHOnce g_glBackendMutexOnce = SH_ONCE_INIT;
+static SHRecursiveMutex g_glBackendMutex;
+
+static void shInitGLBackendMutex(void)
+{
+  shRecursiveMutexInit(&g_glBackendMutex);
+}
 
 void shLockContext(VGContext *context)
 {
@@ -318,14 +325,60 @@ void shUnlockResourceGroup(SHResourceGroup *resources)
     shRecursiveMutexUnlock(&resources->mutex);
 }
 
-VGContext* shAcquireCurrentContext(SHContextLock *lock)
+void shLockGLBackend(void)
 {
-  VGContext *context;
+  shOnce(&g_glBackendMutexOnce, shInitGLBackendMutex);
+  shRecursiveMutexLock(&g_glBackendMutex);
+}
 
+void shUnlockGLBackend(void)
+{
+  shRecursiveMutexUnlock(&g_glBackendMutex);
+}
+
+void shContextLockBackend(SHContextLock *lock)
+{
+  if (!lock || lock->backendLocked)
+    return;
+
+  shLockGLBackend();
+  lock->backendLocked = VG_TRUE;
+}
+
+static void shContextLockInit(SHContextLock *lock)
+{
   lock->context = NULL;
   lock->resources = NULL;
   lock->contextLocked = VG_FALSE;
   lock->resourcesLocked = VG_FALSE;
+  lock->backendLocked = VG_FALSE;
+}
+
+void shAcquireContextForBackend(VGContext *context, SHContextLock *lock)
+{
+  shContextLockInit(lock);
+
+  if (!context)
+    return;
+
+  shLockContext(context);
+  lock->context = context;
+  lock->contextLocked = VG_TRUE;
+
+  if (context->resources) {
+    shLockResourceGroup(context->resources);
+    lock->resources = context->resources;
+    lock->resourcesLocked = VG_TRUE;
+  }
+
+  shContextLockBackend(lock);
+}
+
+VGContext* shAcquireCurrentContext(SHContextLock *lock)
+{
+  VGContext *context;
+
+  shContextLockInit(lock);
 
   context = shGetContext();
   if (!context)
@@ -341,6 +394,7 @@ VGContext* shAcquireCurrentContext(SHContextLock *lock)
     lock->resourcesLocked = VG_TRUE;
   }
 
+  shContextLockBackend(lock);
   return context;
 }
 
@@ -348,10 +402,7 @@ VGContext* shAcquireCurrentContextOnly(SHContextLock *lock)
 {
   VGContext *context;
 
-  lock->context = NULL;
-  lock->resources = NULL;
-  lock->contextLocked = VG_FALSE;
-  lock->resourcesLocked = VG_FALSE;
+  shContextLockInit(lock);
 
   context = shGetContext();
   if (!context)
@@ -368,6 +419,11 @@ void shContextLockCleanup(SHContextLock *lock)
 {
   if (!lock)
     return;
+
+  if (lock->backendLocked) {
+    shUnlockGLBackend();
+    lock->backendLocked = VG_FALSE;
+  }
 
   if (lock->resourcesLocked) {
     shUnlockResourceGroup(lock->resources);
@@ -1571,6 +1627,7 @@ VG_API_CALL VGErrorCode vgGetError(void)
 VG_API_CALL void vgFlush(void)
 {
   VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
+  shContextLockBackend(&shContextLock);
   glFlush();
   VG_RETURN(VG_NO_RETVAL);
 }
@@ -1578,6 +1635,7 @@ VG_API_CALL void vgFlush(void)
 VG_API_CALL void vgFinish(void)
 {
   VG_GETCONTEXT_CONTEXT_ONLY(VG_NO_RETVAL);
+  shContextLockBackend(&shContextLock);
   glFinish();
   VG_RETURN(VG_NO_RETVAL);
 }

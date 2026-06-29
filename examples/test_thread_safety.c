@@ -16,9 +16,6 @@
 #include <unistd.h>
 #endif
 
-extern int shGetThreadDrawTrace(void);
-extern const char *shDrawTraceName(int phase);
-
 typedef struct
 {
   EGLDisplay display;
@@ -633,13 +630,26 @@ static void thread_signal_write_int(sig_atomic_t value)
               sizeof(buffer) - pos - 1);
 }
 
+static void thread_signal_write_current_egl_state(void)
+{
+  thread_signal_write(", egl current display ");
+  thread_signal_write(eglGetCurrentDisplay() == EGL_NO_DISPLAY ? "no" : "yes");
+  thread_signal_write(", context ");
+  thread_signal_write(eglGetCurrentContext() == EGL_NO_CONTEXT ? "no" : "yes");
+  thread_signal_write(", draw ");
+  thread_signal_write(eglGetCurrentSurface(EGL_DRAW) == EGL_NO_SURFACE ?
+                      "no" : "yes");
+  thread_signal_write(", read ");
+  thread_signal_write(eglGetCurrentSurface(EGL_READ) == EGL_NO_SURFACE ?
+                      "no" : "yes");
+}
+
 static void thread_test_crash_handler(int signo)
 {
   sig_atomic_t lane = t_activeChurnLane;
   sig_atomic_t paintProfile = t_activePaintProfile;
   sig_atomic_t paintDrawMode = t_activePaintDrawMode;
   sig_atomic_t phase = t_activePhase;
-  int drawTrace = shGetThreadDrawTrace();
 
   if (lane == THREAD_CHURN_ALL)
     lane = g_activeChurnLane;
@@ -665,10 +675,7 @@ static void thread_test_crash_handler(int signo)
   thread_signal_write_int(t_activeIteration);
   thread_signal_write(", phase ");
   thread_signal_write(thread_signal_phase_name(phase));
-  if (drawTrace > 0) {
-    thread_signal_write(", draw trace ");
-    thread_signal_write(shDrawTraceName(drawTrace));
-  }
+  thread_signal_write_current_egl_state();
   thread_signal_write("\n");
 
   signal(signo, SIG_DFL);
@@ -962,9 +969,20 @@ static int parse_thread_test_options(ThreadTestOptions *options)
   return 0;
 }
 
+static void print_current_egl_state(FILE *stream)
+{
+  fprintf(stream, ", egl current display %s, context %s, draw %s, read %s",
+          eglGetCurrentDisplay() == EGL_NO_DISPLAY ? "no" : "yes",
+          eglGetCurrentContext() == EGL_NO_CONTEXT ? "no" : "yes",
+          eglGetCurrentSurface(EGL_DRAW) == EGL_NO_SURFACE ? "no" : "yes",
+          eglGetCurrentSurface(EGL_READ) == EGL_NO_SURFACE ? "no" : "yes");
+}
+
 static int fail_egl(const char *message)
 {
-  fprintf(stderr, "%s (EGL error 0x%04x)\n", message, eglGetError());
+  fprintf(stderr, "%s (EGL error 0x%04x", message, eglGetError());
+  print_current_egl_state(stderr);
+  fprintf(stderr, ")\n");
   return 1;
 }
 
@@ -974,24 +992,33 @@ static int expect_egl_error(const char *message, EGLint expected)
   if (error == expected)
     return 0;
 
-  fprintf(stderr, "%s (expected EGL error 0x%04x, got 0x%04x)\n",
+  fprintf(stderr, "%s (expected EGL error 0x%04x, got 0x%04x",
           message, expected, error);
+  print_current_egl_state(stderr);
+  fprintf(stderr, ")\n");
   return 1;
 }
 
 static int fail_vg(const char *message)
 {
-  fprintf(stderr, "%s (VG error 0x%04x)\n", message, vgGetError());
+  VGErrorCode error = vgGetError();
+
+  fprintf(stderr, "%s (VG error 0x%04x", message, error);
+  print_current_egl_state(stderr);
+  fprintf(stderr, ")\n");
   return 1;
 }
 
 static int expect_vg_no_error(const char *message)
 {
   VGErrorCode error = vgGetError();
+
   if (error == VG_NO_ERROR)
     return 0;
 
-  fprintf(stderr, "%s (VG error 0x%04x)\n", message, error);
+  fprintf(stderr, "%s (VG error 0x%04x", message, error);
+  print_current_egl_state(stderr);
+  fprintf(stderr, ")\n");
   return 1;
 }
 
