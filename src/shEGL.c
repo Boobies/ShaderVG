@@ -56,6 +56,7 @@ typedef struct SHEGLDisplay SHEGLDisplay;
 
 struct SHEGLDisplay {
   unsigned int magic;
+  SHRecursiveMutex mutex;
   EGLNativeDisplayType nativeDisplay;
   EGLDisplay realDisplay;
   EGLBoolean initialized;
@@ -66,6 +67,7 @@ struct SHEGLDisplay {
 
 typedef struct {
   unsigned int magic;
+  SHRecursiveMutex mutex;
   SHEGLDisplay *display;
   EGLSurface realSurface;
   SHEGLSurfaceType type;
@@ -90,6 +92,7 @@ typedef struct {
 
 typedef struct {
   unsigned int magic;
+  SHRecursiveMutex mutex;
   SHEGLDisplay *display;
   EGLContext realContext;
   VGContext *vgContext;
@@ -182,6 +185,14 @@ static void shEGLCallLock(SHEGLLockGuard *guard)
   guard->locked = EGL_TRUE;
 }
 
+static void shEGLCallUnlockEGL(SHEGLLockGuard *guard)
+{
+  if (guard && guard->locked) {
+    guard->locked = EGL_FALSE;
+    shUnlockEGL();
+  }
+}
+
 static void shEGLCallLockBackend(SHEGLLockGuard *guard)
 {
   if (!guard || guard->backendLocked)
@@ -238,6 +249,42 @@ static void shEGLCallCleanup(SHEGLLockGuard *guard)
 static void shSetEGLError(EGLint error)
 {
   t_error = error;
+}
+
+static void shDisplayLock(SHEGLDisplay *display)
+{
+  if (display)
+    shRecursiveMutexLock(&display->mutex);
+}
+
+static void shDisplayUnlock(SHEGLDisplay *display)
+{
+  if (display)
+    shRecursiveMutexUnlock(&display->mutex);
+}
+
+static void shSurfaceLock(SHEGLSurface *surface)
+{
+  if (surface)
+    shRecursiveMutexLock(&surface->mutex);
+}
+
+static void shSurfaceUnlock(SHEGLSurface *surface)
+{
+  if (surface)
+    shRecursiveMutexUnlock(&surface->mutex);
+}
+
+static void shContextWrapperLock(SHEGLContext *context)
+{
+  if (context)
+    shRecursiveMutexLock(&context->mutex);
+}
+
+static void shContextWrapperUnlock(SHEGLContext *context)
+{
+  if (context)
+    shRecursiveMutexUnlock(&context->mutex);
 }
 
 static void *shLoadSymbol(const char *name)
@@ -392,6 +439,18 @@ static SHEGLContext *shContext(EGLContext context)
 
 static void shDestroyImageSurfaceResources(SHEGLSurface *surface);
 
+static void shFreeContextWrapper(SHEGLContext *context)
+{
+  shRecursiveMutexDestroy(&context->mutex);
+  free(context);
+}
+
+static void shFreeSurfaceWrapper(SHEGLSurface *surface)
+{
+  shRecursiveMutexDestroy(&surface->mutex);
+  free(surface);
+}
+
 static EGLBoolean shThreadOwnsCurrent(SHint currentCount,
                                       SHThreadId currentThread)
 {
@@ -495,9 +554,15 @@ static void shUnmarkSurfaceCurrent(SHEGLSurface *surface)
 static void shFinalizeDestroyedContext(SHEGLContext *context)
 {
   if (!context ||
-      !context->destroyRequested ||
-      context->currentCount > 0)
+      !context->destroyRequested)
     return;
+
+  shContextWrapperLock(context);
+
+  if (context->currentCount > 0) {
+    shContextWrapperUnlock(context);
+    return;
+  }
 
   if (context->vgContext) {
     shDestroyContext(context->vgContext);
@@ -505,21 +570,29 @@ static void shFinalizeDestroyedContext(SHEGLContext *context)
   }
 
   context->magic = 0;
-  free(context);
+  shContextWrapperUnlock(context);
+  shFreeContextWrapper(context);
 }
 
 static void shFinalizeDestroyedSurface(SHEGLSurface *surface)
 {
   if (!surface ||
-      !surface->destroyRequested ||
-      surface->currentCount > 0)
+      !surface->destroyRequested)
     return;
+
+  shSurfaceLock(surface);
+
+  if (surface->currentCount > 0) {
+    shSurfaceUnlock(surface);
+    return;
+  }
 
   if (surface->type == SH_EGL_SURFACE_OPENVG_IMAGE)
     shDestroyImageSurfaceResources(surface);
 
   surface->magic = 0;
-  free(surface);
+  shSurfaceUnlock(surface);
+  shFreeSurfaceWrapper(surface);
 }
 
 static EGLint shChannelBits(SHuint32 mask, SHuint8 max)
@@ -892,6 +965,7 @@ EGLAPI EGLDisplay EGLAPIENTRY eglGetDisplay(EGLNativeDisplayType display_id)
     SH_EGL_RETURN(EGL_NO_DISPLAY);
   }
 
+  shRecursiveMutexInit(&display->mutex);
   display->magic = SH_EGL_DISPLAY_MAGIC;
   display->nativeDisplay = display_id;
   display->realDisplay = realDisplay;
@@ -912,9 +986,12 @@ EGLAPI EGLBoolean EGLAPIENTRY eglInitialize(EGLDisplay dpy, EGLint *major, EGLin
   if (!display)
     SH_EGL_RETURN(EGL_FALSE);
 
+  shDisplayLock(display);
+  shEGLCallUnlockEGL(&shEGLCallGuard);
   result = g_egl.Initialize(display->realDisplay, major, minor);
   if (result)
     display->initialized = EGL_TRUE;
+  shDisplayUnlock(display);
   SH_EGL_RETURN(result);
 }
 
@@ -928,11 +1005,14 @@ EGLAPI EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy)
   display = shDisplay(dpy);
   if (!display)
     SH_EGL_RETURN(EGL_FALSE);
+  shDisplayLock(display);
   if (!display->initialized) {
+    shDisplayUnlock(display);
     shSetEGLError(EGL_NOT_INITIALIZED);
     SH_EGL_RETURN(EGL_FALSE);
   }
   if (display->currentCount > 0) {
+    shDisplayUnlock(display);
     shSetEGLError(EGL_BAD_ACCESS);
     SH_EGL_RETURN(EGL_FALSE);
   }
@@ -941,6 +1021,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy)
     display->initialized = EGL_FALSE;
     display->generation = shNextDisplayGeneration(display->generation);
   }
+  shDisplayUnlock(display);
   SH_EGL_RETURN(result);
 }
 
@@ -948,11 +1029,20 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigs(EGLDisplay dpy, EGLConfig *configs,
                                             EGLint config_size, EGLint *num_config)
 {
   SHEGLDisplay *display;
+  EGLBoolean result;
   if (!shLoadRealEGL())
     return EGL_FALSE;
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
-  SH_EGL_RETURN(display ? g_egl.GetConfigs(display->realDisplay, configs, config_size, num_config) : EGL_FALSE);
+  if (!display)
+    SH_EGL_RETURN(EGL_FALSE);
+
+  shDisplayLock(display);
+  shEGLCallUnlockEGL(&shEGLCallGuard);
+  result = g_egl.GetConfigs(display->realDisplay, configs, config_size,
+                            num_config);
+  shDisplayUnlock(display);
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *attrib_list,
@@ -988,6 +1078,8 @@ EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *attr
     SH_EGL_RETURN(EGL_FALSE);
   }
 
+  shDisplayLock(display);
+  shEGLCallUnlockEGL(&shEGLCallGuard);
   if (emptyResult) {
     result = g_egl.ChooseConfig(display->realDisplay, translated,
                                 NULL, 0, &realCount);
@@ -998,6 +1090,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *attr
                                 configs, config_size, num_config);
   }
 
+  shDisplayUnlock(display);
   free(translated);
   SH_EGL_RETURN(result);
 }
@@ -1015,19 +1108,25 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy, EGLConfig confi
   if (!display)
     SH_EGL_RETURN(EGL_FALSE);
 
+  shDisplayLock(display);
+  shEGLCallUnlockEGL(&shEGLCallGuard);
   if (attribute == EGL_ALPHA_MASK_SIZE) {
     if (!value) {
+      shDisplayUnlock(display);
       shSetEGLError(EGL_BAD_PARAMETER);
       SH_EGL_RETURN(EGL_FALSE);
     }
 
     result = g_egl.GetConfigAttrib(display->realDisplay, config,
                                    EGL_RENDERABLE_TYPE, &renderable);
-    if (!result)
+    if (!result) {
+      shDisplayUnlock(display);
       SH_EGL_RETURN(EGL_FALSE);
+    }
 
     if (renderable & EGL_OPENGL_BIT) {
       *value = SH_EGL_ALPHA_MASK_SIZE;
+      shDisplayUnlock(display);
       SH_EGL_RETURN(EGL_TRUE);
     }
   }
@@ -1039,6 +1138,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy, EGLConfig confi
       value &&
       (*value & EGL_OPENGL_BIT))
     *value |= EGL_OPENVG_BIT;
+  shDisplayUnlock(display);
   SH_EGL_RETURN(result);
 }
 
@@ -1048,16 +1148,15 @@ EGLAPI EGLBoolean EGLAPIENTRY eglBindAPI(EGLenum api)
 
   if (!shLoadRealEGL())
     return EGL_FALSE;
-  SH_EGL_LOCK_GUARD();
 
   if (api == EGL_OPENVG_API)
     realApi = EGL_OPENGL_API;
 
   if (!g_egl.BindAPI(realApi))
-    SH_EGL_RETURN(EGL_FALSE);
+    return EGL_FALSE;
 
   t_boundApi = api;
-  SH_EGL_RETURN(EGL_TRUE);
+  return EGL_TRUE;
 }
 
 EGLAPI EGLenum EGLAPIENTRY eglQueryAPI(void)
@@ -1067,9 +1166,8 @@ EGLAPI EGLenum EGLAPIENTRY eglQueryAPI(void)
 
   if (!shLoadRealEGL())
     return EGL_NONE;
-  SH_EGL_LOCK_GUARD();
 
-  SH_EGL_RETURN(g_egl.QueryAPI());
+  return g_egl.QueryAPI();
 }
 
 EGLAPI EGLSurface EGLAPIENTRY eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config,
@@ -1098,6 +1196,7 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreateWindowSurface(EGLDisplay dpy, EGLConfig c
     SH_EGL_RETURN(EGL_NO_SURFACE);
   }
 
+  shRecursiveMutexInit(&surface->mutex);
   surface->magic = SH_EGL_SURFACE_MAGIC;
   surface->display = display;
   surface->displayGeneration = display->generation;
@@ -1132,6 +1231,7 @@ EGLAPI EGLSurface EGLAPIENTRY eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig 
     SH_EGL_RETURN(EGL_NO_SURFACE);
   }
 
+  shRecursiveMutexInit(&surface->mutex);
   surface->magic = SH_EGL_SURFACE_MAGIC;
   surface->display = display;
   surface->displayGeneration = display->generation;
@@ -1278,6 +1378,7 @@ eglCreatePbufferFromClientBuffer(EGLDisplay dpy,
 
     shImageAddEGLPbufferRef(image);
 
+    shRecursiveMutexInit(&surface->mutex);
     surface->magic = SH_EGL_SURFACE_MAGIC;
     surface->display = display;
     surface->displayGeneration = display->generation;
@@ -1321,7 +1422,10 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
     SH_EGL_RETURN(EGL_FALSE);
   }
 
+  shSurfaceLock(s);
+
   if (s->destroyRequested) {
+    shSurfaceUnlock(s);
     shSetEGLError(EGL_BAD_SURFACE);
     SH_EGL_RETURN(EGL_FALSE);
   }
@@ -1329,6 +1433,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
   if (s->currentCount > 0) {
     if (!shThreadOwnsCurrent(s->currentCount,
                              s->currentThread)) {
+      shSurfaceUnlock(s);
       shSetEGLError(EGL_BAD_ACCESS);
       SH_EGL_RETURN(EGL_FALSE);
     }
@@ -1340,6 +1445,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
       s->destroyRequested = EGL_TRUE;
       s->realDestroyed = EGL_TRUE;
     }
+    shSurfaceUnlock(s);
     SH_EGL_RETURN(result);
   }
 
@@ -1349,9 +1455,12 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface surfa
     if (s->type == SH_EGL_SURFACE_OPENVG_IMAGE)
       shDestroyImageSurfaceResources(s);
     s->magic = 0;
-    free(s);
+    shSurfaceUnlock(s);
+    shFreeSurfaceWrapper(s);
+    SH_EGL_RETURN(result);
   }
 
+  shSurfaceUnlock(s);
   SH_EGL_RETURN(result);
 }
 
@@ -1360,6 +1469,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglQuerySurface(EGLDisplay dpy, EGLSurface surface
 {
   SHEGLDisplay *display;
   SHEGLSurface *s;
+  EGLBoolean result = EGL_TRUE;
   if (!shLoadRealEGL())
     return EGL_FALSE;
   SH_EGL_LOCK_GUARD();
@@ -1372,36 +1482,45 @@ EGLAPI EGLBoolean EGLAPIENTRY eglQuerySurface(EGLDisplay dpy, EGLSurface surface
     SH_EGL_RETURN(EGL_FALSE);
   }
 
+  shDisplayLock(display);
+  shSurfaceLock(s);
+  shEGLCallUnlockEGL(&shEGLCallGuard);
+
   if (s->type == SH_EGL_SURFACE_OPENVG_IMAGE) {
     switch (attribute) {
     case EGL_WIDTH:
       *value = s->width;
-      SH_EGL_RETURN(EGL_TRUE);
+      goto done;
     case EGL_HEIGHT:
       *value = s->height;
-      SH_EGL_RETURN(EGL_TRUE);
+      goto done;
     case EGL_TEXTURE_FORMAT:
       *value = s->textureFormat;
-      SH_EGL_RETURN(EGL_TRUE);
+      goto done;
     case EGL_TEXTURE_TARGET:
       *value = s->textureTarget;
-      SH_EGL_RETURN(EGL_TRUE);
+      goto done;
     case EGL_MIPMAP_TEXTURE:
       *value = s->mipmapTexture;
-      SH_EGL_RETURN(EGL_TRUE);
+      goto done;
     case EGL_VG_COLORSPACE:
       *value = s->vgColorspace;
-      SH_EGL_RETURN(EGL_TRUE);
+      goto done;
     case EGL_VG_ALPHA_FORMAT:
       *value = s->vgAlphaFormat;
-      SH_EGL_RETURN(EGL_TRUE);
+      goto done;
     default:
       break;
     }
   }
 
-  SH_EGL_RETURN(g_egl.QuerySurface(display->realDisplay, s->realSurface,
-                                   attribute, value));
+  result = g_egl.QuerySurface(display->realDisplay, s->realSurface,
+                              attribute, value);
+
+done:
+  shSurfaceUnlock(s);
+  shDisplayUnlock(display);
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
@@ -1460,6 +1579,7 @@ EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
     SH_EGL_RETURN(EGL_NO_CONTEXT);
   }
 
+  shRecursiveMutexInit(&context->mutex);
   context->magic = SH_EGL_CONTEXT_MAGIC;
   context->display = display;
   context->displayGeneration = display->generation;
@@ -1470,7 +1590,7 @@ EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig config,
     context->vgContext = shCreateContextShared(share ? share->vgContext : NULL);
     if (!context->vgContext) {
       g_egl.DestroyContext(display->realDisplay, realContext);
-      free(context);
+      shFreeContextWrapper(context);
       shSetEGLError(EGL_BAD_ALLOC);
       SH_EGL_RETURN(EGL_NO_CONTEXT);
     }
@@ -1498,7 +1618,10 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
     SH_EGL_RETURN(EGL_FALSE);
   }
 
+  shContextWrapperLock(context);
+
   if (context->destroyRequested) {
+    shContextWrapperUnlock(context);
     shSetEGLError(EGL_BAD_CONTEXT);
     SH_EGL_RETURN(EGL_FALSE);
   }
@@ -1506,6 +1629,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
   if (context->currentCount > 0) {
     if (!shThreadOwnsCurrent(context->currentCount,
                                context->currentThread)) {
+      shContextWrapperUnlock(context);
       shSetEGLError(EGL_BAD_ACCESS);
       SH_EGL_RETURN(EGL_FALSE);
     }
@@ -1518,6 +1642,7 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
       context->destroyRequested = EGL_TRUE;
       context->realDestroyed = EGL_TRUE;
     }
+    shContextWrapperUnlock(context);
     SH_EGL_RETURN(result);
   }
 
@@ -1531,9 +1656,12 @@ EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
       context->vgContext = NULL;
     }
     context->magic = 0;
-    free(context);
+    shContextWrapperUnlock(context);
+    shFreeContextWrapper(context);
+    SH_EGL_RETURN(result);
   }
 
+  shContextWrapperUnlock(context);
   SH_EGL_RETURN(result);
 }
 
@@ -1782,24 +1910,40 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 {
   SHEGLDisplay *display;
   SHEGLSurface *s;
+  EGLBoolean result;
   if (!shLoadRealEGL())
     return EGL_FALSE;
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   s = shSurface(surface);
-  SH_EGL_RETURN((display && s) ? g_egl.SwapBuffers(display->realDisplay, s->realSurface) : EGL_FALSE);
+  if (!display || !s)
+    SH_EGL_RETURN(EGL_FALSE);
+
+  shDisplayLock(display);
+  shSurfaceLock(s);
+  shEGLCallUnlockEGL(&shEGLCallGuard);
+  result = g_egl.SwapBuffers(display->realDisplay, s->realSurface);
+  shSurfaceUnlock(s);
+  shDisplayUnlock(display);
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval)
 {
   SHEGLDisplay *display;
+  EGLBoolean result;
   if (!shLoadRealEGL())
     return EGL_FALSE;
   SH_EGL_LOCK_GUARD();
   display = shDisplay(dpy);
   if (!display || !g_egl.SwapInterval)
     SH_EGL_RETURN(EGL_FALSE);
-  SH_EGL_RETURN(g_egl.SwapInterval(display->realDisplay, interval));
+
+  shDisplayLock(display);
+  shEGLCallUnlockEGL(&shEGLCallGuard);
+  result = g_egl.SwapInterval(display->realDisplay, interval);
+  shDisplayUnlock(display);
+  SH_EGL_RETURN(result);
 }
 
 EGLAPI EGLint EGLAPIENTRY eglGetError(void)
@@ -1813,8 +1957,7 @@ EGLAPI EGLint EGLAPIENTRY eglGetError(void)
   if (!shLoadRealEGL())
     return t_error;
 
-  SH_EGL_LOCK_GUARD();
-  SH_EGL_RETURN(g_egl.GetError());
+  return g_egl.GetError();
 }
 
 EGLAPI const char *EGLAPIENTRY eglQueryString(EGLDisplay dpy, EGLint name)
@@ -1830,9 +1973,12 @@ EGLAPI const char *EGLAPIENTRY eglQueryString(EGLDisplay dpy, EGLint name)
     display = shDisplay(dpy);
     if (!display)
       SH_EGL_RETURN(NULL);
+    shDisplayLock(display);
   }
 
+  shEGLCallUnlockEGL(&shEGLCallGuard);
   real = g_egl.QueryString(display ? display->realDisplay : EGL_NO_DISPLAY, name);
+  shDisplayUnlock(display);
 
   if (name == EGL_CLIENT_APIS) {
     if (!real || !strstr(real, "OpenVG")) {
@@ -1932,6 +2078,5 @@ eglGetProcAddress(const char *procname)
   if (!shLoadRealEGL())
     return NULL;
 
-  SH_EGL_LOCK_GUARD();
-  SH_EGL_RETURN(g_egl.GetProcAddress(procname));
+  return g_egl.GetProcAddress(procname);
 }
